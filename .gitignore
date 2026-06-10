@@ -1,0 +1,34 @@
+# Binaries
+bin/
+tmp/
+main
+server
+
+# Environment
+.env
+
+# Go
+vendor/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Internal Docs
+docs/internal/
+
+# Uploads (user-generated content)
+uploads/
+
+# Mapping data (large shapefiles)
+mapping/data/
+mapping/photon_data/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Air (hot reload)
+tmp/

@@ -1,0 +1,3253 @@
+basePath: /api/v1
+definitions:
+  github_com_codecoffy_nitip-core_pkg_response.Meta:
+    properties:
+      limit:
+        type: integer
+      page:
+        type: integer
+      total:
+        type: integer
+      total_pages:
+        type: integer
+    type: object
+  github_com_codecoffy_nitip-core_pkg_response.ValidationError:
+    properties:
+      field:
+        type: string
+      message:
+        type: string
+    type: object
+  github_com_codecoffy_nitip-core_pkg_response.envelope:
+    properties:
+      data: {}
+      errors:
+        items:
+          $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.ValidationError'
+        type: array
+      message:
+        type: string
+      meta:
+        $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.Meta'
+      success:
+        type: boolean
+    type: object
+  internal_domain_auth.GrantResponse:
+    properties:
+      expires_at:
+        type: string
+      grant_token:
+        type: string
+    type: object
+  internal_domain_chat.ChatMessage:
+    properties:
+      content:
+        type: string
+      created_at:
+        type: string
+      id:
+        type: string
+      is_read:
+        type: boolean
+      order_id:
+        type: string
+      sender_id:
+        type: string
+      sender_role:
+        description: '"requester" or "runner"'
+        type: string
+      type:
+        description: '"text", "image"'
+        type: string
+    type: object
+  internal_domain_chat.SendMessageRequest:
+    properties:
+      content:
+        maxLength: 1000
+        type: string
+    required:
+    - content
+    type: object
+  internal_domain_config.Config:
+    properties:
+      description:
+        type: string
+      key:
+        type: string
+      updated_at:
+        type: string
+      value:
+        type: string
+    type: object
+  internal_domain_config.updateConfigRequest:
+    properties:
+      description:
+        type: string
+      value:
+        type: string
+    required:
+    - value
+    type: object
+  internal_domain_kyc.KycSubmission:
+    properties:
+      admin_note:
+        type: string
+      created_at:
+        type: string
+      id:
+        type: string
+      id_card_image_url:
+        type: string
+      id_card_number:
+        type: string
+      selfie_image_url:
+        type: string
+      status:
+        type: string
+      updated_at:
+        type: string
+      user_id:
+        type: string
+    type: object
+  internal_domain_kyc.ReviewRequest:
+    properties:
+      approved:
+        type: boolean
+      note:
+        type: string
+    type: object
+  internal_domain_notification.Notification:
+    properties:
+      created_at:
+        type: string
+      id:
+        type: string
+      is_read:
+        type: boolean
+      message:
+        type: string
+      metadata:
+        additionalProperties: true
+        type: object
+      title:
+        type: string
+      type:
+        type: string
+      user_id:
+        type: string
+    type: object
+  internal_domain_order.AdjustmentRequest:
+    properties:
+      adjusted_cost:
+        type: number
+      reason:
+        type: string
+    required:
+    - adjusted_cost
+    - reason
+    type: object
+  internal_domain_order.CompletePayload:
+    properties:
+      completion_code:
+        type: string
+      delivery_image_url:
+        type: string
+    required:
+    - completion_code
+    type: object
+  internal_domain_order.CreateOrderRequest:
+    properties:
+      delivery_address:
+        type: string
+      delivery_lat:
+        type: number
+      delivery_lng:
+        type: number
+      delivery_name:
+        type: string
+      estimated_cost:
+        minimum: 0
+        type: number
+      item_details:
+        type: string
+      payment_method:
+        enum:
+        - escrow
+        - cod
+        type: string
+      pickup_address:
+        type: string
+      pickup_lat:
+        type: number
+      pickup_lng:
+        type: number
+      pickup_name:
+        type: string
+      receiver_name:
+        type: string
+      receiver_phone:
+        type: string
+      service_category:
+        description: Nitip Kirim Fields
+        enum:
+        - beli
+        - kirim
+        type: string
+      volume_liters:
+        description: Frontend maps S/M/L to liters
+        minimum: 0
+        type: number
+      weight_kg:
+        minimum: 0
+        type: number
+    required:
+    - delivery_lat
+    - delivery_lng
+    - estimated_cost
+    - item_details
+    - payment_method
+    - pickup_lat
+    - pickup_lng
+    - service_category
+    - volume_liters
+    - weight_kg
+    type: object
+  internal_domain_order.DisputePayload:
+    properties:
+      proof_url:
+        type: string
+      reason:
+        type: string
+    required:
+    - proof_url
+    - reason
+    type: object
+  internal_domain_order.EstimateFeeRequest:
+    properties:
+      delivery_lat:
+        type: number
+      delivery_lng:
+        type: number
+      pickup_lat:
+        type: number
+      pickup_lng:
+        type: number
+      volume_liters:
+        minimum: 0
+        type: number
+      weight_kg:
+        minimum: 0
+        type: number
+    required:
+    - delivery_lat
+    - delivery_lng
+    - pickup_lat
+    - pickup_lng
+    - volume_liters
+    - weight_kg
+    type: object
+  internal_domain_order.EstimateFeeResponse:
+    properties:
+      distance_km:
+        type: number
+      estimated_fee:
+        type: number
+      order_type:
+        type: string
+    type: object
+  internal_domain_order.Order:
+    properties:
+      adjusted_cost:
+        description: Price Adjustment
+        type: number
+      adjustment_reason:
+        type: string
+      adjustment_status:
+        type: string
+      checking_fee:
+        type: number
+      cod_handling_fee:
+        type: number
+      completion_code:
+        type: string
+      created_at:
+        type: string
+      delivery_address:
+        type: string
+      delivery_fee:
+        type: number
+      delivery_image_url:
+        type: string
+      delivery_lat:
+        type: number
+      delivery_lng:
+        type: number
+      delivery_name:
+        type: string
+      dispute_proof_url:
+        type: string
+      dispute_reason:
+        type: string
+      disputed_at:
+        type: string
+      distance_km:
+        type: number
+      estimated_cost:
+        type: number
+      id:
+        type: string
+      item_details:
+        type: string
+      order_type:
+        type: string
+      payment_method:
+        type: string
+      payment_status:
+        type: string
+      pickup_address:
+        type: string
+      pickup_lat:
+        type: number
+      pickup_lng:
+        type: number
+      pickup_name:
+        description: Recent Pickup & Proximity Matching
+        type: string
+      receipt_image_url:
+        description: 'Phase 2: Proof & Dispute'
+        type: string
+      receiver_name:
+        type: string
+      receiver_phone:
+        type: string
+      requester_id:
+        type: string
+      runner_id:
+        type: string
+      service_category:
+        description: Nitip Kirim (Package Delivery)
+        type: string
+      service_fee:
+        type: number
+      status:
+        type: string
+      total_payment:
+        type: number
+      trip_id:
+        type: string
+      updated_at:
+        type: string
+      volume_liters:
+        type: number
+      weight_kg:
+        type: number
+    type: object
+  internal_domain_order.PurchasePayload:
+    properties:
+      receipt_url:
+        type: string
+    required:
+    - receipt_url
+    type: object
+  internal_domain_order.RejectAdjustmentRequest:
+    properties:
+      cancel_order:
+        type: boolean
+    type: object
+  internal_domain_order.ResolvePayload:
+    properties:
+      side:
+        enum:
+        - requester
+        - runner
+        type: string
+    required:
+    - side
+    type: object
+  internal_domain_review.Review:
+    properties:
+      comment:
+        type: string
+      created_at:
+        type: string
+      id:
+        type: string
+      order_id:
+        type: string
+      rating:
+        maximum: 5
+        minimum: 1
+        type: integer
+      reviewee_id:
+        type: string
+      reviewer_id:
+        type: string
+    type: object
+  internal_domain_review.SubmitReviewRequest:
+    properties:
+      comment:
+        maxLength: 500
+        type: string
+      rating:
+        maximum: 5
+        minimum: 1
+        type: integer
+    required:
+    - rating
+    type: object
+  internal_domain_trip.CreateTripRequest:
+    properties:
+      allowed_service_types:
+        items:
+          type: string
+        type: array
+      departure_time:
+        type: string
+      destination_lat:
+        type: number
+      destination_lng:
+        type: number
+      destination_name:
+        type: string
+      is_round_trip:
+        type: boolean
+      max_volume_liters:
+        type: number
+      max_weight_kg:
+        type: number
+      notes:
+        type: string
+      origin_lat:
+        type: number
+      origin_lng:
+        type: number
+      origin_name:
+        type: string
+      return_time:
+        type: string
+      vehicle_type:
+        enum:
+        - motorcycle
+        - car
+        - pickup
+        type: string
+    required:
+    - departure_time
+    - destination_lat
+    - destination_lng
+    - destination_name
+    - origin_lat
+    - origin_lng
+    - origin_name
+    - vehicle_type
+    type: object
+  internal_domain_trip.Trip:
+    properties:
+      allowed_service_types:
+        items:
+          type: string
+        type: array
+      available_volume_liters:
+        type: number
+      available_weight_kg:
+        type: number
+      created_at:
+        type: string
+      departure_time:
+        type: string
+      destination_lat:
+        type: number
+      destination_lng:
+        type: number
+      destination_name:
+        type: string
+      id:
+        type: string
+      is_round_trip:
+        type: boolean
+      max_volume_liters:
+        type: number
+      max_weight_kg:
+        type: number
+      notes:
+        type: string
+      origin_lat:
+        type: number
+      origin_lng:
+        type: number
+      origin_name:
+        type: string
+      return_time:
+        type: string
+      runner_id:
+        type: string
+      status:
+        type: string
+      updated_at:
+        type: string
+      vehicle_type:
+        type: string
+    type: object
+  internal_domain_user.CreateUserRequest:
+    properties:
+      device_id:
+        type: string
+      email:
+        type: string
+      name:
+        maxLength: 100
+        minLength: 2
+        type: string
+      password:
+        maxLength: 72
+        minLength: 8
+        type: string
+      role:
+        enum:
+        - requester
+        - runner
+        type: string
+      whatsapp_number:
+        maxLength: 15
+        minLength: 9
+        type: string
+    required:
+    - device_id
+    - email
+    - name
+    - password
+    - whatsapp_number
+    type: object
+  internal_domain_user.LocationUpdate:
+    properties:
+      lat:
+        type: number
+      lng:
+        type: number
+    type: object
+  internal_domain_user.LoginRequest:
+    properties:
+      device_id:
+        type: string
+      email:
+        type: string
+      password:
+        type: string
+    required:
+    - device_id
+    - email
+    - password
+    type: object
+  internal_domain_user.LoginResponse:
+    properties:
+      refresh_token:
+        type: string
+      token:
+        type: string
+      user:
+        $ref: '#/definitions/internal_domain_user.User'
+    type: object
+  internal_domain_user.RefreshRequest:
+    properties:
+      refresh_token:
+        type: string
+    required:
+    - refresh_token
+    type: object
+  internal_domain_user.SetupPinRequest:
+    properties:
+      pin:
+        type: string
+    required:
+    - pin
+    type: object
+  internal_domain_user.UpdateAcceptingOrdersRequest:
+    properties:
+      is_accepting_orders:
+        type: boolean
+    type: object
+  internal_domain_user.UpdateHomeRequest:
+    properties:
+      address:
+        type: string
+      lat:
+        type: number
+      lng:
+        type: number
+    required:
+    - address
+    - lat
+    - lng
+    type: object
+  internal_domain_user.User:
+    properties:
+      avatar_url:
+        type: string
+      created_at:
+        type: string
+      deleted_at:
+        type: string
+      email:
+        type: string
+      fcm_token:
+        type: string
+      has_pin:
+        type: boolean
+      home_address:
+        type: string
+      home_lat:
+        type: number
+      home_lng:
+        type: number
+      id:
+        type: string
+      is_accepting_orders:
+        type: boolean
+      is_suspended:
+        type: boolean
+      is_verified:
+        type: boolean
+      last_lat:
+        type: number
+      last_lng:
+        type: number
+      name:
+        type: string
+      role:
+        type: string
+      suspended_reason:
+        type: string
+      trust_score:
+        type: integer
+      updated_at:
+        type: string
+      verified_at:
+        type: string
+      whatsapp_number:
+        type: string
+    type: object
+  internal_domain_wallet.AmountRequest:
+    properties:
+      amount:
+        minimum: 1
+        type: number
+    required:
+    - amount
+    type: object
+  internal_domain_wallet.DisbursementWebhookRequest:
+    properties:
+      status:
+        type: string
+      trx_id:
+        type: string
+    type: object
+  internal_domain_wallet.InquiryAccountRequest:
+    properties:
+      account_no:
+        type: string
+      channel_code:
+        type: string
+    required:
+    - account_no
+    - channel_code
+    type: object
+  internal_domain_wallet.InquiryAccountResponse:
+    properties:
+      account_name:
+        type: string
+      status:
+        type: string
+    type: object
+  internal_domain_wallet.SimulateSuccessRequest:
+    properties:
+      reference:
+        type: string
+    required:
+    - reference
+    type: object
+  internal_domain_wallet.TransactionStatus:
+    enum:
+    - pending
+    - completed
+    - failed
+    - rejected
+    type: string
+    x-enum-varnames:
+    - StatusPending
+    - StatusCompleted
+    - StatusFailed
+    - StatusRejected
+  internal_domain_wallet.TransactionType:
+    enum:
+    - TOP_UP
+    - WITHDRAWAL
+    - ESCROW_HOLD
+    - ESCROW_RELEASE
+    - PLATFORM_FEE
+    - REFUND
+    type: string
+    x-enum-varnames:
+    - TypeTopUp
+    - TypeWithdrawal
+    - TypeEscrowHold
+    - TypeEscrowRelease
+    - TypePlatformFee
+    - TypeRefund
+  internal_domain_wallet.Wallet:
+    properties:
+      balance:
+        type: number
+      created_at:
+        type: string
+      id:
+        type: string
+      updated_at:
+        type: string
+      user_id:
+        type: string
+    type: object
+  internal_domain_wallet.WalletTransaction:
+    properties:
+      amount:
+        type: number
+      channel_id:
+        type: string
+      created_at:
+        type: string
+      destination_metadata:
+        additionalProperties: true
+        type: object
+      id:
+        type: string
+      order_id:
+        type: string
+      qris_string:
+        type: string
+      reference:
+        type: string
+      status:
+        $ref: '#/definitions/internal_domain_wallet.TransactionStatus'
+      type:
+        $ref: '#/definitions/internal_domain_wallet.TransactionType'
+      wallet_id:
+        type: string
+    type: object
+  internal_domain_wallet.WebhookQrisPayload:
+    properties:
+      amount:
+        type: integer
+      reference_id:
+        type: string
+      status:
+        type: string
+      trx_id:
+        type: string
+    type: object
+  internal_domain_wallet.WithdrawRequest:
+    properties:
+      amount:
+        minimum: 10000
+        type: number
+      channel_id:
+        type: string
+      metadata:
+        additionalProperties: true
+        type: object
+      pin:
+        type: string
+    required:
+    - amount
+    - channel_id
+    - metadata
+    - pin
+    type: object
+  internal_domain_wallet.WithdrawalChannel:
+    properties:
+      admin_fee_flat:
+        type: number
+      admin_fee_percent:
+        type: number
+      code:
+        type: string
+      created_at:
+        type: string
+      estimated_time:
+        type: string
+      id:
+        type: string
+      is_active:
+        type: boolean
+      min_amount:
+        type: number
+      name:
+        type: string
+      type:
+        description: BANK, EWALLET, MANUAL
+        type: string
+      updated_at:
+        type: string
+    type: object
+host: localhost:8000
+info:
+  contact:
+    email: support@nitip.id
+    name: API Support
+  description: Nitip Core REST API server.
+  license:
+    name: Apache 2.0
+    url: http://www.apache.org/licenses/LICENSE-2.0.html
+  termsOfService: http://swagger.io/terms/
+  title: Nitip Core API
+  version: "1.0"
+paths:
+  /admin/configs:
+    get:
+      description: Retrieve all dynamic configuration values
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/internal_domain_config.Config'
+                  type: array
+              type: object
+      security:
+      - BearerAuth: []
+      summary: '[ADMIN] List all configs'
+      tags:
+      - '[Admin] System Config'
+  /admin/configs/{key}:
+    put:
+      consumes:
+      - application/json
+      description: Set or update a specific configuration key
+      parameters:
+      - description: Config Key
+        in: path
+        name: key
+        required: true
+        type: string
+      - description: New config details
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_domain_config.updateConfigRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+            - properties:
+                errors:
+                  items:
+                    $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.ValidationError'
+                  type: array
+              type: object
+      security:
+      - BearerAuth: []
+      summary: '[ADMIN] Update a config value'
+      tags:
+      - '[Admin] System Config'
+  /admin/kyc/{id}/review:
+    post:
+      consumes:
+      - application/json
+      description: Approve or reject a user's identity verification documents
+      parameters:
+      - description: KYC ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Review decision
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_domain_kyc.ReviewRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+      security:
+      - BearerAuth: []
+      summary: '[ADMIN] Review a KYC submission'
+      tags:
+      - '[Admin] KYC Review'
+  /admin/kyc/pending:
+    get:
+      description: Retrieve a paginated list of KYC submissions waiting for review
+      parameters:
+      - description: Page number
+        in: query
+        name: page
+        type: integer
+      - description: Items per page
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/internal_domain_kyc.KycSubmission'
+                  type: array
+              type: object
+      security:
+      - BearerAuth: []
+      summary: '[ADMIN] List pending KYC submissions'
+      tags:
+      - '[Admin] KYC Review'
+  /admin/orders:
+    get:
+      description: Retrieve orders with optional status filter
+      parameters:
+      - description: Order status filter
+        in: query
+        name: status
+        type: string
+      - description: Page number
+        in: query
+        name: page
+        type: integer
+      - description: Items per page
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/internal_domain_order.Order'
+                  type: array
+              type: object
+      security:
+      - BearerAuth: []
+      summary: '[ADMIN] List orders'
+      tags:
+      - '[Admin] Order Management'
+  /admin/orders/{id}/cancel:
+    post:
+      description: Allows an admin to forcefully cancel an order, bypassing normal
+        states
+      parameters:
+      - description: Order UUID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+      security:
+      - BearerAuth: []
+      summary: '[ADMIN] Force cancel an order'
+      tags:
+      - '[Admin] Order Management'
+  /admin/orders/{id}/pay:
+    post:
+      description: Stub endpoint to simulate payment Gateway callback setting order
+        to escrow
+      parameters:
+      - description: Order UUID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+      security:
+      - BearerAuth: []
+      summary: Simulate order payment
+      tags:
+      - '[Admin] Order Management'
+  /admin/orders/{id}/resolve:
+    post:
+      description: Assigns the escrow funds back to the requester or to the runner
+        based on investigation
+      parameters:
+      - description: Order UUID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Resolution details
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_domain_order.ResolvePayload'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+            - properties:
+                errors:
+                  items:
+                    $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.ValidationError'
+                  type: array
+              type: object
+      security:
+      - BearerAuth: []
+      summary: '[ADMIN] Resolve an order dispute'
+      tags:
+      - '[Admin] Order Management'
+  /admin/orders/{id}/resolve-dispute:
+    post:
+      description: Assigns the escrow funds back to the requester or to the runner
+        based on investigation
+      parameters:
+      - description: Order UUID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Resolution details
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_domain_order.ResolvePayload'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+            - properties:
+                errors:
+                  items:
+                    $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.ValidationError'
+                  type: array
+              type: object
+      security:
+      - BearerAuth: []
+      summary: '[ADMIN] Resolve an order dispute'
+      tags:
+      - '[Admin] Order Management'
+  /admin/orders/disputes:
+    get:
+      description: Retrieve a paginated list of disputed orders
+      parameters:
+      - description: Page number
+        in: query
+        name: page
+        type: integer
+      - description: Items per page
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/internal_domain_order.Order'
+                  type: array
+              type: object
+      security:
+      - BearerAuth: []
+      summary: '[ADMIN] List all disputed orders'
+      tags:
+      - '[Admin] Order Management'
+  /admin/users:
+    get:
+      description: Retrieve users with filters (role, is_verified)
+      parameters:
+      - description: Role filter
+        in: query
+        name: role
+        type: string
+      - description: Verification filter
+        in: query
+        name: is_verified
+        type: boolean
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/internal_domain_user.User'
+                  type: array
+              type: object
+      security:
+      - BearerAuth: []
+      summary: '[ADMIN] List users'
+      tags:
+      - '[Admin] User Management'
+  /admin/users/{id}/profile:
+    put:
+      consumes:
+      - multipart/form-data
+      description: Update name, whatsapp number, and optionally avatar image for a
+        user
+      parameters:
+      - description: User ID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Full Name
+        in: formData
+        name: name
+        required: true
+        type: string
+      - description: WhatsApp Number
+        in: formData
+        name: whatsapp_number
+        required: true
+        type: string
+      - description: Home Address
+        in: formData
+        name: home_address
+        type: string
+      - description: Avatar Image
+        in: formData
+        name: avatar
+        type: file
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+      security:
+      - BearerAuth: []
+      summary: '[ADMIN] Update any user''s profile'
+      tags:
+      - '[Admin] User Management'
+  /admin/users/{id}/suspend:
+    put:
+      description: Toggle suspend status of a user with a reason
+      parameters:
+      - description: User UUID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Suspend status
+        in: query
+        name: is_suspended
+        required: true
+        type: boolean
+      - description: Reason for suspend
+        in: query
+        name: reason
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+      security:
+      - BearerAuth: []
+      summary: '[ADMIN] Suspend/Unsuspend user'
+      tags:
+      - '[Admin] User Management'
+  /admin/users/{id}/trust:
+    put:
+      description: Manually update a user's trust score
+      parameters:
+      - description: User UUID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: New Trust Score
+        in: query
+        name: score
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+      security:
+      - BearerAuth: []
+      summary: '[ADMIN] Update User Trust Score'
+      tags:
+      - '[Admin] User Management'
+  /admin/users/{id}/unlock-pin:
+    post:
+      description: Reset PIN attempts and remove lockout status for a user
+      parameters:
+      - description: User UUID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+      security:
+      - BearerAuth: []
+      summary: '[ADMIN] Unlock user PIN'
+      tags:
+      - '[Admin] User Management'
+  /admin/users/{id}/verify:
+    put:
+      description: Toggle verification status of a user
+      parameters:
+      - description: User UUID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Verification status
+        in: query
+        name: is_verified
+        required: true
+        type: boolean
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+      security:
+      - BearerAuth: []
+      summary: '[ADMIN] Verify user'
+      tags:
+      - '[Admin] User Management'
+  /admin/wallets/topup/simulate-success:
+    post:
+      consumes:
+      - application/json
+      description: 'Development only: Simulate a successful payment callback for a
+        pending top up'
+      parameters:
+      - description: Simulate Success details
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_domain_wallet.SimulateSuccessRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/internal_domain_wallet.WalletTransaction'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+      security:
+      - BearerAuth: []
+      summary: Simulate Top Up Success
+      tags:
+      - '[Admin] Finance'
+  /admin/wallets/withdrawals:
+    get:
+      description: List all pending wallet withdrawal requests globally
+      parameters:
+      - description: Page number
+        in: query
+        name: page
+        type: integer
+      - description: Items per page
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/internal_domain_wallet.WalletTransaction'
+                  type: array
+              type: object
+      security:
+      - BearerAuth: []
+      summary: '[ADMIN] List pending withdrawals'
+      tags:
+      - '[Admin] Finance'
+  /admin/wallets/withdrawals/{id}/approve:
+    post:
+      description: Approve a pending withdrawal and finalize balance deduction
+      parameters:
+      - description: Transaction UUID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+      security:
+      - BearerAuth: []
+      summary: '[ADMIN] Approve withdrawal'
+      tags:
+      - '[Admin] Finance'
+  /auth/grant:
+    post:
+      description: Exchange API Key + HMAC Signature for a short-lived grant token
+        (15 min)
+      parameters:
+      - description: API Key (public identifier)
+        in: header
+        name: X-API-Key
+        required: true
+        type: string
+      - description: RFC3339 timestamp (must be within ±5 min)
+        in: header
+        name: X-Timestamp
+        required: true
+        type: string
+      - description: HMAC-SHA256(timestamp.sha256(body), api_secret)
+        in: header
+        name: X-Signature
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/internal_domain_auth.GrantResponse'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+      summary: Get a grant token
+      tags:
+      - Auth
+  /auth/login:
+    post:
+      consumes:
+      - application/json
+      description: Authenticate user and return JWT token. Requires a valid grant
+        token from POST /auth/grant.
+      parameters:
+      - description: Grant token from POST /auth/grant
+        in: header
+        name: X-Grant-Token
+        required: true
+        type: string
+      - description: Login credentials
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_domain_user.LoginRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/internal_domain_user.LoginResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+            - properties:
+                errors:
+                  items:
+                    $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.ValidationError'
+                  type: array
+              type: object
+      summary: Login user
+      tags:
+      - Auth
+  /auth/logout:
+    post:
+      description: Invalidate the user session (client should also delete the local
+        token)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+      security:
+      - BearerAuth: []
+      summary: Logout user
+      tags:
+      - Auth
+  /auth/refresh:
+    post:
+      consumes:
+      - application/json
+      description: Use a refresh token to get a new access token. Requires a valid
+        grant token from POST /auth/grant.
+      parameters:
+      - description: Grant token from POST /auth/grant
+        in: header
+        name: X-Grant-Token
+        required: true
+        type: string
+      - description: Refresh payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_domain_user.RefreshRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/internal_domain_user.LoginResponse'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+      summary: Refresh access token
+      tags:
+      - Auth
+  /configs/public:
+    get:
+      description: Retrieve public configurations without authentication
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+      summary: Get public system config
+      tags:
+      - Shared
+  /health:
+    get:
+      description: Get service health status
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Health check
+      tags:
+      - System
+  /kyc/me:
+    get:
+      description: Retrieve the identity verification status for the logged-in user
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/internal_domain_kyc.KycSubmission'
+              type: object
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+      security:
+      - BearerAuth: []
+      summary: Get current user KYC status
+      tags:
+      - '[Runner] KYC'
+  /kyc/submit:
+    post:
+      consumes:
+      - multipart/form-data
+      description: Register id card number and upload images for identity verification
+      parameters:
+      - description: ID Card Number
+        in: formData
+        name: id_card_number
+        required: true
+        type: string
+      - description: ID Card Image
+        in: formData
+        name: id_card
+        required: true
+        type: file
+      - description: Selfie Image
+        in: formData
+        name: selfie
+        required: true
+        type: file
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/internal_domain_kyc.KycSubmission'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+      security:
+      - BearerAuth: []
+      summary: Submit KYC documents
+      tags:
+      - '[Runner] KYC'
+  /notifications:
+    get:
+      description: Retrieve paginated notifications for the logged-in user
+      parameters:
+      - description: Limit
+        in: query
+        name: limit
+        type: integer
+      - description: Offset
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/internal_domain_notification.Notification'
+                  type: array
+              type: object
+      security:
+      - BearerAuth: []
+      summary: List notifications
+      tags:
+      - '[User] Notifications'
+  /notifications/{id}/read:
+    put:
+      description: Update a specific notification status to read
+      parameters:
+      - description: Notification UUID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+      security:
+      - BearerAuth: []
+      summary: Mark notification as read
+      tags:
+      - '[User] Notifications'
+  /notifications/read-all:
+    put:
+      description: Update all user's notifications to read status
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+      security:
+      - BearerAuth: []
+      summary: Mark all notifications as read
+      tags:
+      - '[User] Notifications'
+  /notifications/unread-count:
+    get:
+      description: Get the number of unread notifications for the user
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+            - properties:
+                data:
+                  additionalProperties:
+                    type: integer
+                  type: object
+              type: object
+      security:
+      - BearerAuth: []
+      summary: Get unread notification count
+      tags:
+      - '[User] Notifications'
+  /orders:
+    post:
+      consumes:
+      - application/json
+      description: Create an order as a requester
+      parameters:
+      - description: Order payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_domain_order.CreateOrderRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/internal_domain_order.Order'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+            - properties:
+                errors:
+                  items:
+                    $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.ValidationError'
+                  type: array
+              type: object
+      security:
+      - BearerAuth: []
+      summary: Create a new order
+      tags:
+      - '[User] Order'
+  /orders/{id}:
+    get:
+      description: Get specific order details
+      parameters:
+      - description: Order UUID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/internal_domain_order.Order'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+      security:
+      - BearerAuth: []
+      summary: Get order by ID
+      tags:
+      - '[Shared] Order View'
+  /orders/{id}/accept:
+    post:
+      description: Runner accepting a pending order
+      parameters:
+      - description: Order UUID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+      security:
+      - BearerAuth: []
+      summary: Accept an active order
+      tags:
+      - '[Runner] Order Execution'
+  /orders/{id}/adjust-price:
+    post:
+      consumes:
+      - application/json
+      description: Runner requests a higher price for an order due to store prices
+      parameters:
+      - description: Order UUID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Adjustment payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_domain_order.AdjustmentRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+      security:
+      - BearerAuth: []
+      summary: Request a price adjustment
+      tags:
+      - '[Runner] Order Execution'
+  /orders/{id}/approve-adjustment:
+    post:
+      description: Requester approves the adjusted price. May trigger additional escrow
+        hold.
+      parameters:
+      - description: Order UUID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+      security:
+      - BearerAuth: []
+      summary: Approve a price adjustment
+      tags:
+      - '[User] Order'
+  /orders/{id}/cancel:
+    post:
+      description: Requester cancelling an order. Refunds or partial fees apply.
+      parameters:
+      - description: Order UUID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+      security:
+      - BearerAuth: []
+      summary: Cancel an order
+      tags:
+      - '[User] Order'
+  /orders/{id}/complete:
+    post:
+      description: Runner completing an ongoing order by providing completion code
+        from penitip and optional delivery image proof
+      parameters:
+      - description: Order UUID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Completion Code and Optional Delivery Image Proof
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_domain_order.CompletePayload'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+            - properties:
+                errors:
+                  items:
+                    $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.ValidationError'
+                  type: array
+              type: object
+      security:
+      - BearerAuth: []
+      summary: Complete an order
+      tags:
+      - '[Runner] Order Execution'
+  /orders/{id}/dispute:
+    post:
+      description: Requester can flag a completed order if an issue arised
+      parameters:
+      - description: Order UUID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Dispute details
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_domain_order.DisputePayload'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+            - properties:
+                errors:
+                  items:
+                    $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.ValidationError'
+                  type: array
+              type: object
+      security:
+      - BearerAuth: []
+      summary: Open a dispute against an order
+      tags:
+      - '[User] Order'
+  /orders/{id}/messages:
+    get:
+      description: Retrieve last messages for a specific order. Only for participants.
+      parameters:
+      - description: Order UUID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Limit messages
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/internal_domain_chat.ChatMessage'
+                  type: array
+              type: object
+      security:
+      - BearerAuth: []
+      summary: Get chat history for an order
+      tags:
+      - '[Shared] Communications & Tracking'
+    post:
+      consumes:
+      - application/json
+      description: Send a text message to the other participant of the order.
+      parameters:
+      - description: Order UUID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Message payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_domain_chat.SendMessageRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/internal_domain_chat.ChatMessage'
+              type: object
+      security:
+      - BearerAuth: []
+      summary: Send a chat message
+      tags:
+      - '[Shared] Communications & Tracking'
+  /orders/{id}/messages/image:
+    post:
+      consumes:
+      - multipart/form-data
+      description: Upload an image and send it as a chat message.
+      parameters:
+      - description: Order UUID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Image file
+        in: formData
+        name: image
+        required: true
+        type: file
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/internal_domain_chat.ChatMessage'
+              type: object
+      security:
+      - BearerAuth: []
+      summary: Send an image in chat
+      tags:
+      - '[Shared] Communications & Tracking'
+  /orders/{id}/pickup:
+    post:
+      description: Runner marks the order as picked up and moving to delivery phase
+      parameters:
+      - description: Order UUID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+      security:
+      - BearerAuth: []
+      summary: Mark order as picked up
+      tags:
+      - '[Runner] Order Execution'
+  /orders/{id}/purchased:
+    post:
+      description: Runner marks the order as purchased and uploads a receipt
+      parameters:
+      - description: Order UUID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Receipt URL
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_domain_order.PurchasePayload'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+            - properties:
+                errors:
+                  items:
+                    $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.ValidationError'
+                  type: array
+              type: object
+      security:
+      - BearerAuth: []
+      summary: Mark order as purchased
+      tags:
+      - '[Runner] Order Execution'
+  /orders/{id}/reject-adjustment:
+    post:
+      consumes:
+      - application/json
+      description: Requester rejects the adjusted price. Optionally cancels the order.
+      parameters:
+      - description: Order UUID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Reject payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_domain_order.RejectAdjustmentRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+      security:
+      - BearerAuth: []
+      summary: Reject a price adjustment
+      tags:
+      - '[User] Order'
+  /orders/{id}/review:
+    get:
+      description: View the review left on a specific order
+      parameters:
+      - description: Order UUID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/internal_domain_review.Review'
+              type: object
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+      security:
+      - BearerAuth: []
+      summary: Get review by order
+      tags:
+      - '[Shared] Order View'
+    post:
+      consumes:
+      - application/json
+      description: Allows the Requester to rate the Runner after order is completed
+      parameters:
+      - description: Order UUID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Review payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_domain_review.SubmitReviewRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+            - properties:
+                errors:
+                  items:
+                    $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.ValidationError'
+                  type: array
+              type: object
+      security:
+      - BearerAuth: []
+      summary: Submit a review
+      tags:
+      - '[User] Order'
+  /orders/{id}/stream:
+    get:
+      description: Server-Sent Events (SSE) endpoint to listen for order status changes
+        in real-time
+      parameters:
+      - description: Order UUID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - text/event-stream
+      responses:
+        "200":
+          description: SSE Stream
+          schema:
+            type: string
+      security:
+      - BearerAuth: []
+      summary: Stream order status updates
+      tags:
+      - '[Shared] Communications & Tracking'
+  /orders/{id}/track:
+    get:
+      description: SSE stream for runner location, status, and ETA. Shared with order
+        participants.
+      parameters:
+      - description: Order UUID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - text/event-stream
+      responses:
+        "200":
+          description: SSE Stream
+          schema:
+            type: string
+      security:
+      - BearerAuth: []
+      summary: Live tracking stream (SSE)
+      tags:
+      - '[Shared] Communications & Tracking'
+  /orders/{id}/ws:
+    get:
+      description: '[DISABLED FOR MVP V2] WebSocket endpoint for real-time messaging
+        between participants of an order. Use WhatsApp redirection instead.'
+      parameters:
+      - description: Order UUID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      responses: {}
+      security:
+      - BearerAuth: []
+      summary: '[DISABLED] Real-time chat (WebSocket)'
+      tags:
+      - '[Shared] Communications & Tracking'
+  /orders/available:
+    get:
+      description: Retrieve all orders that are current pending or matching for a
+        potential runner
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/internal_domain_order.Order'
+                  type: array
+              type: object
+      security:
+      - BearerAuth: []
+      summary: List available orders for runners
+      tags:
+      - '[Runner] Order Execution'
+  /orders/estimate-fee:
+    post:
+      consumes:
+      - application/json
+      description: Calculate estimated delivery fee based on distance, weight, and
+        volume
+      parameters:
+      - description: Fee estimation details
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_domain_order.EstimateFeeRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/internal_domain_order.EstimateFeeResponse'
+              type: object
+      security:
+      - BearerAuth: []
+      summary: Estimate delivery fee
+      tags:
+      - '[User] Order'
+  /orders/me:
+    get:
+      description: Get a list of orders related to the logged-in user (as requester
+        or runner)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/internal_domain_order.Order'
+                  type: array
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+      security:
+      - BearerAuth: []
+      summary: Get user orders
+      tags:
+      - '[Shared] Order View'
+  /trips:
+    post:
+      consumes:
+      - application/json
+      description: Declare a new journey as a runner
+      parameters:
+      - description: Trip payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_domain_trip.CreateTripRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/internal_domain_trip.Trip'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+      security:
+      - BearerAuth: []
+      summary: Create a new trip
+      tags:
+      - '[Runner] Trip'
+  /trips/{id}/cancel:
+    post:
+      description: Mark a trip as cancelled
+      parameters:
+      - description: Trip ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+      security:
+      - BearerAuth: []
+      summary: Cancel a trip
+      tags:
+      - '[Runner] Trip'
+  /trips/{id}/complete:
+    post:
+      description: Mark a started trip as completed
+      parameters:
+      - description: Trip ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+      security:
+      - BearerAuth: []
+      summary: Complete a trip
+      tags:
+      - '[Runner] Trip'
+  /trips/{id}/start:
+    post:
+      description: Mark a trip as started (in progress)
+      parameters:
+      - description: Trip ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+      security:
+      - BearerAuth: []
+      summary: Start a trip
+      tags:
+      - '[Runner] Trip'
+  /trips/me:
+    get:
+      description: Retrieve all trips declared by the logged-in runner
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/internal_domain_trip.Trip'
+                  type: array
+              type: object
+      security:
+      - BearerAuth: []
+      summary: Get runner trips
+      tags:
+      - '[Runner] Trip'
+  /users:
+    get:
+      description: Retrieve a list of all non-deleted users
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/internal_domain_user.User'
+                  type: array
+              type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+      summary: List all users
+      tags:
+      - '[Admin] User Management'
+  /users/{id}:
+    delete:
+      description: Soft-delete a user by their UUID
+      parameters:
+      - description: User UUID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+      summary: Delete user by ID
+      tags:
+      - '[Admin] User Management'
+    get:
+      description: Retrieve a single user by their UUID
+      parameters:
+      - description: User UUID
+        format: uuid
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/internal_domain_user.User'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+      summary: Get user by ID
+      tags:
+      - '[Admin] User Management'
+  /users/accepting-orders:
+    put:
+      consumes:
+      - application/json
+      description: Allows runners to enable or disable matching for proximity orders
+        (< 10km)
+      parameters:
+      - description: Accepting Orders payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_domain_user.UpdateAcceptingOrdersRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+      security:
+      - BearerAuth: []
+      summary: Toggle order acceptance status
+      tags:
+      - '[Runner] Profile'
+  /users/home:
+    put:
+      consumes:
+      - application/json
+      description: Update the home coordinates and address for the current authenticated
+        user
+      parameters:
+      - description: Home payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_domain_user.UpdateHomeRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+            - properties:
+                errors:
+                  items:
+                    $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.ValidationError'
+                  type: array
+              type: object
+      security:
+      - BearerAuth: []
+      summary: Update user home location
+      tags:
+      - '[User] Profile'
+  /users/location:
+    post:
+      consumes:
+      - application/json
+      description: '[DISABLED FOR MVP V2] Runner updates their current latitude and
+        longitude'
+      parameters:
+      - description: Location coordinates
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_domain_user.LocationUpdate'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+      security:
+      - BearerAuth: []
+      summary: '[DISABLED] Update user live location'
+      tags:
+      - '[Runner] Trip'
+  /users/location/stream:
+    get:
+      description: '[DISABLED FOR MVP V2] WebSocket endpoint for runners to stream
+        their live GPS coordinates'
+      responses: {}
+      security:
+      - BearerAuth: []
+      summary: '[DISABLED] Stream real-time location (WebSocket)'
+      tags:
+      - '[Shared] Communications & Tracking'
+  /users/me:
+    get:
+      description: Retrieve the profile of the currently authenticated user
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/internal_domain_user.User'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+      security:
+      - BearerAuth: []
+      summary: Get current logged-in user profile
+      tags:
+      - '[User] Profile'
+  /users/pin/setup:
+    post:
+      consumes:
+      - application/json
+      description: Set a 6-digit numeric PIN for transactions (first time only)
+      parameters:
+      - description: PIN payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_domain_user.SetupPinRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+      security:
+      - BearerAuth: []
+      summary: Setup user transaction PIN
+      tags:
+      - '[User] Profile'
+  /users/profile:
+    put:
+      consumes:
+      - multipart/form-data
+      description: Update name, whatsapp number, and optionally avatar image
+      parameters:
+      - description: Full Name
+        in: formData
+        name: name
+        required: true
+        type: string
+      - description: WhatsApp Number
+        in: formData
+        name: whatsapp_number
+        required: true
+        type: string
+      - description: Home Address
+        in: formData
+        name: home_address
+        type: string
+      - description: Avatar Image
+        in: formData
+        name: avatar
+        type: file
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+      security:
+      - BearerAuth: []
+      summary: Update user profile
+      tags:
+      - '[User] Profile'
+  /users/register:
+    post:
+      consumes:
+      - application/json
+      description: Register a new user (requester or runner)
+      parameters:
+      - description: User payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_domain_user.CreateUserRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/internal_domain_user.User'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+            - properties:
+                errors:
+                  items:
+                    $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.ValidationError'
+                  type: array
+              type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+      summary: Register a new user
+      tags:
+      - Auth
+  /wallets/balance:
+    get:
+      description: Retrieve the current user's wallet balance
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/internal_domain_wallet.Wallet'
+              type: object
+      security:
+      - BearerAuth: []
+      summary: Get wallet balance
+      tags:
+      - '[User] Finance'
+  /wallets/topup:
+    post:
+      consumes:
+      - application/json
+      description: Top up the user's wallet balance
+      parameters:
+      - description: Top Up details
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_domain_wallet.AmountRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/internal_domain_wallet.WalletTransaction'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+            - properties:
+                errors:
+                  items:
+                    $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.ValidationError'
+                  type: array
+              type: object
+      security:
+      - BearerAuth: []
+      summary: Top Up Wallet
+      tags:
+      - '[User] Finance'
+  /wallets/transactions:
+    get:
+      description: Retrieve the current user's wallet transaction history
+      parameters:
+      - description: Page number
+        in: query
+        name: page
+        type: integer
+      - description: Items per page
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/internal_domain_wallet.WalletTransaction'
+                  type: array
+              type: object
+      security:
+      - BearerAuth: []
+      summary: Get wallet transactions
+      tags:
+      - '[User] Finance'
+  /wallets/transactions/status:
+    get:
+      description: Check the status of a wallet transaction using its reference code
+      parameters:
+      - description: Transaction reference code
+        in: query
+        name: reference
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/internal_domain_wallet.WalletTransaction'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+      security:
+      - BearerAuth: []
+      summary: Get transaction status by reference
+      tags:
+      - '[User] Finance'
+  /wallets/withdraw:
+    post:
+      consumes:
+      - application/json
+      description: Request a withdrawal from the user's wallet balance using a specific
+        channel
+      parameters:
+      - description: Withdrawal details
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_domain_wallet.WithdrawRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/internal_domain_wallet.WalletTransaction'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+            - properties:
+                errors:
+                  items:
+                    $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.ValidationError'
+                  type: array
+              type: object
+      security:
+      - BearerAuth: []
+      summary: Request Withdrawal
+      tags:
+      - '[User] Finance'
+  /wallets/withdraw/inquiry:
+    post:
+      consumes:
+      - application/json
+      description: Verify the account holder name before withdrawal
+      parameters:
+      - description: Inquiry details
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_domain_wallet.InquiryAccountRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+            - properties:
+                data:
+                  $ref: '#/definitions/internal_domain_wallet.InquiryAccountResponse'
+              type: object
+      security:
+      - BearerAuth: []
+      summary: Inquiry Account Name
+      tags:
+      - '[User] Finance'
+  /wallets/withdrawal-channels:
+    get:
+      description: List all allowed bank and e-wallet withdrawal channels with fees
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/internal_domain_wallet.WithdrawalChannel'
+                  type: array
+              type: object
+      security:
+      - BearerAuth: []
+      summary: Get active withdrawal channels
+      tags:
+      - '[User] Finance'
+  /webhooks/disbursement:
+    post:
+      consumes:
+      - application/json
+      description: Receive disbursement status updates from payment gateway
+      parameters:
+      - description: Callback Security Token
+        in: header
+        name: X-Callback-Token
+        required: true
+        type: string
+      - description: Webhook Payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_domain_wallet.DisbursementWebhookRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+      summary: Disbursement Webhook Callback
+      tags:
+      - '[Public] Webhook'
+  /webhooks/qris:
+    post:
+      consumes:
+      - application/json
+      description: Receive payment status updates from mock-qris
+      parameters:
+      - description: Callback Security Token
+        in: header
+        name: X-Callback-Token
+        required: true
+        type: string
+      - description: Webhook Payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/internal_domain_wallet.WebhookQrisPayload'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_codecoffy_nitip-core_pkg_response.envelope'
+      summary: QRIS Webhook Callback
+      tags:
+      - '[Public] Webhook'
+securityDefinitions:
+  BearerAuth:
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"
+tags:
+- description: Registrasi akun baru (requester/runner) dan login untuk mendapatkan
+    JWT token.
+  name: Auth
+- description: 'Admin: Daftar pengguna, verifikasi akun, update trust score, dan suspend
+    pengguna.'
+  name: '[Admin] User Management'
+- description: 'Admin: Review dan setujui/tolak dokumen KYC yang diajukan Runner.'
+  name: '[Admin] KYC Review'
+- description: 'Admin: Pantau semua order, batalkan paksa, dan selesaikan sengketa.'
+  name: '[Admin] Order Management'
+- description: 'Admin: Kelola permintaan penarikan dana dari Runner.'
+  name: '[Admin] Finance'
+- description: 'Admin: Baca dan ubah nilai konfigurasi sistem secara dinamis.'
+  name: '[Admin] System Config'
+- description: Proses verifikasi identitas (KTP + Selfie) agar Runner dapat menerima
+    order.
+  name: '[Runner] KYC'
+- description: Runner mendaftarkan rencana perjalanan beserta kapasitas kendaraan.
+  name: '[Runner] Trip'
+- description: Runner melihat, menerima, membelikan, dan mengirimkan pesanan.
+  name: '[Runner] Order Execution'
+- description: Manajemen profil dan alamat rumah untuk pengguna yang sedang login.
+  name: '[User] Profile'
+- description: Penitip membuat pesanan baru, melakukan pembayaran, dan mengajukan
+    sengketa.
+  name: '[User] Order'
+- description: Top-up saldo dompet, lihat riwayat transaksi, dan ajukan penarikan
+    dana.
+  name: '[User] Finance'
+- description: Endpoint bersama untuk melihat detail dan status pesanan (berlaku untuk
+    semua peran).
+  name: '[Shared] Order View'
+- description: Chat real-time (WebSocket) dan live tracking lokasi Runner (SSE & WebSocket).
+  name: '[Shared] Communications & Tracking'
