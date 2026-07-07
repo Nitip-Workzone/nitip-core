@@ -180,14 +180,14 @@ func (s *service) Login(ctx context.Context, req LoginRequest, platform string) 
 		if isDev {
 			log.Printf("[DEBUG] Login failed: User not found for email %s: %v", req.Email, err)
 		}
-		return nil, errors.New("Email atau kata sandi salah")
+		return nil, errors.New("email atau kata sandi salah")
 	}
 
 	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.Password)); err != nil {
 		if isDev {
 			log.Printf("[DEBUG] Login failed: Password mismatch for email %s: %v", req.Email, err)
 		}
-		return nil, errors.New("Email atau kata sandi salah")
+		return nil, errors.New("email atau kata sandi salah")
 	}
 
 	// Platform-based role validation
@@ -359,7 +359,7 @@ func (s *service) VerifyPin(ctx context.Context, id uuid.UUID, pin string) error
 	lockKey := fmt.Sprintf("pin_locked:%s", id.String())
 	isLocked, _ := s.redis.Exists(ctx, lockKey)
 	if isLocked {
-		return errors.New("PIN terblokir selama 24 jam karena terlalu banyak percobaan. Hubungi admin untuk bantuan.")
+		return errors.New("pin terblokir selama 24 jam karena terlalu banyak percobaan, hubungi admin untuk bantuan")
 	}
 
 	// 2. Verify PIN
@@ -374,7 +374,7 @@ func (s *service) VerifyPin(ctx context.Context, id uuid.UUID, pin string) error
 			// Lock for 24 hours
 			_ = s.redis.Set(ctx, lockKey, "locked", 24*time.Hour)
 			_ = s.redis.Del(ctx, attemptKey)
-			return errors.New("Terlalu banyak percobaan. PIN Anda diblokir selama 24 jam.")
+			return errors.New("terlalu banyak percobaan, PIN Anda diblokir selama 24 jam")
 		}
 
 		_ = s.redis.Set(ctx, attemptKey, strconv.Itoa(attempts), 1*time.Hour)

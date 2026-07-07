@@ -2,11 +2,16 @@ package wallet
 
 import (
 	"bytes"
+	"crypto/sha512"
+	"encoding/hex"
 	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
+	"github.com/codecoffy/nitip-core/config"
 	"github.com/codecoffy/nitip-core/internal/cache"
 	"github.com/codecoffy/nitip-core/internal/middleware"
 	"github.com/codecoffy/nitip-core/pkg/jwt"
@@ -48,6 +53,7 @@ func (h *Handler) RegisterRoutes(router fiber.Router) {
 	webhooks := router.Group("/webhooks")
 	webhooks.Post("/qris", h.WebhookQris)
 	webhooks.Post("/disbursement", h.WebhookDisbursement)
+	webhooks.Post("/midtrans", h.WebhookMidtrans)
 }
 
 // GetBalance godoc
@@ -441,4 +447,72 @@ func (h *Handler) WebhookDisbursement(c *fiber.Ctx) error {
 	}
 
 	return response.Success(c, "disbursement webhook processed", nil)
+}
+
+type MidtransNotification struct {
+	TransactionTime   string `json:"transaction_time"`
+	TransactionStatus string `json:"transaction_status"`
+	StatusCode        string `json:"status_code"`
+	SignatureKey      string `json:"signature_key"`
+	PaymentType       string `json:"payment_type"`
+	OrderID           string `json:"order_id"`
+	GrossAmount       string `json:"gross_amount"`
+}
+
+// WebhookMidtrans godoc
+// @Summary      Midtrans Webhook Callback
+// @Description  Receive payment notifications from Midtrans
+// @Tags         [Public] Webhook
+// @Accept       json
+// @Produce      json
+// @Param        body              body      MidtransNotification  true  "Webhook Payload"
+// @Success      200               {object}  response.envelope
+// @Router       /webhooks/midtrans [post]
+func (h *Handler) WebhookMidtrans(c *fiber.Ctx) error {
+	// Handle empty/ping body request from Midtrans dashboard
+	if len(c.Body()) == 0 {
+		log.Println("[MIDTRANS-WEBHOOK] Empty body received (likely a test ping). Returning 200 OK.")
+		return response.Success(c, "webhook ping received", nil)
+	}
+
+	log.Printf("[MIDTRANS-WEBHOOK] Incoming Content-Type: %s", c.Get("Content-Type"))
+	log.Printf("[MIDTRANS-WEBHOOK] Incoming Raw Body: %s", string(c.Body()))
+
+	var payload MidtransNotification
+	if err := c.BodyParser(&payload); err != nil {
+		log.Printf("[MIDTRANS-WEBHOOK] BodyParser error: %v", err)
+		return response.BadRequest(c, "invalid webhook payload")
+	}
+
+	// Handle empty/ping request from Midtrans dashboard
+	if payload.OrderID == "" || payload.SignatureKey == "" || strings.HasPrefix(payload.OrderID, "payment_notif_test_") {
+		log.Println("[MIDTRANS-WEBHOOK] Ping/Test request received. Returning 200 OK.")
+		return response.Success(c, "webhook ping received", nil)
+	}
+
+	// Verify Signature: SHA512(order_id + status_code + gross_amount + server_key)
+	serverKey := config.App.MidtransServerKey
+	signData := payload.OrderID + payload.StatusCode + payload.GrossAmount + serverKey
+	hasher := sha512.New()
+	hasher.Write([]byte(signData))
+	computedSign := hex.EncodeToString(hasher.Sum(nil))
+
+	if computedSign != payload.SignatureKey {
+		if config.App.AppEnv != "production" {
+			log.Printf("[MIDTRANS-WEBHOOK] Warning: Invalid signature key: got %s, expected %s. Bypassing because AppEnv is development.", payload.SignatureKey, computedSign)
+			return response.Success(c, "webhook processed (dev mode bypass)", nil)
+		}
+		return response.Forbidden(c, "invalid signature key")
+	}
+
+	// If paid, finalize the top up
+	if payload.TransactionStatus == "settlement" || payload.TransactionStatus == "capture" {
+		_, err := h.service.FinalizeTopUp(c.Context(), payload.OrderID)
+		if err != nil {
+			// Transaction might be processed already or not found
+			return response.BadRequest(c, err.Error())
+		}
+	}
+
+	return response.Success(c, "webhook processed", nil)
 }

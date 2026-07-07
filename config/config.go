@@ -43,6 +43,12 @@ type Config struct {
 	MinioSecretKey  string
 	MinioBucketName string
 	MinioUseSSL     bool
+
+	// Midtrans
+	MidtransServerKey    string
+	MidtransClientKey    string
+	MidtransIsProduction bool
+	UseMockPayment       bool
 }
 
 var App *Config
@@ -88,6 +94,12 @@ func Load() *Config {
 		MinioSecretKey:  getEnv("MINIO_SECRET_KEY", ""),
 		MinioBucketName: getEnv("MINIO_BUCKET", "nitip"),
 		MinioUseSSL:     getEnv("MINIO_USE_SSL", "false") == "true",
+
+		// Midtrans
+		MidtransServerKey:    getEnv("MIDTRANS_SERVER_KEY", ""),
+		MidtransClientKey:    getEnv("MIDTRANS_CLIENT_KEY", ""),
+		MidtransIsProduction: getEnv("MIDTRANS_IS_PRODUCTION", "false") == "true",
+		UseMockPayment:       getEnv("USE_MOCK_PAYMENT", "true") == "true",
 	}
 
 	App = cfg

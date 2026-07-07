@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"log"
 	"strconv"
 	"strings"
 	"time"
@@ -19,6 +20,8 @@ import (
 	"github.com/codecoffy/nitip-core/config"
 	"github.com/google/uuid"
 	"github.com/uptrace/bun"
+	"github.com/midtrans/midtrans-go"
+	"github.com/midtrans/midtrans-go/coreapi"
 )
 
 type InquiryAccountRequest struct {
@@ -138,43 +141,111 @@ func (s *service) InitiateTopUp(ctx context.Context, userID uuid.UUID, amount fl
 		return nil, err
 	}
 
-	reference := "MOCK-" + uuid.New().String()[:8]
+	var reference string
+	var qrString string
+	var deeplinkString string
 
-	// 2. Hit mock-qris to generate QR code
-	payload := map[string]interface{}{
-		"reference_id": reference,
-		"amount":       int64(amount),
-	}
-	body, _ := json.Marshal(payload)
+	if config.App.MidtransServerKey != "" && !config.App.UseMockPayment {
+		reference = "TOPUP-" + uuid.New().String()[:8]
 
-	pgUrl := os.Getenv("PAYMENT_GATEWAY_URL")
-	if pgUrl == "" {
-		pgUrl = "http://localhost:4000"
-	}
+		// Get user info for Midtrans payload
+		userObj, err := s.userSvc.GetByID(ctx, userID, userID)
+		var userEmail string
+		var userName string
+		if err == nil && userObj != nil {
+			userEmail = userObj.Email
+			userName = userObj.Name
+		}
 
-	resp, err := http.Post(fmt.Sprintf("%s/api/qris/generate", pgUrl), "application/json", bytes.NewBuffer(body))
-	if err != nil {
-		return nil, fmt.Errorf("gagal menghubungi payment gateway: %v", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
+		midtransEnv := midtrans.Sandbox
+		if config.App.MidtransIsProduction {
+			midtransEnv = midtrans.Production
+		}
 
-	var qrisResp struct {
-		Status     string `json:"status"`
-		TrxID      string `json:"trx_id"`
-		QrisString string `json:"qris_string"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&qrisResp); err != nil {
-		return nil, fmt.Errorf("gagal membaca respon payment gateway")
+		var client coreapi.Client
+		client.New(config.App.MidtransServerKey, midtransEnv)
+
+		req := &coreapi.ChargeReq{
+			PaymentType: coreapi.PaymentTypeGopay,
+			TransactionDetails: midtrans.TransactionDetails{
+				OrderID:  reference,
+				GrossAmt: int64(amount),
+			},
+			CustomerDetails: &midtrans.CustomerDetails{
+				FName: userName,
+				Email: userEmail,
+			},
+			Gopay: &coreapi.GopayDetails{
+				EnableCallback: true,
+				CallbackUrl:    "nitip://payment-callback",
+			},
+		}
+
+		chargeResp, midtransErr := client.ChargeTransaction(req)
+		if !isMidtransErrorNil(midtransErr) {
+			log.Printf("[MIDTRANS-CHARGE-ERROR] StatusCode: %d, Message: %s", midtransErr.StatusCode, midtransErr.Message)
+			if midtransErr.StatusCode == 402 {
+				return nil, errors.New("saluran pembayaran GoPay belum diaktifkan pada akun Midtrans Sandbox Anda, silakan aktifkan terlebih dahulu di dashboard Midtrans")
+			}
+			return nil, errors.New("gagal membuat kode pembayaran GoPay/QRIS, silakan coba lagi beberapa saat lagi")
+		}
+
+		for _, action := range chargeResp.Actions {
+			switch action.Name {
+			case "generate-qr-code":
+				qrString = action.URL
+			case "deeplink-redirect":
+				deeplinkString = action.URL
+			}
+		}
+		if qrString == "" && deeplinkString == "" && len(chargeResp.Actions) > 0 {
+			qrString = chargeResp.Actions[0].URL
+		}
+	} else {
+		// FALLBACK to mock-qris
+		reference = "MOCK-" + uuid.New().String()[:8]
+
+		payload := map[string]interface{}{
+			"reference_id": reference,
+			"amount":       int64(amount),
+		}
+		body, _ := json.Marshal(payload)
+
+		pgUrl := os.Getenv("PAYMENT_GATEWAY_URL")
+		if pgUrl == "" {
+			pgUrl = "http://localhost:4000"
+		}
+
+		resp, err := http.Post(fmt.Sprintf("%s/api/qris/generate", pgUrl), "application/json", bytes.NewBuffer(body))
+		if err != nil {
+			return nil, fmt.Errorf("gagal menghubungi payment gateway: %v", err)
+		}
+		defer func() {
+			_ = resp.Body.Close()
+		}()
+
+		var qrisResp struct {
+			Status     string `json:"status"`
+			TrxID      string `json:"trx_id"`
+			QrisString string `json:"qris_string"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&qrisResp); err != nil {
+			return nil, fmt.Errorf("gagal membaca respon payment gateway")
+		}
+
+		reference = qrisResp.TrxID
+		qrString = qrisResp.QrisString
 	}
 
 	wtx := &WalletTransaction{
-		ID:         uuid.New(),
-		WalletID:   w.ID,
-		Type:       TypeTopUp,
-		Amount:     amount,
-		Reference:  qrisResp.TrxID, // Use the real TRX ID from PG as reference
-		Status:     StatusPending,
-		QrisString: qrisResp.QrisString,
+		ID:          uuid.New(),
+		WalletID:    w.ID,
+		Type:        TypeTopUp,
+		Amount:      amount,
+		Reference:   reference,
+		Status:      StatusPending,
+		QrisString:  qrString,
+		DeeplinkURL: deeplinkString,
 	}
 
 	if err := s.repo.CreateTransaction(ctx, s.db, wtx); err != nil {
@@ -252,7 +323,9 @@ func (s *service) InquiryAccount(ctx context.Context, req InquiryAccountRequest)
 	if err != nil {
 		return nil, fmt.Errorf("gagal menghubungi payment gateway (timeout): %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, errors.New("gagal melakukan verifikasi rekening")
@@ -784,7 +857,13 @@ func (s *service) triggerPgDisbursement(wtx *WalletTransaction, channel *Withdra
 		fmt.Printf("[WALLET] Error triggering PG disbursement: %v\n", err)
 		return
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	fmt.Printf("[WALLET] Disbursement request sent to PG for Trx: %s, Status: %d\n", wtx.ID, resp.StatusCode)
+}
+
+func isMidtransErrorNil(err *midtrans.Error) bool {
+	return err == nil
 }

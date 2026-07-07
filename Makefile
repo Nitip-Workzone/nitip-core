@@ -15,7 +15,7 @@ export
 .PHONY: help run dev build clean \
         migrate-up migrate-down migrate-status migrate-create migrate-reset migrate-fix \
         test test-coverage lint tidy install-tools swagger \
-        docker-up docker-down docker-logs
+        docker-up docker-down docker-logs ngrok
 
 ## help: Show this help
 help:
@@ -217,3 +217,9 @@ ifndef id
 	$(error ❌  usage: make test-track id=ORDER_UUID [token=JWT] [url=URL])
 endif
 	go run ../scripts/track_monitor.go -id $(id) -token "$(token)" -url "$(url)"
+
+## ngrok: Start ngrok tunnel for local webhook testing on port 8000
+ngrok:
+	@echo "🚀 Starting ngrok tunnel on port $(APP_PORT)..."
+	ngrok http $(APP_PORT)
+

@@ -12,7 +12,9 @@ func IsImage(file *multipart.FileHeader) bool {
 	if err != nil {
 		return false
 	}
-	defer f.Close()
+	defer func() {
+		_ = f.Close()
+	}()
 
 	// Only read first 512 bytes to detect content type
 	buffer := make([]byte, 512)

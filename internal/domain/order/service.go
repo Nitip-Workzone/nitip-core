@@ -525,15 +525,16 @@ func (s *service) PickupOrder(ctx context.Context, orderID, runnerID uuid.UUID) 
 		return errors.New("unauthorized: you are not the runner for this order")
 	}
 
-	if order.ServiceCategory == CategoryBeli {
+	switch order.ServiceCategory {
+	case CategoryBeli:
 		if order.Status != StatusPurchasing {
 			return errors.New("order category 'beli' must be purchased (receipt uploaded) before it can be picked up")
 		}
-	} else if order.ServiceCategory == CategoryKirim {
+	case CategoryKirim:
 		if order.Status != StatusAccepted {
 			return errors.New("order category 'kirim' must be accepted before it can be picked up")
 		}
-	} else {
+	default:
 		if order.Status != StatusAccepted && order.Status != StatusPurchasing {
 			return errors.New("order is not in a state that can be picked up")
 		}
@@ -673,7 +674,8 @@ func (s *service) CompleteOrder(ctx context.Context, orderID, runnerID uuid.UUID
 
 	// --- Unified Completion Transaction ---
 	err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		if order.PaymentMethod == MethodEscrow {
+		switch order.PaymentMethod {
+		case MethodEscrow:
 			platformFee := order.ServiceFee
 			refundAmount := order.CheckingFee
 			totalRunnerPayout := order.EstimatedCost + (order.DeliveryFee - order.ServiceFee - order.CheckingFee)
@@ -682,7 +684,7 @@ func (s *service) CompleteOrder(ctx context.Context, orderID, runnerID uuid.UUID
 				return errors.New("failed to release escrow: " + err.Error())
 			}
 			order.PaymentStatus = PaymentReleased
-		} else if order.PaymentMethod == MethodCOD {
+		case MethodCOD:
 			platformFee := order.ServiceFee
 			if err := s.walletSvc.DeductCODPlatformFee(ctx, tx, runnerID, order.ID, platformFee); err != nil {
 				return errors.New("failed to deduct COD platform fee: " + err.Error())
