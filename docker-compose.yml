@@ -14,6 +14,8 @@ services:
       REDIS_ADDR: nitip-redis:6379
     ports:
       - "127.0.0.1:8080:8000"
+    volumes:
+      - ./firebase-credentials.json:/app/firebase-credentials.json:ro
     depends_on:
       postgres:
         condition: service_healthy

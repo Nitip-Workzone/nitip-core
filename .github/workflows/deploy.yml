@@ -1,0 +1,40 @@
+name: Deploy to VPS (Self-Hosted)
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Copy Secrets File
+        run: |
+          # Menyalin file .env dan file kredensial firebase dari folder rahasia VPS
+          cp ~/.secrets/nitip-production.env .env
+          cp ~/.secrets/firebase-credentials.json ./firebase-credentials.json || true
+
+      - name: Build New Docker Image
+        run: |
+          # Build ulang image backend dengan tag latest (menarik source code terbaru)
+          docker compose build app
+
+      - name: Run Database Migrations
+        run: |
+          # Menjalankan perintah migrasi yang sudah dibungkus via Makefile di dalam ekosistem Docker
+          make docker-migrate-up
+
+      - name: Restart API Server
+        run: |
+          # Menjalankan (atau me-restart jika sudah jalan) container aplikasi dengan image terbaru
+          docker compose up -d app
+          
+      - name: Cleanup Old Images
+        run: |
+          # Menghapus sisa image lama agar disk VPS (2GB) tidak cepat penuh
+          docker image prune -f

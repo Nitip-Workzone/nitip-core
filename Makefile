@@ -77,9 +77,13 @@ docker-logs:
 
 # ── Database Migrations (goose) ──────────────────
 
-## migrate-up: Apply all pending migrations
+## migrate-up: Apply all pending migrations (Local Environment)
 migrate-up:
 	go run $(CMD_MIGRATE) up
+
+## docker-migrate-up: Apply all pending migrations (Inside Docker / Production)
+docker-migrate-up:
+	docker compose run --rm app /app/migrate up
 
 ## migrate-down: Rollback the last migration step
 migrate-down:
