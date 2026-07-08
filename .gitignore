@@ -1,8 +1,8 @@
 # Binaries
-bin/
+/bin/
 tmp/
 main
-server
+/server
 
 # Environment
 .env
