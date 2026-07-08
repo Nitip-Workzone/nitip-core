@@ -26,8 +26,7 @@ jobs:
 
       - name: Run Database Migrations
         run: |
-          # Menjalankan perintah migrasi yang sudah dibungkus via Makefile di dalam ekosistem Docker
-          make docker-migrate-up
+          docker compose run --rm app /app/migrate up
 
       - name: Restart API Server
         run: |
