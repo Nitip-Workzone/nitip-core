@@ -117,12 +117,12 @@ func InternalError(c *fiber.Ctx, message string) error {
 
 	// Security: Mask database errors in production/response
 	lowMsg := strings.ToLower(message)
-	if strings.Contains(lowMsg, "sql") || 
-	   strings.Contains(lowMsg, "unique constraint") || 
-	   strings.Contains(lowMsg, "foreign key") ||
-	   strings.Contains(lowMsg, "table") ||
-	   strings.Contains(lowMsg, "column") ||
-	   strings.Contains(lowMsg, "relation") {
+	if strings.Contains(lowMsg, "sql") ||
+		strings.Contains(lowMsg, "unique constraint") ||
+		strings.Contains(lowMsg, "foreign key") ||
+		strings.Contains(lowMsg, "table") ||
+		strings.Contains(lowMsg, "column") ||
+		strings.Contains(lowMsg, "relation") {
 		message = "terjadi kesalahan internal pada server"
 	}
 

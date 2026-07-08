@@ -85,7 +85,7 @@ func (r *repository) UpdateWalletBalance(ctx context.Context, db bun.IDB, wallet
 		Where("id = ?", walletID).
 		Where("balance + ? >= 0", amount).
 		Exec(ctx)
-	
+
 	if err == nil {
 		rows, _ := res.RowsAffected()
 		if rows == 0 && amount < 0 {

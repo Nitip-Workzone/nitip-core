@@ -146,7 +146,7 @@ func (s *service) Create(ctx context.Context, req CreateUserRequest) (*User, err
 		return nil, errors.New("failed to hash password")
 	}
 
-	role := "requester"
+	role := RoleRequester
 	if req.Role != "" {
 		role = req.Role
 	}
@@ -193,11 +193,11 @@ func (s *service) Login(ctx context.Context, req LoginRequest, platform string) 
 	// Platform-based role validation
 	switch platform {
 	case "web-admin":
-		if user.Role != "admin" {
+		if user.Role != RoleAdmin {
 			return nil, errors.New("akses ditolak: hanya administrator yang dapat masuk ke sini")
 		}
 	case "mobile":
-		if user.Role == "admin" {
+		if user.Role == RoleAdmin {
 			return nil, errors.New("akses ditolak: administrator harus menggunakan panel web")
 		}
 	}
@@ -487,7 +487,7 @@ func (s *service) UpdateLocation(ctx context.Context, id uuid.UUID, lat, lng flo
 		_ = s.redis.Set(ctx, key, val, 10*time.Minute)
 
 		// GEO set for spatial search (runners_live)
-		if u.Role == "runner" && !u.IsSuspended {
+		if u.Role == RoleRunner && !u.IsSuspended {
 			_ = s.redis.Client().GeoAdd(ctx, "runners_live", &redis.GeoLocation{
 				Name:      id.String(),
 				Longitude: lng,
@@ -519,7 +519,7 @@ func (s *service) UpdateAcceptingOrders(ctx context.Context, id uuid.UUID, isAcc
 		return err
 	}
 
-	if u.Role != "runner" {
+	if u.Role != RoleRunner {
 		return errors.New("hanya runner yang dapat mengubah status penerimaan order")
 	}
 

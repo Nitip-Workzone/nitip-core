@@ -94,7 +94,7 @@ func (r *repository) FindNearbyRunners(ctx context.Context, lat, lng, radiusKm f
 		Where("last_lat BETWEEN ? AND ?", minLat, maxLat).
 		Where("last_lng BETWEEN ? AND ?", minLng, maxLng).
 		Scan(ctx)
-	
+
 	return users, err
 }
 

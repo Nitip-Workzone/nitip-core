@@ -15,6 +15,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/joho/godotenv v1.5.1
 	github.com/lib/pq v1.11.2
+	github.com/midtrans/midtrans-go v1.3.8
 	github.com/minio/minio-go/v7 v7.0.100
 	github.com/pressly/goose/v3 v3.22.1
 	github.com/redis/go-redis/v9 v9.18.0
@@ -83,7 +84,6 @@ require (
 	github.com/mattn/go-isatty v0.0.21 // indirect
 	github.com/mattn/go-runewidth v0.0.23 // indirect
 	github.com/mfridman/interpolate v0.0.2 // indirect
-	github.com/midtrans/midtrans-go v1.3.8 // indirect
 	github.com/minio/crc64nvme v1.1.1 // indirect
 	github.com/minio/md5-simd v1.1.2 // indirect
 	github.com/philhofer/fwd v1.2.0 // indirect

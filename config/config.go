@@ -49,6 +49,9 @@ type Config struct {
 	MidtransClientKey    string
 	MidtransIsProduction bool
 	UseMockPayment       bool
+
+	// Webhook Security
+	WebhookCallbackToken string
 }
 
 var App *Config
@@ -100,6 +103,9 @@ func Load() *Config {
 		MidtransClientKey:    getEnv("MIDTRANS_CLIENT_KEY", ""),
 		MidtransIsProduction: getEnv("MIDTRANS_IS_PRODUCTION", "false") == "true",
 		UseMockPayment:       getEnv("USE_MOCK_PAYMENT", "true") == "true",
+
+		// Webhook Security
+		WebhookCallbackToken: getEnv("WEBHOOK_CALLBACK_TOKEN", ""),
 	}
 
 	App = cfg

@@ -9,20 +9,20 @@ import (
 )
 
 type CreateTripRequest struct {
-	OriginName      string     `json:"origin_name"      validate:"required"`
-	OriginLat       float64    `json:"origin_lat"       validate:"required"`
-	OriginLng       float64    `json:"origin_lng"       validate:"required"`
-	DestinationName string     `json:"destination_name" validate:"required"`
-	DestinationLat  float64    `json:"destination_lat"  validate:"required"`
-	DestinationLng  float64    `json:"destination_lng"  validate:"required"`
-	DepartureTime   time.Time  `json:"departure_time"   validate:"required"`
-	ReturnTime      *time.Time `json:"return_time"`
-	Notes           string     `json:"notes"`
-	VehicleType     string     `json:"vehicle_type"     validate:"required,oneof=motorcycle car pickup"`
-	MaxWeightKg           float64    `json:"max_weight_kg"`
-	MaxVolumeLiters       float64    `json:"max_volume_liters"`
-	AllowedServiceTypes   []string   `json:"allowed_service_types"`
-	IsRoundTrip           bool       `json:"is_round_trip"`
+	OriginName          string     `json:"origin_name"      validate:"required"`
+	OriginLat           float64    `json:"origin_lat"       validate:"required"`
+	OriginLng           float64    `json:"origin_lng"       validate:"required"`
+	DestinationName     string     `json:"destination_name" validate:"required"`
+	DestinationLat      float64    `json:"destination_lat"  validate:"required"`
+	DestinationLng      float64    `json:"destination_lng"  validate:"required"`
+	DepartureTime       time.Time  `json:"departure_time"   validate:"required"`
+	ReturnTime          *time.Time `json:"return_time"`
+	Notes               string     `json:"notes"`
+	VehicleType         string     `json:"vehicle_type"     validate:"required,oneof=motorcycle car pickup"`
+	MaxWeightKg         float64    `json:"max_weight_kg"`
+	MaxVolumeLiters     float64    `json:"max_volume_liters"`
+	AllowedServiceTypes []string   `json:"allowed_service_types"`
+	IsRoundTrip         bool       `json:"is_round_trip"`
 }
 
 type Service interface {
@@ -31,6 +31,7 @@ type Service interface {
 	Start(ctx context.Context, tripID, runnerID uuid.UUID) error
 	Cancel(ctx context.Context, tripID, runnerID uuid.UUID) error
 	Complete(ctx context.Context, tripID, runnerID uuid.UUID) error
+	ListActive(ctx context.Context) ([]Trip, error)
 }
 
 type service struct {
@@ -109,6 +110,10 @@ func (s *service) Create(ctx context.Context, runnerID uuid.UUID, req CreateTrip
 
 func (s *service) GetByRunner(ctx context.Context, runnerID uuid.UUID) ([]Trip, error) {
 	return s.repo.FindByRunnerID(ctx, runnerID)
+}
+
+func (s *service) ListActive(ctx context.Context) ([]Trip, error) {
+	return s.repo.FindAllActive(ctx)
 }
 
 func (s *service) Start(ctx context.Context, tripID, runnerID uuid.UUID) error {

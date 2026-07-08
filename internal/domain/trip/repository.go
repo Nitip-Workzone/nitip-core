@@ -16,6 +16,7 @@ type Repository interface {
 	Update(ctx context.Context, trip *Trip) error
 	UpdateCapacity(ctx context.Context, db bun.IDB, id uuid.UUID, weight, volume float64) error
 	RestoreCapacity(ctx context.Context, db bun.IDB, id uuid.UUID, weight, volume float64) error
+	FindAllActive(ctx context.Context) ([]Trip, error)
 }
 
 type repository struct {
@@ -49,10 +50,20 @@ func (r *repository) FindByRunnerID(ctx context.Context, runnerID uuid.UUID) ([]
 	return trips, err
 }
 
+func (r *repository) FindAllActive(ctx context.Context) ([]Trip, error) {
+	var trips []Trip
+	err := r.db.NewSelect().Model(&trips).
+		Where("status = ?", StatusActive).
+		Where("departure_time > NOW()").
+		Order("departure_time ASC").
+		Scan(ctx)
+	return trips, err
+}
+
 func (r *repository) FindActiveByLocation(ctx context.Context, lat, lng float64, radiusKm float64) ([]Trip, error) {
 	var trips []Trip
-	
-	// We use a generous candidate radius (20KM) to ensure we catch trips 
+
+	// We use a generous candidate radius (20KM) to ensure we catch trips
 	// that can accommodate a 10KM detour even if they don't start exactly at the pickup.
 	candidateRadiusMeters := 20000.0
 
@@ -81,7 +92,7 @@ func (r *repository) UpdateCapacity(ctx context.Context, db bun.IDB, id uuid.UUI
 		Where("available_weight_kg >= ?", weight).
 		Where("available_volume_liters >= ?", volume).
 		Exec(ctx)
-	
+
 	if err != nil {
 		return err
 	}

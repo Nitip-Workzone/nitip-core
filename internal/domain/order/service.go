@@ -2,8 +2,10 @@ package order
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
+	"math/big"
 	"time"
 
 	"math"
@@ -153,7 +155,7 @@ func (s *service) Create(ctx context.Context, requesterID uuid.UUID, req CreateO
 	if err != nil {
 		return nil, err
 	}
-	if u.Role != "requester" {
+	if u.Role != user.RoleRequester {
 		return nil, errors.New("unauthorized: only users with requester role can create orders")
 	}
 
@@ -226,9 +228,15 @@ func (s *service) Create(ctx context.Context, requesterID uuid.UUID, req CreateO
 	baseWithMarkup := deliveryFee - checkingFee
 	serviceFee := baseWithMarkup - (baseWithMarkup / 1.1)
 
+	completionCode, err := generateCompletionCode()
+	if err != nil {
+		return nil, fmt.Errorf("gagal membuat kode konfirmasi: %w", err)
+	}
+
 	order := &Order{
 		ID:              uuid.New(),
 		RequesterID:     requesterID,
+		ItemDetails:     req.ItemDetails,
 		ReceiverName:    receiverName,
 		ReceiverPhone:   receiverPhone,
 		PickupLat:       req.PickupLat,
@@ -251,7 +259,7 @@ func (s *service) Create(ctx context.Context, requesterID uuid.UUID, req CreateO
 		OrderType:       orderType,
 		DistanceKm:      distance,
 		ServiceCategory: req.ServiceCategory,
-		CompletionCode:  fmt.Sprintf("%06d", time.Now().UnixNano()%1000000), // Generate 6-digit code
+		CompletionCode:  completionCode,
 		CreatedAt:       now,
 		UpdatedAt:       now,
 	}
@@ -310,6 +318,15 @@ func (s *service) Create(ctx context.Context, requesterID uuid.UUID, req CreateO
 	return order, nil
 }
 
+func generateCompletionCode() (string, error) {
+	max := big.NewInt(1000000)
+	n, err := rand.Int(rand.Reader, max)
+	if err != nil {
+		return "", fmt.Errorf("generate completion code: %w", err)
+	}
+	return fmt.Sprintf("%06d", n.Int64()), nil
+}
+
 func (s *service) EstimateFee(ctx context.Context, req EstimateFeeRequest) (*EstimateFeeResponse, error) {
 	dist := geo.Haversine(req.PickupLat, req.PickupLng, req.DeliveryLat, req.DeliveryLng)
 
@@ -333,9 +350,11 @@ func (s *service) GetByID(ctx context.Context, id uuid.UUID, requestingUserID uu
 		return nil, err
 	}
 
+	s.populateRunnerInfo(ctx, order)
+
 	// Authorization Logic:
 	// 1. Admin can see anything
-	if role == "admin" {
+	if role == user.RoleAdmin {
 		return order, nil
 	}
 
@@ -345,7 +364,7 @@ func (s *service) GetByID(ctx context.Context, id uuid.UUID, requestingUserID uu
 	}
 
 	// 3. Any Runner can see PENDING orders (to decide whether to take it)
-	if role == "runner" && order.Status == StatusPending {
+	if role == user.RoleRunner && order.Status == StatusPending {
 		return order, nil
 	}
 
@@ -358,6 +377,7 @@ func (s *service) GetByRequester(ctx context.Context, requesterID uuid.UUID) ([]
 	orders, err := s.repo.FindByRequesterID(ctx, requesterID)
 	if err == nil {
 		for i := range orders {
+			s.populateRunnerInfo(ctx, &orders[i])
 			s.signURLs(ctx, &orders[i])
 		}
 	}
@@ -368,6 +388,7 @@ func (s *service) GetByRunner(ctx context.Context, runnerID uuid.UUID) ([]Order,
 	orders, err := s.repo.FindByRunnerID(ctx, runnerID)
 	if err == nil {
 		for i := range orders {
+			s.populateRunnerInfo(ctx, &orders[i])
 			s.signURLs(ctx, &orders[i])
 		}
 	}
@@ -378,6 +399,7 @@ func (s *service) GetByUser(ctx context.Context, userID uuid.UUID) ([]Order, err
 	orders, err := s.repo.FindByUserID(ctx, userID)
 	if err == nil {
 		for i := range orders {
+			s.populateRunnerInfo(ctx, &orders[i])
 			s.signURLs(ctx, &orders[i])
 		}
 	}
@@ -828,7 +850,7 @@ func (s *service) ResolveDispute(ctx context.Context, orderID uuid.UUID, side st
 	err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		if order.PaymentMethod == MethodEscrow {
 			switch side {
-			case "requester":
+			case user.RoleRequester:
 				totalAmount := order.EstimatedCost + order.DeliveryFee
 				if err := s.walletSvc.RefundEscrow(ctx, tx, order.RequesterID, orderID, totalAmount); err != nil {
 					return errors.New("escrow refund failed: " + err.Error())
@@ -842,7 +864,7 @@ func (s *service) ResolveDispute(ctx context.Context, orderID uuid.UUID, side st
 						return errors.New("failed to restore trip capacity")
 					}
 				}
-			case "runner":
+			case user.RoleRunner:
 				if order.RunnerID == nil {
 					return errors.New("order has no runner")
 				}
@@ -869,7 +891,7 @@ func (s *service) ResolveDispute(ctx context.Context, orderID uuid.UUID, side st
 	if err == nil && s.fcm != nil && config.App.FcmEnabled {
 		// Notify both parties about resolution
 		msg := "Sengketa pesanan telah diselesaikan oleh Admin."
-		if side == "requester" {
+		if side == user.RoleRequester {
 			msg += " Dana dikembalikan ke Penitip."
 		} else {
 			msg += " Dana dilepaskan ke Runner."
@@ -1272,5 +1294,16 @@ func (s *service) signURLs(ctx context.Context, o *Order) {
 		if signed, err := s.storage.GetSignedURL(ctx, o.DisputeProofURL, 1*time.Hour); err == nil {
 			o.DisputeProofURL = signed
 		}
+	}
+}
+
+func (s *service) populateRunnerInfo(ctx context.Context, o *Order) {
+	if o == nil || o.RunnerID == nil {
+		return
+	}
+	r, err := s.userSvc.GetByID(ctx, *o.RunnerID, *o.RunnerID)
+	if err == nil && r != nil {
+		o.RunnerName = r.Name
+		o.RunnerPhone = r.WhatsappNumber
 	}
 }

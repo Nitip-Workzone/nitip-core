@@ -3,6 +3,7 @@ package systemconfig
 import (
 	"github.com/codecoffy/nitip-core/config"
 	"github.com/codecoffy/nitip-core/internal/cache"
+	"github.com/codecoffy/nitip-core/internal/domain/user"
 	"github.com/codecoffy/nitip-core/internal/middleware"
 	"github.com/codecoffy/nitip-core/pkg/response"
 	"github.com/codecoffy/nitip-core/pkg/validator"
@@ -21,7 +22,7 @@ func NewHandler(service Service, db *bun.DB, redis *cache.Redis) *Handler {
 }
 
 func (h *Handler) RegisterRoutes(router fiber.Router) {
-	admin := router.Group("/admin/configs", middleware.Protected(h.db, h.redis), middleware.Role("admin"))
+	admin := router.Group("/admin/configs", middleware.Protected(h.db, h.redis), middleware.Role(user.RoleAdmin))
 	admin.Get("/", h.AdminListConfigs)
 	admin.Put("/:key", h.AdminUpdateConfig)
 

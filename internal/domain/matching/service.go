@@ -6,12 +6,12 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/codecoffy/nitip-core/config"
 	"github.com/codecoffy/nitip-core/internal/cache"
 	"github.com/codecoffy/nitip-core/internal/domain/order"
 	"github.com/codecoffy/nitip-core/internal/domain/trip"
 	"github.com/codecoffy/nitip-core/internal/domain/user"
 	"github.com/codecoffy/nitip-core/internal/notification"
-	"github.com/codecoffy/nitip-core/config"
 	"github.com/codecoffy/nitip-core/pkg/geolocation"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
@@ -153,7 +153,7 @@ func (s *service) processMatching(ctx context.Context, orderID uuid.UUID) {
 
 		// Capacity Check: Ensure Runner has enough weight and volume capacity
 		if t.AvailableWeightKg < ord.WeightKg || t.AvailableVolumeLiters < ord.VolumeLiters {
-			log.Printf("Trip %s capacity insufficient for Order %s (Weight: %.1f/%.1f, Vol: %.1f/%.1f)", 
+			log.Printf("Trip %s capacity insufficient for Order %s (Weight: %.1f/%.1f, Vol: %.1f/%.1f)",
 				t.ID, orderID, ord.WeightKg, t.AvailableWeightKg, ord.VolumeLiters, t.AvailableVolumeLiters)
 			continue
 		}
@@ -176,7 +176,7 @@ func (s *service) processMatching(ctx context.Context, orderID uuid.UUID) {
 			totalScore := (0.6 * detourScore) + (0.4 * trustScore)
 
 			log.Printf("Match found! Runner %s (Trust: %d) matches Order %s (Extra: %.2f km, Score: %.2f)", runner.Name, runner.TrustScore, orderID, extraDistance, totalScore)
-			
+
 			rankedRunners = append(rankedRunners, rankedRunner{
 				user:  runner,
 				score: totalScore,

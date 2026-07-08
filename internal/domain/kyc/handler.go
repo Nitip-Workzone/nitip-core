@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/codecoffy/nitip-core/internal/cache"
+	"github.com/codecoffy/nitip-core/internal/domain/user"
 	"github.com/codecoffy/nitip-core/internal/middleware"
 	"github.com/codecoffy/nitip-core/pkg/fileutil"
 	"github.com/codecoffy/nitip-core/pkg/jwt"
@@ -29,7 +30,7 @@ func (h *Handler) RegisterRoutes(router fiber.Router) {
 	kyc.Post("/submit", middleware.RateLimit(h.redis, 2, 1*time.Minute), h.Submit)
 	kyc.Get("/me", h.GetMyStatus)
 
-	admin := router.Group("/admin/kyc", middleware.Protected(h.db, h.redis), middleware.Role("admin"))
+	admin := router.Group("/admin/kyc", middleware.Protected(h.db, h.redis), middleware.Role(user.RoleAdmin))
 	admin.Get("/pending", h.ListPending)
 	admin.Post("/:id/review", h.Review)
 }
@@ -187,5 +188,3 @@ func (h *Handler) Review(c *fiber.Ctx) error {
 	}
 	return response.Success(c, msg, nil)
 }
-
-

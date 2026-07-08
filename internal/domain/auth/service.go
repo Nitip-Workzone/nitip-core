@@ -247,14 +247,11 @@ func (s *Service) DeactivateClient(ctx context.Context, clientID uuid.UUID) erro
 func getMasterKey() ([]byte, error) {
 	keyHex := os.Getenv("AUTH_MASTER_KEY")
 	if keyHex == "" {
-		if os.Getenv("APP_ENV") == "production" {
-			return nil, fmt.Errorf("AUTH_MASTER_KEY must be set in production")
-		}
-		keyHex = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2" // dev default
+		return nil, fmt.Errorf("AUTH_MASTER_KEY must be set (generate: openssl rand -hex 32)")
 	}
 	key, err := hex.DecodeString(keyHex)
 	if err != nil || len(key) != 32 {
-		return nil, fmt.Errorf("AUTH_MASTER_KEY must be 64 hex chars (32 bytes)")
+		return nil, fmt.Errorf("AUTH_MASTER_KEY must be exactly 64 hex chars (32 bytes)")
 	}
 	return key, nil
 }

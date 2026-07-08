@@ -61,7 +61,7 @@ func (s *FirebaseStorage) GetURL(ctx context.Context, objectKey string) (string,
 	if s.bucket == nil {
 		return "https://storage.dummy.id/" + objectKey, nil
 	}
-	
+
 	encodedPath := url.PathEscape(objectKey)
 	return fmt.Sprintf("https://firebasestorage.googleapis.com/v0/b/%s/o/%s?alt=media", s.name, encodedPath), nil
 }

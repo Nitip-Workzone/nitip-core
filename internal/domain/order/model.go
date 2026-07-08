@@ -10,37 +10,37 @@ import (
 type Order struct {
 	bun.BaseModel `bun:"table:orders,alias:o"`
 
-	ID            uuid.UUID  `bun:"id,pk,type:uuid" json:"id"`
-	RequesterID   uuid.UUID  `bun:"requester_id,type:uuid" json:"requester_id"`
-	RunnerID      *uuid.UUID `bun:"runner_id,type:uuid" json:"runner_id,omitempty"`
-	ItemDetails   string     `bun:"item_details,notnull" json:"item_details"`
-	PickupLat     float64    `bun:"pickup_lat,notnull" json:"pickup_lat"`
-	PickupLng     float64    `bun:"pickup_lng,notnull" json:"pickup_lng"`
-	DeliveryLat   float64    `bun:"delivery_lat,notnull" json:"delivery_lat"`
-	DeliveryLng   float64    `bun:"delivery_lng,notnull" json:"delivery_lng"`
-	EstimatedCost float64    `bun:"estimated_cost,notnull,default:0" json:"estimated_cost"`
-	DeliveryFee   float64    `bun:"delivery_fee,notnull,default:0" json:"delivery_fee"`
-	Status        string     `bun:"status,notnull,default:'pending'" json:"status"`
-	PaymentStatus string     `bun:"payment_status,notnull,default:'unpaid'" json:"payment_status"`
-	PaymentMethod string     `bun:"payment_method,notnull,default:'escrow'" json:"payment_method"`
-	CODHandlingFee float64   `bun:"cod_handling_fee,notnull,default:0" json:"cod_handling_fee"`
-	CreatedAt     time.Time  `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"created_at"`
-	UpdatedAt     time.Time  `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updated_at"`
+	ID             uuid.UUID  `bun:"id,pk,type:uuid" json:"id"`
+	RequesterID    uuid.UUID  `bun:"requester_id,type:uuid" json:"requester_id"`
+	RunnerID       *uuid.UUID `bun:"runner_id,type:uuid" json:"runner_id,omitempty"`
+	ItemDetails    string     `bun:"item_details,notnull" json:"item_details"`
+	PickupLat      float64    `bun:"pickup_lat,notnull" json:"pickup_lat"`
+	PickupLng      float64    `bun:"pickup_lng,notnull" json:"pickup_lng"`
+	DeliveryLat    float64    `bun:"delivery_lat,notnull" json:"delivery_lat"`
+	DeliveryLng    float64    `bun:"delivery_lng,notnull" json:"delivery_lng"`
+	EstimatedCost  float64    `bun:"estimated_cost,notnull,default:0" json:"estimated_cost"`
+	DeliveryFee    float64    `bun:"delivery_fee,notnull,default:0" json:"delivery_fee"`
+	Status         string     `bun:"status,notnull,default:'pending'" json:"status"`
+	PaymentStatus  string     `bun:"payment_status,notnull,default:'unpaid'" json:"payment_status"`
+	PaymentMethod  string     `bun:"payment_method,notnull,default:'escrow'" json:"payment_method"`
+	CODHandlingFee float64    `bun:"cod_handling_fee,notnull,default:0" json:"cod_handling_fee"`
+	CreatedAt      time.Time  `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"created_at"`
+	UpdatedAt      time.Time  `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updated_at"`
 
 	// Phase 2: Proof & Dispute
-	ReceiptImageURL  string `bun:"receipt_image_url,nullzero" json:"receipt_image_url,omitempty"`
-	DeliveryImageURL string `bun:"delivery_image_url,nullzero" json:"delivery_image_url,omitempty"`
+	ReceiptImageURL  string     `bun:"receipt_image_url,nullzero" json:"receipt_image_url,omitempty"`
+	DeliveryImageURL string     `bun:"delivery_image_url,nullzero" json:"delivery_image_url,omitempty"`
 	DisputeReason    string     `bun:"dispute_reason,nullzero" json:"dispute_reason,omitempty"`
 	DisputeProofURL  string     `bun:"dispute_proof_url,nullzero" json:"dispute_proof_url,omitempty"`
 	DisputedAt       *time.Time `bun:"disputed_at" json:"disputed_at,omitempty"`
 
 	// Price Adjustment
-	AdjustedCost     float64 `bun:"adjusted_cost,nullzero" json:"adjusted_cost,omitempty"`
-	AdjustmentReason string  `bun:"adjustment_reason,nullzero" json:"adjustment_reason,omitempty"`
-	AdjustmentStatus string  `bun:"adjustment_status,nullzero" json:"adjustment_status,omitempty"`
-	WeightKg         float64 `bun:"weight_kg,notnull,default:0" json:"weight_kg"`
-	VolumeLiters     float64 `bun:"volume_liters,notnull,default:0" json:"volume_liters"`
-	ServiceFee       float64 `bun:"service_fee,notnull,default:0" json:"service_fee"`
+	AdjustedCost     float64    `bun:"adjusted_cost,nullzero" json:"adjusted_cost,omitempty"`
+	AdjustmentReason string     `bun:"adjustment_reason,nullzero" json:"adjustment_reason,omitempty"`
+	AdjustmentStatus string     `bun:"adjustment_status,nullzero" json:"adjustment_status,omitempty"`
+	WeightKg         float64    `bun:"weight_kg,notnull,default:0" json:"weight_kg"`
+	VolumeLiters     float64    `bun:"volume_liters,notnull,default:0" json:"volume_liters"`
+	ServiceFee       float64    `bun:"service_fee,notnull,default:0" json:"service_fee"`
 	TripID           *uuid.UUID `bun:"trip_id,type:uuid" json:"trip_id,omitempty"`
 	TotalPayment     float64    `bun:"total_payment,notnull,default:0" json:"total_payment"`
 	OrderType        string     `bun:"order_type,notnull,default:'regular'" json:"order_type"`
@@ -50,7 +50,7 @@ type Order struct {
 	PickupName    string  `bun:"pickup_name" json:"pickup_name,omitempty"`
 	PickupAddress string  `bun:"pickup_address" json:"pickup_address,omitempty"`
 	DistanceKm    float64 `bun:"distance_km" json:"distance_km"`
-	
+
 	// Nitip Kirim (Package Delivery)
 	ServiceCategory string `bun:"service_category,notnull,default:'beli'" json:"service_category"`
 	ReceiverName    string `bun:"receiver_name" json:"receiver_name,omitempty"`
@@ -58,6 +58,10 @@ type Order struct {
 	DeliveryName    string `bun:"delivery_name" json:"delivery_name,omitempty"`
 	DeliveryAddress string `bun:"delivery_address" json:"delivery_address,omitempty"`
 	CompletionCode  string `bun:"completion_code,nullzero" json:"completion_code,omitempty"`
+
+	// Virtual fields (populated dynamically, not stored in DB)
+	RunnerName  string `bun:"-" json:"runner_name,omitempty"`
+	RunnerPhone string `bun:"-" json:"runner_phone,omitempty"`
 }
 
 var (

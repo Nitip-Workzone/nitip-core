@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/codecoffy/nitip-core/internal/cache"
+	"github.com/codecoffy/nitip-core/internal/domain/user"
 	"github.com/codecoffy/nitip-core/internal/middleware"
 	"github.com/codecoffy/nitip-core/pkg/response"
 	"github.com/codecoffy/nitip-core/pkg/validator"
@@ -25,7 +26,7 @@ func NewHandler(service Service, db *bun.DB, redis *cache.Redis) *Handler {
 func (h *Handler) RegisterRoutes(router fiber.Router) {
 	// Tied closely to the orders endpoint layout logically
 	ordersGrp := router.Group("/orders", middleware.Protected(h.db, h.redis))
-	ordersGrp.Post("/:id/review", middleware.Role("requester"), middleware.RateLimit(h.redis, 5, 1*time.Minute), h.SubmitReview)
+	ordersGrp.Post("/:id/review", middleware.Role(user.RoleRequester), middleware.RateLimit(h.redis, 5, 1*time.Minute), h.SubmitReview)
 	ordersGrp.Get("/:id/review", h.GetReview)
 }
 

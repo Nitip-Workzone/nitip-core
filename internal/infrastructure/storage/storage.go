@@ -13,10 +13,10 @@ import (
 type Storage interface {
 	// Upload uploads a file and returns the relative path/key
 	Upload(ctx context.Context, folder string, filename string, content io.Reader) (string, error)
-	
+
 	// GetURL returns a viewable URL (Public or Signed depending on driver)
 	GetURL(ctx context.Context, objectKey string) (string, error)
-	
+
 	// GetSignedURL returns a temporary URL for private objects
 	GetSignedURL(ctx context.Context, objectKey string, expiry time.Duration) (string, error)
 }

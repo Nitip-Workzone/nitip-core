@@ -41,13 +41,13 @@ func (h *Handler) RegisterRoutes(router fiber.Router) {
 	g.Post("/pin/verify", middleware.Protected(h.db, h.redis), middleware.RateLimit(h.redis, 5, 1*time.Minute), h.VerifyPin)
 	g.Put("/home", middleware.Protected(h.db, h.redis), h.UpdateHome)
 	g.Put("/profile", middleware.Protected(h.db, h.redis), h.UpdateProfile)
-	g.Put("/accepting-orders", middleware.Protected(h.db, h.redis), middleware.Role("runner"), h.UpdateAcceptingOrders)
+	g.Put("/accepting-orders", middleware.Protected(h.db, h.redis), middleware.Role(RoleRunner), h.UpdateAcceptingOrders)
 	// Removed for MVP v2 - Live GPS dynamic tracking is no longer used
-	// g.Post("/location", middleware.Protected(h.db, h.redis), middleware.Role("runner"), h.UpdateLocation)
+	// g.Post("/location", middleware.Protected(h.db, h.redis), middleware.Role(RoleRunner), h.UpdateLocation)
 	// g.Get("/location/stream", middleware.Protected(h.db, h.redis), websocket.New(h.StreamLocation))
 
 	// Admin-only User Management
-	adminUser := router.Group("/admin/users", middleware.Protected(h.db, h.redis), middleware.Role("admin"))
+	adminUser := router.Group("/admin/users", middleware.Protected(h.db, h.redis), middleware.Role(RoleAdmin))
 	adminUser.Get("/", h.AdminListUsers)
 	adminUser.Get("/all", h.List) // Maps to full list
 	adminUser.Get("/:id", h.Get)
@@ -620,7 +620,7 @@ type LocationUpdate struct {
 // @Router       /users/location/stream [get]
 func (h *Handler) StreamLocation(c *websocket.Conn) {
 	userClaims := c.Locals("user").(*jwt.CustomClaims)
-	if userClaims.Role != "runner" {
+	if userClaims.Role != RoleRunner {
 		_ = c.WriteMessage(websocket.TextMessage, []byte("Forbidden: only runners can stream location"))
 		_ = c.Close()
 		return

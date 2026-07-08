@@ -71,4 +71,3 @@ func (s *StorageService) UploadFile(ctx context.Context, folder string, filename
 
 	return publicURL, nil
 }
-

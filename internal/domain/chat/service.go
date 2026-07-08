@@ -7,11 +7,11 @@ import (
 	"io"
 	"time"
 
+	notifDomain "github.com/codecoffy/nitip-core/internal/domain/notification"
 	"github.com/codecoffy/nitip-core/internal/domain/order"
 	"github.com/codecoffy/nitip-core/internal/domain/user"
-	notifDomain "github.com/codecoffy/nitip-core/internal/domain/notification"
-	"github.com/codecoffy/nitip-core/internal/notification"
 	"github.com/codecoffy/nitip-core/internal/infrastructure/storage"
+	"github.com/codecoffy/nitip-core/internal/notification"
 	"github.com/google/uuid"
 )
 
@@ -83,12 +83,12 @@ func (s *service) SendMessage(ctx context.Context, orderID, senderID uuid.UUID, 
 		IsRead:    false,
 		CreatedAt: time.Now(),
 	}
- 
+
 	// Determine role
 	if isRequester {
-		msg.SenderRole = "requester"
+		msg.SenderRole = user.RoleRequester
 	} else if isRunner {
-		msg.SenderRole = "runner"
+		msg.SenderRole = user.RoleRunner
 	}
 
 	// 3. Save to Firestore
@@ -199,16 +199,16 @@ func (s *service) GetHistory(ctx context.Context, orderID, userID uuid.UUID, lim
 
 	// 3. Mark others' messages as read and enrich with roles
 	_ = s.repo.MarkAsRead(ctx, orderID, userID)
- 
+
 	for i := range messages {
 		s.signURLs(ctx, &messages[i])
 		if ord.RequesterID == messages[i].SenderID {
-			messages[i].SenderRole = "requester"
+			messages[i].SenderRole = user.RoleRequester
 		} else if ord.RunnerID != nil && *ord.RunnerID == messages[i].SenderID {
-			messages[i].SenderRole = "runner"
+			messages[i].SenderRole = user.RoleRunner
 		}
 	}
- 
+
 	return messages, nil
 }
 

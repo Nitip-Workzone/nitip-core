@@ -58,16 +58,16 @@ type WithdrawalChannel struct {
 type WalletTransaction struct {
 	bun.BaseModel `bun:"table:wallet_transactions,alias:wt"`
 
-	ID         uuid.UUID         `bun:"id,pk,type:uuid" json:"id"`
-	WalletID   uuid.UUID         `bun:"wallet_id,type:uuid,notnull" json:"wallet_id"`
-	OrderID    *uuid.UUID        `bun:"order_id,type:uuid,nullzero" json:"order_id,omitempty"`
-	Type       TransactionType   `bun:"type,notnull" json:"type"`
-	Amount     float64           `bun:"amount,notnull" json:"amount"`
-	Reference  string            `bun:"reference,nullzero" json:"reference,omitempty"`
-	Status              TransactionStatus `bun:"status,notnull,default:'completed'" json:"status"`
-	CreatedAt           time.Time         `bun:"created_at,notnull,default:current_timestamp" json:"created_at"`
-	ChannelID           *uuid.UUID        `bun:"channel_id,type:uuid,nullzero" json:"channel_id,omitempty"`
+	ID                  uuid.UUID              `bun:"id,pk,type:uuid" json:"id"`
+	WalletID            uuid.UUID              `bun:"wallet_id,type:uuid,notnull" json:"wallet_id"`
+	OrderID             *uuid.UUID             `bun:"order_id,type:uuid,nullzero" json:"order_id,omitempty"`
+	Type                TransactionType        `bun:"type,notnull" json:"type"`
+	Amount              float64                `bun:"amount,notnull" json:"amount"`
+	Reference           string                 `bun:"reference,nullzero" json:"reference,omitempty"`
+	Status              TransactionStatus      `bun:"status,notnull,default:'completed'" json:"status"`
+	CreatedAt           time.Time              `bun:"created_at,notnull,default:current_timestamp" json:"created_at"`
+	ChannelID           *uuid.UUID             `bun:"channel_id,type:uuid,nullzero" json:"channel_id,omitempty"`
 	DestinationMetadata map[string]interface{} `bun:"destination_metadata,type:jsonb,nullzero" json:"destination_metadata,omitempty"`
-	QrisString          string            `bun:"-" json:"qris_string,omitempty"`
-	DeeplinkURL         string            `bun:"-" json:"deeplink_url,omitempty"`
+	QrisString          string                 `bun:"-" json:"qris_string,omitempty"`
+	DeeplinkURL         string                 `bun:"-" json:"deeplink_url,omitempty"`
 }

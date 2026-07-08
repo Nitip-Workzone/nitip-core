@@ -6,22 +6,22 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
-	"log"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/codecoffy/nitip-core/config"
 	"github.com/codecoffy/nitip-core/internal/cache"
+	"github.com/codecoffy/nitip-core/internal/domain/audit"
 	systemconfig "github.com/codecoffy/nitip-core/internal/domain/config"
 	"github.com/codecoffy/nitip-core/internal/domain/user"
-	"github.com/codecoffy/nitip-core/internal/domain/audit"
-	"github.com/codecoffy/nitip-core/config"
 	"github.com/google/uuid"
-	"github.com/uptrace/bun"
 	"github.com/midtrans/midtrans-go"
 	"github.com/midtrans/midtrans-go/coreapi"
+	"github.com/uptrace/bun"
 )
 
 type InquiryAccountRequest struct {
@@ -749,10 +749,10 @@ func (s *service) ApproveWithdrawal(ctx context.Context, txID, actorID uuid.UUID
 		}
 
 		// Audit Log (Transactional)
-		s.auditSvc.LogWithDB(ctx, tx, &actorID, audit.ActionWithdrawalApprove, "wallet", wtx.ID.String(), 
-			map[string]interface{}{"status": StatusPending}, 
+		s.auditSvc.LogWithDB(ctx, tx, &actorID, audit.ActionWithdrawalApprove, "wallet", wtx.ID.String(),
+			map[string]interface{}{"status": StatusPending},
 			map[string]interface{}{"status": StatusCompleted}, "", "")
-		
+
 		return nil
 	})
 }
@@ -794,7 +794,7 @@ func (s *service) FinalizeWithdrawal(ctx context.Context, txID uuid.UUID, status
 			if err := s.repo.UpdateWalletBalance(ctx, btx, tx.WalletID, -tx.Amount); err != nil { // tx.Amount is negative
 				return err
 			}
-			
+
 			// Mencari platform fee terkait penarikan ini
 			feeRef := fmt.Sprintf("FEE-WITHDRAW-%s", tx.ID.String()[:8])
 			feeTx, err := s.repo.GetTransactionByReference(ctx, btx, feeRef)
@@ -824,7 +824,7 @@ func (s *service) RecoverPendingWithdrawals(ctx context.Context) error {
 		}
 
 		fmt.Printf("[WALLET] Attempting to recover pending withdrawal: %s\n", tx.ID)
-		
+
 		// In a real PG, we would hit their GET /status API.
 		// For this mock, we just re-trigger the disbursement or check with mock.
 		// For now, let's just re-trigger the mock-qris call if it's "stuck"

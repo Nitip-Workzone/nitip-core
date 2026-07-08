@@ -3,6 +3,7 @@ package wallet
 import (
 	"bytes"
 	"crypto/sha512"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"log"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/codecoffy/nitip-core/config"
 	"github.com/codecoffy/nitip-core/internal/cache"
+	"github.com/codecoffy/nitip-core/internal/domain/user"
 	"github.com/codecoffy/nitip-core/internal/middleware"
 	"github.com/codecoffy/nitip-core/pkg/jwt"
 	"github.com/codecoffy/nitip-core/pkg/response"
@@ -43,7 +45,7 @@ func (h *Handler) RegisterRoutes(router fiber.Router) {
 	wallets.Post("/withdraw/inquiry", h.Inquiry)
 	wallets.Post("/withdraw", middleware.RateLimit(h.redis, 3, 1*time.Minute), h.Withdraw)
 
-	admin := router.Group("/admin/wallets", middleware.Protected(h.db, h.redis), middleware.Role("admin"))
+	admin := router.Group("/admin/wallets", middleware.Protected(h.db, h.redis), middleware.Role(user.RoleAdmin))
 	admin.Get("/withdrawals", h.AdminListWithdrawals)
 	admin.Post("/topup/simulate-success", h.SimulateSuccess)
 	admin.Post("/withdrawals/simulate-success", h.SimulateSuccess) // Also allow admin to simulate
@@ -372,6 +374,20 @@ type WebhookQrisPayload struct {
 	Status      string `json:"status"`
 }
 
+// verifyCallbackToken validates the webhook callback token using constant-time comparison.
+// Token is read from config (environment variable WEBHOOK_CALLBACK_TOKEN).
+func (h *Handler) verifyCallbackToken(c *fiber.Ctx) bool {
+	expected := config.App.WebhookCallbackToken
+	if expected == "" {
+		if config.App.AppEnv == "production" {
+			log.Fatal("[SECURITY] WEBHOOK_CALLBACK_TOKEN must be set in production")
+		}
+		return false
+	}
+	received := c.Get("X-Callback-Token")
+	return subtle.ConstantTimeCompare([]byte(received), []byte(expected)) == 1
+}
+
 // WebhookQris godoc
 // @Summary      QRIS Webhook Callback
 // @Description  Receive payment status updates from mock-qris
@@ -383,9 +399,7 @@ type WebhookQrisPayload struct {
 // @Success      200               {object}  response.envelope
 // @Router       /webhooks/qris [post]
 func (h *Handler) WebhookQris(c *fiber.Ctx) error {
-	// Security: Verify Callback Token
-	token := c.Get("X-Callback-Token")
-	if token != "nitip-secure-callback-token" {
+	if !h.verifyCallbackToken(c) {
 		return response.Forbidden(c, "invalid callback token")
 	}
 
@@ -421,9 +435,7 @@ type DisbursementWebhookRequest struct {
 // @Success      200               {object}  response.envelope
 // @Router       /webhooks/disbursement [post]
 func (h *Handler) WebhookDisbursement(c *fiber.Ctx) error {
-	// Security: Verify Callback Token
-	token := c.Get("X-Callback-Token")
-	if token != "nitip-secure-callback-token" {
+	if !h.verifyCallbackToken(c) {
 		return response.Forbidden(c, "invalid callback token")
 	}
 

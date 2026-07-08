@@ -2,6 +2,7 @@ package trip
 
 import (
 	"github.com/codecoffy/nitip-core/internal/cache"
+	"github.com/codecoffy/nitip-core/internal/domain/user"
 	"github.com/codecoffy/nitip-core/internal/middleware"
 	"github.com/codecoffy/nitip-core/pkg/jwt"
 	"github.com/codecoffy/nitip-core/pkg/response"
@@ -24,12 +25,15 @@ func NewHandler(service Service, db *bun.DB, redis *cache.Redis) *Handler {
 func (h *Handler) RegisterRoutes(router fiber.Router) {
 	trips := router.Group("/trips", middleware.Protected(h.db, h.redis))
 
+	// Shared / Requester routes
+	trips.Get("/", h.ListActive)
+
 	// Runner specific routes
-	trips.Post("/", middleware.Role("runner"), h.Create)
-	trips.Get("/me", middleware.Role("runner"), h.GetMyTrips)
-	trips.Post("/:id/start", middleware.Role("runner"), h.Start)
-	trips.Post("/:id/cancel", middleware.Role("runner"), h.Cancel)
-	trips.Post("/:id/complete", middleware.Role("runner"), h.Complete)
+	trips.Post("/", middleware.Role(user.RoleRunner), h.Create)
+	trips.Get("/me", middleware.Role(user.RoleRunner), h.GetMyTrips)
+	trips.Post("/:id/start", middleware.Role(user.RoleRunner), h.Start)
+	trips.Post("/:id/cancel", middleware.Role(user.RoleRunner), h.Cancel)
+	trips.Post("/:id/complete", middleware.Role(user.RoleRunner), h.Complete)
 }
 
 // Create godoc
@@ -81,6 +85,22 @@ func (h *Handler) GetMyTrips(c *fiber.Ctx) error {
 	}
 
 	return response.Success(c, "trips retrieved successfully", trips)
+}
+
+// ListActive godoc
+// @Summary      List all active trips
+// @Description  Retrieve all active trips currently declared by runners
+// @Tags         Shared
+// @Produce      json
+// @Security     BearerAuth
+// @Success      200   {object}  response.envelope{data=[]Trip}
+// @Router       /trips [get]
+func (h *Handler) ListActive(c *fiber.Ctx) error {
+	trips, err := h.service.ListActive(c.Context())
+	if err != nil {
+		return response.InternalError(c, err.Error())
+	}
+	return response.Success(c, "active trips retrieved successfully", trips)
 }
 
 // Start godoc

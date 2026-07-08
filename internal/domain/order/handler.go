@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/codecoffy/nitip-core/internal/cache"
+	"github.com/codecoffy/nitip-core/internal/domain/user"
 	"github.com/codecoffy/nitip-core/internal/middleware"
 	"github.com/codecoffy/nitip-core/pkg/jwt"
 	"github.com/codecoffy/nitip-core/pkg/response"
@@ -34,29 +35,29 @@ func (h *Handler) RegisterRoutes(router fiber.Router) {
 	orders := router.Group("/orders", middleware.Protected(h.db, h.redis))
 
 	// Requester routes
-	orders.Post("/", middleware.RateLimit(h.redis, 5, 1*time.Minute), middleware.Role("requester"), h.Create)
+	orders.Post("/", middleware.RateLimit(h.redis, 5, 1*time.Minute), middleware.Role(user.RoleRequester), h.Create)
 	orders.Post("/estimate-fee", h.GetFeeEstimate)
-	orders.Get("/me", middleware.Role("requester", "runner"), h.GetMyOrders)
-	orders.Post("/:id/cancel", middleware.Role("requester"), h.Cancel)
-	orders.Post("/:id/dispute", middleware.Role("requester"), h.Dispute)
+	orders.Get("/me", middleware.Role(user.RoleRequester, user.RoleRunner), h.GetMyOrders)
+	orders.Post("/:id/cancel", middleware.Role(user.RoleRequester), h.Cancel)
+	orders.Post("/:id/dispute", middleware.Role(user.RoleRequester), h.Dispute)
 
 	// Runner endpoints
-	orders.Get("/available", middleware.Role("runner"), h.GetAvailableOrders)
-	orders.Post("/:id/accept", middleware.Role("runner"), h.Accept)
-	orders.Post("/:id/pickup", middleware.Role("runner"), h.Pickup)
-	orders.Post("/:id/purchased", middleware.Role("runner"), h.Purchased)
-	orders.Post("/:id/complete", middleware.Role("runner"), h.Complete)
-	orders.Post("/:id/adjust-price", middleware.Role("runner"), h.AdjustPrice)
+	orders.Get("/available", middleware.Role(user.RoleRunner), h.GetAvailableOrders)
+	orders.Post("/:id/accept", middleware.Role(user.RoleRunner), h.Accept)
+	orders.Post("/:id/pickup", middleware.Role(user.RoleRunner), h.Pickup)
+	orders.Post("/:id/purchased", middleware.Role(user.RoleRunner), h.Purchased)
+	orders.Post("/:id/complete", middleware.Role(user.RoleRunner), h.Complete)
+	orders.Post("/:id/adjust-price", middleware.Role(user.RoleRunner), h.AdjustPrice)
 
 	// Price Adjustment Approval (Requester)
-	orders.Post("/:id/approve-adjustment", middleware.Role("requester", "runner"), h.ApproveAdjustment)
-	orders.Post("/:id/reject-adjustment", middleware.Role("requester", "runner"), h.RejectAdjustment)
+	orders.Post("/:id/approve-adjustment", middleware.Role(user.RoleRequester, user.RoleRunner), h.ApproveAdjustment)
+	orders.Post("/:id/reject-adjustment", middleware.Role(user.RoleRequester, user.RoleRunner), h.RejectAdjustment)
 
 	// Admin/General
 	orders.Get("/:id", h.Get)
 	orders.Get("/:id/stream", h.Stream) // Status updates
 	orders.Get("/:id/track", h.Track)   // Live location tracking
-	admin := router.Group("/admin/orders", middleware.Protected(h.db, h.redis), middleware.Role("admin"))
+	admin := router.Group("/admin/orders", middleware.Protected(h.db, h.redis), middleware.Role(user.RoleAdmin))
 	admin.Get("/", h.AdminListOrders)
 	admin.Get("/disputes", h.AdminListDisputes)
 	admin.Post("/:id/cancel", h.AdminCancelOrder)
@@ -94,13 +95,13 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 	order, err := h.service.Create(c.Context(), claims.UserID, req)
 	if err != nil {
 		lowMsg := strings.ToLower(err.Error())
-		if strings.Contains(lowMsg, "sql") || 
-		   strings.Contains(lowMsg, "constraint") || 
-		   strings.Contains(lowMsg, "foreign key") ||
-		   strings.Contains(lowMsg, "table") ||
-		   strings.Contains(lowMsg, "column") ||
-		   strings.Contains(lowMsg, "relation") ||
-		   strings.Contains(lowMsg, "db") {
+		if strings.Contains(lowMsg, "sql") ||
+			strings.Contains(lowMsg, "constraint") ||
+			strings.Contains(lowMsg, "foreign key") ||
+			strings.Contains(lowMsg, "table") ||
+			strings.Contains(lowMsg, "column") ||
+			strings.Contains(lowMsg, "relation") ||
+			strings.Contains(lowMsg, "db") {
 			return response.InternalError(c, err.Error())
 		}
 		return response.BadRequest(c, err.Error())
