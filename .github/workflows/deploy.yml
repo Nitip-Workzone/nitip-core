@@ -30,8 +30,8 @@ jobs:
 
       - name: Restart API Server
         run: |
-          # Menjalankan (atau me-restart jika sudah jalan) container aplikasi dengan image terbaru
-          docker compose up -d app
+          # Menjalankan seluruh service (app, dozzle, postgres, redis) dengan image terbaru
+          docker compose up -d
           
       - name: Cleanup Old Images
         run: |
