@@ -1,46 +1,46 @@
 services:
-  # app:
-  #   networks:
-  #     - nitip-net
-  #   build: .
-  #   container_name: nitip-core
-  #   restart: unless-stopped
-  #   env_file: .env
-  #   environment:
-  #     # Ensure db host matches container name
-  #     DB_HOST: nitip-postgres
-  #     REDIS_ADDR: nitip-redis:6379
-  #     # Batasi Go runtime hanya pakai 2 CPU core, hindari over-scheduling goroutine
-  #     GOMAXPROCS: "2"
-  #   ports:
-  #     - "127.0.0.1:8080:8000"
-  #   volumes:
-  #     - ./firebase-credentials.json:/app/firebase-credentials.json:ro
-  #   depends_on:
-  #     postgres:
-  #       condition: service_healthy
-  #     redis:
-  #       condition: service_healthy
-  #   deploy:
-  #     resources:
-  #       limits:
-  #         # Sisakan ~1 core untuk postgres + redis agar tidak saling rebutan
-  #         cpus: "1.2"
-  #         memory: 512M
-  #       reservations:
-  #         cpus: "0.5"
-  #         memory: 256M
-  #   # Batasi jumlah file descriptor agar tidak exhausted saat banyak koneksi
-  #   ulimits:
-  #     nofile:
-  #       soft: 65536
-  #       hard: 65536
-  #   logging:
-  #     driver: "json-file"
-  #     options:
-  #       max-size: "10m"
-  #       max-file: "3"
-  #       labels: "logging_job=nitip-core"
+  app:
+    networks:
+      - nitip-net
+    build: .
+    container_name: nitip-core
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # Ensure db host matches container name
+      DB_HOST: nitip-postgres
+      REDIS_ADDR: nitip-redis:6379
+      # Batasi Go runtime hanya pakai 2 CPU core, hindari over-scheduling goroutine
+      GOMAXPROCS: "2"
+    ports:
+      - "127.0.0.1:8080:8000"
+    volumes:
+      - ./firebase-credentials.json:/app/firebase-credentials.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          # Sisakan ~1 core untuk postgres + redis agar tidak saling rebutan
+          cpus: "1.2"
+          memory: 512M
+        reservations:
+          cpus: "0.5"
+          memory: 256M
+    # Batasi jumlah file descriptor agar tidak exhausted saat banyak koneksi
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+        labels: "logging_job=nitip-core"
 
   postgres:
     networks:
