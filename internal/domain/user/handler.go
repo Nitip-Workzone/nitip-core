@@ -42,6 +42,7 @@ func (h *Handler) RegisterRoutes(router fiber.Router) {
 	g.Post("/pin/verify", middleware.Protected(h.db, h.redis), middleware.RateLimit(h.redis, 5, 1*time.Minute), h.VerifyPin)
 	g.Put("/home", middleware.Protected(h.db, h.redis), h.UpdateHome)
 	g.Put("/profile", middleware.Protected(h.db, h.redis), h.UpdateProfile)
+	g.Put("/fcm-token", middleware.Protected(h.db, h.redis), h.UpdateFcmToken)
 	g.Put("/accepting-orders", middleware.Protected(h.db, h.redis), middleware.Role(RoleRunner), h.UpdateAcceptingOrders)
 	// Removed for MVP v2 - Live GPS dynamic tracking is no longer used
 	// g.Post("/location", middleware.Protected(h.db, h.redis), middleware.Role(RoleRunner), h.UpdateLocation)
@@ -882,5 +883,47 @@ func (h *Handler) AdminCreate(c *fiber.Ctx) error {
 	log.Printf("[ADMIN_ACTION] Admin %s created User %s (%s) with role %s", adminClaims.UserID, user.ID, user.Email, user.Role)
 
 	return response.Created(c, "pengguna berhasil didaftarkan oleh admin", user)
+}
+
+type UpdateFcmTokenRequest struct {
+	FcmToken string `json:"fcm_token" validate:"required"`
+}
+
+// UpdateFcmToken godoc
+// @Summary      Update user FCM Device Token
+// @Description  Update the Firebase Cloud Messaging device token for the current user
+// @Tags         [User] Profile
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        body  body      UpdateFcmTokenRequest  true  "FCM token payload"
+// @Success      200   {object}  response.envelope
+// @Router       /users/fcm-token [put]
+func (h *Handler) UpdateFcmToken(c *fiber.Ctx) error {
+	userClaims, ok := c.Locals("user").(*jwt.CustomClaims)
+	if !ok {
+		return response.Unauthorized(c, "tidak memiliki akses")
+	}
+
+	var req UpdateFcmTokenRequest
+	if err := c.BodyParser(&req); err != nil {
+		return response.BadRequest(c, "format permintaan tidak valid")
+	}
+
+	if errs := validator.Validate(req); errs != nil {
+		return response.ValidationFailed(c, errs)
+	}
+
+	_, err := h.db.NewUpdate().
+		Table("users").
+		Set("fcm_token = ?", req.FcmToken).
+		Where("id = ?", userClaims.UserID).
+		Exec(c.Context())
+
+	if err != nil {
+		return response.InternalError(c, "gagal memperbarui FCM token")
+	}
+
+	return response.Success(c, "FCM token berhasil diperbarui", nil)
 }
 

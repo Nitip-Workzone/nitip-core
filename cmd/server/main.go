@@ -197,7 +197,7 @@ func main() {
 
 	// Wallet
 	walletRepo := wallet.NewRepository(db)
-	walletSvc := wallet.NewService(walletRepo, userSvc, cfgSvc, db, redisCache, auditSvc)
+	walletSvc := wallet.NewService(walletRepo, userSvc, cfgSvc, db, redisCache, auditSvc, fcmClient, notifSvc)
 	walletHandler := wallet.NewHandler(walletSvc, db, redisCache)
 	fiberApp.RegisterRoutes(walletHandler.RegisterRoutes)
 

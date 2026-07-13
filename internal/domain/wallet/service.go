@@ -18,6 +18,8 @@ import (
 	"github.com/codecoffy/nitip-core/internal/domain/audit"
 	systemconfig "github.com/codecoffy/nitip-core/internal/domain/config"
 	"github.com/codecoffy/nitip-core/internal/domain/user"
+	notificationDomain "github.com/codecoffy/nitip-core/internal/domain/notification"
+	"github.com/codecoffy/nitip-core/internal/notification"
 	"github.com/google/uuid"
 	"github.com/midtrans/midtrans-go"
 	"github.com/midtrans/midtrans-go/coreapi"
@@ -70,9 +72,11 @@ type service struct {
 	db        *bun.DB
 	redis     *cache.Redis
 	auditSvc  audit.Service
+	fcm       notification.Notifier
+	notifSvc  notificationDomain.Service
 }
 
-func NewService(repo Repository, userSvc user.Service, configSvc systemconfig.Service, db *bun.DB, redis *cache.Redis, auditSvc audit.Service) Service {
+func NewService(repo Repository, userSvc user.Service, configSvc systemconfig.Service, db *bun.DB, redis *cache.Redis, auditSvc audit.Service, fcm notification.Notifier, notifSvc notificationDomain.Service) Service {
 	return &service{
 		repo:      repo,
 		userSvc:   userSvc,
@@ -80,6 +84,8 @@ func NewService(repo Repository, userSvc user.Service, configSvc systemconfig.Se
 		db:        db,
 		redis:     redis,
 		auditSvc:  auditSvc,
+		fcm:       fcm,
+		notifSvc:  notifSvc,
 	}
 }
 
@@ -292,6 +298,45 @@ func (s *service) FinalizeTopUp(ctx context.Context, reference string) (*WalletT
 		}
 		return nil, err
 	}
+
+	// Send Push and in-app Notification asynchronously to prevent blocking the webhook response
+	go func() {
+		bgCtx := context.Background()
+		var wallet Wallet
+		if err := s.db.NewSelect().Model(&wallet).Where("id = ?", wtx.WalletID).Scan(bgCtx); err != nil {
+			log.Printf("[FCM-TOPUP] Gagal mendapatkan data wallet: %v", err)
+			return
+		}
+
+		userObj, err := s.userSvc.GetByID(bgCtx, wallet.UserID, uuid.Nil)
+		if err != nil {
+			log.Printf("[FCM-TOPUP] Gagal mendapatkan data user: %v", err)
+			return
+		}
+
+		title := "Top Up Berhasil"
+		msg := fmt.Sprintf("Top up sebesar Rp%s berhasil ditambahkan ke saldo Anda.", strconv.FormatFloat(wtx.Amount, 'f', 0, 64))
+
+		// Write to database in-app notification
+		_ = s.notifSvc.CreateNotification(bgCtx, notificationDomain.CreateNotificationRequest{
+			UserID:  wallet.UserID,
+			Title:   title,
+			Message: msg,
+			Type:    "wallet",
+			Metadata: map[string]interface{}{
+				"amount":       wtx.Amount,
+				"reference_id": wtx.Reference,
+			},
+		})
+
+		// Send push notification via FCM
+		if userObj.FcmToken != nil && *userObj.FcmToken != "" {
+			_ = s.fcm.SendToDevice(bgCtx, *userObj.FcmToken, title, msg, map[string]string{
+				"type":   "wallet_update",
+				"amount": strconv.FormatFloat(wtx.Amount, 'f', 0, 64),
+			})
+		}
+	}()
 
 	return s.repo.GetTransactionByReference(ctx, s.db, reference)
 }
