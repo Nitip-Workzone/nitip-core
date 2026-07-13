@@ -8,6 +8,14 @@ import (
 	"github.com/uptrace/bun"
 )
 
+type SystemBalanceSummary struct {
+	Balance        float64 `json:"balance"`
+	TotalCollected float64 `json:"total_collected"`
+	Today          float64 `json:"today"`
+	ThisWeek       float64 `json:"this_week"`
+	ThisMonth      float64 `json:"this_month"`
+}
+
 type Repository interface {
 	RunInTx(ctx context.Context, fn func(ctx context.Context, tx bun.Tx) error) error
 
@@ -27,6 +35,9 @@ type Repository interface {
 	SumTodayWithdrawals(ctx context.Context, db bun.IDB, walletID uuid.UUID) (float64, error)
 	GetActiveWithdrawalChannels(ctx context.Context, db bun.IDB) ([]WithdrawalChannel, error)
 	GetWithdrawalChannelByID(ctx context.Context, db bun.IDB, id uuid.UUID) (*WithdrawalChannel, error)
+
+	// System Balance
+	GetSystemBalanceSummary(ctx context.Context) (*SystemBalanceSummary, error)
 }
 
 type repository struct {
@@ -175,4 +186,64 @@ func (r *repository) GetWithdrawalChannelByID(ctx context.Context, db bun.IDB, i
 		return nil, err
 	}
 	return &channel, nil
+}
+
+func (r *repository) GetSystemBalanceSummary(ctx context.Context) (*SystemBalanceSummary, error) {
+	summary := &SystemBalanceSummary{}
+
+	// 1. Get current system wallet balance
+	sysWID := uuid.MustParse(SystemWalletID)
+	err := r.db.NewSelect().
+		Model((*Wallet)(nil)).
+		Column("balance").
+		Where("id = ?", sysWID).
+		Scan(ctx, &summary.Balance)
+	if err != nil {
+		return nil, err
+	}
+
+	// 2. Total collected (all PLATFORM_FEE transactions that are positive = incoming)
+	_ = r.db.NewSelect().
+		Model((*WalletTransaction)(nil)).
+		ColumnExpr("COALESCE(SUM(amount), 0)").
+		Where("wallet_id = ?", sysWID).
+		Where("type = ?", TypePlatformFee).
+		Where("status = ?", StatusCompleted).
+		Where("amount > 0").
+		Scan(ctx, &summary.TotalCollected)
+
+	// 3. Today's collected fees
+	_ = r.db.NewSelect().
+		Model((*WalletTransaction)(nil)).
+		ColumnExpr("COALESCE(SUM(amount), 0)").
+		Where("wallet_id = ?", sysWID).
+		Where("type = ?", TypePlatformFee).
+		Where("status = ?", StatusCompleted).
+		Where("amount > 0").
+		Where("created_at >= CURRENT_DATE").
+		Scan(ctx, &summary.Today)
+
+	// 4. This week's collected fees
+	_ = r.db.NewSelect().
+		Model((*WalletTransaction)(nil)).
+		ColumnExpr("COALESCE(SUM(amount), 0)").
+		Where("wallet_id = ?", sysWID).
+		Where("type = ?", TypePlatformFee).
+		Where("status = ?", StatusCompleted).
+		Where("amount > 0").
+		Where("created_at >= DATE_TRUNC('week', CURRENT_DATE)").
+		Scan(ctx, &summary.ThisWeek)
+
+	// 5. This month's collected fees
+	_ = r.db.NewSelect().
+		Model((*WalletTransaction)(nil)).
+		ColumnExpr("COALESCE(SUM(amount), 0)").
+		Where("wallet_id = ?", sysWID).
+		Where("type = ?", TypePlatformFee).
+		Where("status = ?", StatusCompleted).
+		Where("amount > 0").
+		Where("created_at >= DATE_TRUNC('month', CURRENT_DATE)").
+		Scan(ctx, &summary.ThisMonth)
+
+	return summary, nil
 }

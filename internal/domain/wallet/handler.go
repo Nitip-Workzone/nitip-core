@@ -46,6 +46,7 @@ func (h *Handler) RegisterRoutes(router fiber.Router) {
 	wallets.Post("/withdraw", middleware.RateLimit(h.redis, 3, 1*time.Minute), h.Withdraw)
 
 	admin := router.Group("/admin/wallets", middleware.Protected(h.db, h.redis), middleware.Role(user.RoleAdmin))
+	admin.Get("/system-balance", h.AdminGetSystemBalance)
 	admin.Get("/withdrawals", h.AdminListWithdrawals)
 	admin.Post("/topup/simulate-success", h.SimulateSuccess)
 	admin.Post("/withdrawals/simulate-success", h.SimulateSuccess) // Also allow admin to simulate
@@ -281,6 +282,23 @@ func (h *Handler) Withdraw(c *fiber.Ctx) error {
 	}
 
 	return response.Success(c, "withdrawal requested successfully", wtx)
+}
+
+// AdminGetSystemBalance godoc
+// @Summary      [ADMIN] Get system wallet balance summary
+// @Description  Retrieve the platform's system wallet balance and service fee collection stats
+// @Tags         [Admin] Finance
+// @Produce      json
+// @Security     BearerAuth
+// @Success      200  {object}  response.envelope{data=SystemBalanceSummary}
+// @Router       /admin/wallets/system-balance [get]
+func (h *Handler) AdminGetSystemBalance(c *fiber.Ctx) error {
+	summary, err := h.service.GetSystemBalanceSummary(c.Context())
+	if err != nil {
+		return response.InternalError(c, err.Error())
+	}
+
+	return response.Success(c, "system balance retrieved", summary)
 }
 
 // AdminListWithdrawals godoc

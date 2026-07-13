@@ -17,8 +17,8 @@ import (
 	"github.com/codecoffy/nitip-core/internal/cache"
 	"github.com/codecoffy/nitip-core/internal/domain/audit"
 	systemconfig "github.com/codecoffy/nitip-core/internal/domain/config"
-	"github.com/codecoffy/nitip-core/internal/domain/user"
 	notificationDomain "github.com/codecoffy/nitip-core/internal/domain/notification"
+	"github.com/codecoffy/nitip-core/internal/domain/user"
 	"github.com/codecoffy/nitip-core/internal/notification"
 	"github.com/google/uuid"
 	"github.com/midtrans/midtrans-go"
@@ -60,6 +60,7 @@ type Service interface {
 	GetPendingWithdrawals(ctx context.Context, limit, offset int) ([]WalletTransaction, error)
 	ApproveWithdrawal(ctx context.Context, txID, actorID uuid.UUID) error
 	GetTransactionStatus(ctx context.Context, reference string) (*WalletTransaction, error)
+	GetSystemBalanceSummary(ctx context.Context) (*SystemBalanceSummary, error)
 
 	// Recovery
 	RecoverPendingWithdrawals(ctx context.Context) error
@@ -855,6 +856,10 @@ func (s *service) FinalizeWithdrawal(ctx context.Context, txID uuid.UUID, status
 
 		return nil
 	})
+}
+
+func (s *service) GetSystemBalanceSummary(ctx context.Context) (*SystemBalanceSummary, error) {
+	return s.repo.GetSystemBalanceSummary(ctx)
 }
 
 func (s *service) RecoverPendingWithdrawals(ctx context.Context) error {
