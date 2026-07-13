@@ -16,8 +16,8 @@ jobs:
       - name: Copy Secrets File
         run: |
           # Menyalin file .env dan file kredensial firebase dari folder rahasia VPS
-          cp ~/.secrets/nitip-production.env .env
-          cp ~/.secrets/firebase-credentials.json ./firebase-credentials.json || true
+          cp ~/.secret/nitip-production.env .env
+          cp ~/.secret/firebase-credentials.json ./firebase-credentials.json || true
 
       - name: Build New Docker Image
         run: |
