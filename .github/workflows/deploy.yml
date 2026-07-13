@@ -18,6 +18,7 @@ jobs:
           # Menyalin file .env dan file kredensial firebase dari folder rahasia VPS
           cp ~/.secret/nitip-production.env .env
           cp ~/.secret/firebase-credentials.json ./firebase-credentials.json || true
+          cp ~/.secret/dozzle-users.yml ./users.yml || true
 
       - name: Build New Docker Image
         run: |
