@@ -33,3 +33,5 @@ mapping/photon_data/
 
 # Air (hot reload)
 tmp/
+
+firebase-credentials.json

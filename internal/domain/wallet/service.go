@@ -166,7 +166,7 @@ func (s *service) InitiateTopUp(ctx context.Context, userID uuid.UUID, amount fl
 		client.New(config.App.MidtransServerKey, midtransEnv)
 
 		req := &coreapi.ChargeReq{
-			PaymentType: coreapi.PaymentTypeGopay,
+			PaymentType: coreapi.PaymentTypeQris,
 			TransactionDetails: midtrans.TransactionDetails{
 				OrderID:  reference,
 				GrossAmt: int64(amount),
@@ -175,9 +175,8 @@ func (s *service) InitiateTopUp(ctx context.Context, userID uuid.UUID, amount fl
 				FName: userName,
 				Email: userEmail,
 			},
-			Gopay: &coreapi.GopayDetails{
-				EnableCallback: true,
-				CallbackUrl:    "nitip://payment-callback",
+			Qris: &coreapi.QrisDetails{
+				Acquirer: "gopay",
 			},
 		}
 
@@ -190,10 +189,13 @@ func (s *service) InitiateTopUp(ctx context.Context, userID uuid.UUID, amount fl
 			return nil, errors.New("gagal membuat kode pembayaran GoPay/QRIS, silakan coba lagi beberapa saat lagi")
 		}
 
+		qrString = chargeResp.QRString
 		for _, action := range chargeResp.Actions {
 			switch action.Name {
 			case "generate-qr-code":
-				qrString = action.URL
+				if qrString == "" {
+					qrString = action.URL
+				}
 			case "deeplink-redirect":
 				deeplinkString = action.URL
 			}

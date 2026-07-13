@@ -510,10 +510,6 @@ func (h *Handler) WebhookMidtrans(c *fiber.Ctx) error {
 	computedSign := hex.EncodeToString(hasher.Sum(nil))
 
 	if computedSign != payload.SignatureKey {
-		if config.App.AppEnv != "production" {
-			log.Printf("[MIDTRANS-WEBHOOK] Warning: Invalid signature key: got %s, expected %s. Bypassing because AppEnv is development.", payload.SignatureKey, computedSign)
-			return response.Success(c, "webhook processed (dev mode bypass)", nil)
-		}
 		return response.Forbidden(c, "kunci tanda tangan tidak valid")
 	}
 
