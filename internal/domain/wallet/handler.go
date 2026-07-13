@@ -76,7 +76,7 @@ func (h *Handler) GetBalance(c *fiber.Ctx) error {
 		return response.InternalError(c, err.Error())
 	}
 
-	return response.Success(c, "balance retrieved successfully", w)
+	return response.Success(c, "saldo berhasil diambil", w)
 }
 
 // GetTransactions godoc
@@ -105,7 +105,7 @@ func (h *Handler) GetTransactions(c *fiber.Ctx) error {
 		return response.InternalError(c, err.Error())
 	}
 
-	return response.Success(c, "transactions retrieved successfully", txs)
+	return response.Success(c, "riwayat transaksi berhasil diambil", txs)
 }
 
 type AmountRequest struct {
@@ -142,7 +142,7 @@ func (h *Handler) TopUp(c *fiber.Ctx) error {
 		return response.BadRequest(c, err.Error())
 	}
 
-	return response.Success(c, "top up initiated, pending payment", wtx)
+	return response.Success(c, "top up berhasil dimulai, menunggu pembayaran", wtx)
 }
 
 type SimulateSuccessRequest struct {
@@ -213,7 +213,7 @@ func (h *Handler) GetWithdrawalChannels(c *fiber.Ctx) error {
 	if err != nil {
 		return response.InternalError(c, err.Error())
 	}
-	return response.Success(c, "withdrawal channels retrieved", channels)
+	return response.Success(c, "saluran penarikan berhasil diambil", channels)
 }
 
 // Inquiry godoc
@@ -281,7 +281,7 @@ func (h *Handler) Withdraw(c *fiber.Ctx) error {
 		return response.BadRequest(c, err.Error())
 	}
 
-	return response.Success(c, "withdrawal requested successfully", wtx)
+	return response.Success(c, "penarikan berhasil diajukan", wtx)
 }
 
 // AdminGetSystemBalance godoc
@@ -298,7 +298,7 @@ func (h *Handler) AdminGetSystemBalance(c *fiber.Ctx) error {
 		return response.InternalError(c, err.Error())
 	}
 
-	return response.Success(c, "system balance retrieved", summary)
+	return response.Success(c, "saldo sistem berhasil diambil", summary)
 }
 
 // AdminListWithdrawals godoc
@@ -324,7 +324,7 @@ func (h *Handler) AdminListWithdrawals(c *fiber.Ctx) error {
 		return response.InternalError(c, err.Error())
 	}
 
-	return response.Success(c, "pending withdrawals retrieved", txs)
+	return response.Success(c, "daftar penarikan tertunda berhasil diambil", txs)
 }
 
 // AdminApproveWithdrawal godoc
@@ -348,7 +348,7 @@ func (h *Handler) AdminApproveWithdrawal(c *fiber.Ctx) error {
 		return response.BadRequest(c, err.Error())
 	}
 
-	return response.Success(c, "withdrawal approved", nil)
+	return response.Success(c, "penarikan berhasil disetujui", nil)
 }
 
 // GetTransactionStatus godoc
@@ -382,7 +382,7 @@ func (h *Handler) GetTransactionStatus(c *fiber.Ctx) error {
 		return response.Forbidden(c, "akses ditolak")
 	}
 
-	return response.Success(c, "transaction status retrieved", wtx)
+	return response.Success(c, "status transaksi berhasil diambil", wtx)
 }
 
 type WebhookQrisPayload struct {
@@ -434,7 +434,7 @@ func (h *Handler) WebhookQris(c *fiber.Ctx) error {
 		}
 	}
 
-	return response.Success(c, "webhook processed", nil)
+	return response.Success(c, "webhook diproses", nil)
 }
 
 type DisbursementWebhookRequest struct {
@@ -476,7 +476,7 @@ func (h *Handler) WebhookDisbursement(c *fiber.Ctx) error {
 		return response.InternalError(c, err.Error())
 	}
 
-	return response.Success(c, "disbursement webhook processed", nil)
+	return response.Success(c, "webhook disbursement diproses", nil)
 }
 
 type MidtransNotification struct {
@@ -502,7 +502,7 @@ func (h *Handler) WebhookMidtrans(c *fiber.Ctx) error {
 	// Handle empty/ping body request from Midtrans dashboard
 	if len(c.Body()) == 0 {
 		log.Println("[MIDTRANS-WEBHOOK] Empty body received (likely a test ping). Returning 200 OK.")
-		return response.Success(c, "webhook ping received", nil)
+		return response.Success(c, "ping webhook diterima", nil)
 	}
 
 	log.Printf("[MIDTRANS-WEBHOOK] Incoming Content-Type: %s", c.Get("Content-Type"))
@@ -517,7 +517,7 @@ func (h *Handler) WebhookMidtrans(c *fiber.Ctx) error {
 	// Handle empty/ping request from Midtrans dashboard
 	if payload.OrderID == "" || payload.SignatureKey == "" || strings.HasPrefix(payload.OrderID, "payment_notif_test_") {
 		log.Println("[MIDTRANS-WEBHOOK] Ping/Test request received. Returning 200 OK.")
-		return response.Success(c, "webhook ping received", nil)
+		return response.Success(c, "ping webhook diterima", nil)
 	}
 
 	// Verify Signature: SHA512(order_id + status_code + gross_amount + server_key)
@@ -540,5 +540,5 @@ func (h *Handler) WebhookMidtrans(c *fiber.Ctx) error {
 		}
 	}
 
-	return response.Success(c, "webhook processed", nil)
+	return response.Success(c, "webhook diproses", nil)
 }

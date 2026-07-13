@@ -52,7 +52,7 @@ func (h *Handler) List(c *fiber.Ctx) error {
 		return response.InternalError(c, err.Error())
 	}
 
-	return response.Success(c, "notifications retrieved", notifications)
+	return response.Success(c, "notifikasi berhasil diambil", notifications)
 }
 
 // UnreadCount godoc
@@ -72,7 +72,7 @@ func (h *Handler) UnreadCount(c *fiber.Ctx) error {
 		return response.InternalError(c, err.Error())
 	}
 
-	return response.Success(c, "unread count retrieved", fiber.Map{
+	return response.Success(c, "jumlah belum dibaca berhasil diambil", fiber.Map{
 		"unread_count": count,
 	})
 }
@@ -99,7 +99,7 @@ func (h *Handler) MarkAsRead(c *fiber.Ctx) error {
 		return response.InternalError(c, err.Error())
 	}
 
-	return response.Success(c, "Notification marked as read", nil)
+	return response.Success(c, "Notifikasi ditandai sudah dibaca", nil)
 }
 
 // MarkAllAsRead godoc
@@ -118,5 +118,5 @@ func (h *Handler) MarkAllAsRead(c *fiber.Ctx) error {
 		return response.InternalError(c, err.Error())
 	}
 
-	return response.Success(c, "All notifications marked as read", nil)
+	return response.Success(c, "Semua notifikasi ditandai sudah dibaca", nil)
 }

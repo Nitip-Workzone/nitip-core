@@ -43,7 +43,7 @@ func (h *Handler) AdminListConfigs(c *fiber.Ctx) error {
 	if err != nil {
 		return response.InternalError(c, err.Error())
 	}
-	return response.Success(c, "configs retrieved successfully", cfgs)
+	return response.Success(c, "konfigurasi berhasil diambil", cfgs)
 }
 
 type updateConfigRequest struct {
@@ -83,7 +83,7 @@ func (h *Handler) AdminUpdateConfig(c *fiber.Ctx) error {
 		return response.InternalError(c, err.Error())
 	}
 
-	return response.Success(c, "config updated successfully", nil)
+	return response.Success(c, "konfigurasi berhasil diperbarui", nil)
 }
 
 // GetPublicConfig godoc
@@ -94,7 +94,7 @@ func (h *Handler) AdminUpdateConfig(c *fiber.Ctx) error {
 // @Success      200  {object}  response.envelope
 // @Router       /configs/public [get]
 func (h *Handler) GetPublicConfig(c *fiber.Ctx) error {
-	return response.Success(c, "public configurations retrieved successfully", fiber.Map{
+	return response.Success(c, "konfigurasi publik berhasil diambil", fiber.Map{
 		"kyc_verification_required": !config.App.BypassKYCValidation,
 	})
 }

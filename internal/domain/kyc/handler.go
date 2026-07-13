@@ -103,7 +103,7 @@ func (h *Handler) Submit(c *fiber.Ctx) error {
 		return response.BadRequest(c, err.Error())
 	}
 
-	return response.Created(c, "kyc submitted for review", kyc)
+	return response.Created(c, "KYC berhasil diajukan untuk ditinjau", kyc)
 }
 
 // GetMyStatus godoc
@@ -121,10 +121,10 @@ func (h *Handler) GetMyStatus(c *fiber.Ctx) error {
 	kyc, err := h.service.GetStatus(c.Context(), claims.UserID)
 	if err != nil {
 		// Return success with null data instead of 404 to avoid Dio errors in mobile
-		return response.Success(c, "no kyc submission found", nil)
+		return response.Success(c, "tidak ada pengajuan KYC ditemukan", nil)
 	}
 
-	return response.Success(c, "kyc status retrieved", kyc)
+	return response.Success(c, "status KYC berhasil diambil", kyc)
 }
 
 // ListPending godoc
@@ -147,7 +147,7 @@ func (h *Handler) ListPending(c *fiber.Ctx) error {
 		return response.InternalError(c, err.Error())
 	}
 
-	return response.Success(c, "pending kyc submissions retrieved", results)
+	return response.Success(c, "daftar pengajuan KYC tertunda berhasil diambil", results)
 }
 
 type ReviewRequest struct {

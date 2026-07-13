@@ -65,7 +65,7 @@ func (h *Handler) GetMessages(c *fiber.Ctx) error {
 		return response.BadRequest(c, err.Error())
 	}
 
-	return response.Success(c, "chat history retrieved", messages)
+	return response.Success(c, "riwayat chat berhasil diambil", messages)
 }
 
 // SendMessage godoc
@@ -104,7 +104,7 @@ func (h *Handler) SendMessage(c *fiber.Ctx) error {
 		return response.BadRequest(c, err.Error())
 	}
 
-	return response.Created(c, "message sent", msg)
+	return response.Created(c, "pesan berhasil dikirim", msg)
 }
 
 // SendImage godoc
@@ -154,7 +154,7 @@ func (h *Handler) SendImage(c *fiber.Ctx) error {
 		return response.BadRequest(c, err.Error())
 	}
 
-	return response.Created(c, "image sent", msg)
+	return response.Created(c, "gambar berhasil dikirim", msg)
 }
 
 // WebSocket godoc

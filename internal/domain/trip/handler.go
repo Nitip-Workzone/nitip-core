@@ -65,7 +65,7 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 		return response.InternalError(c, err.Error())
 	}
 
-	return response.Created(c, "trip created successfully", trip)
+	return response.Created(c, "perjalanan berhasil dibuat", trip)
 }
 
 // GetMyTrips godoc
@@ -84,7 +84,7 @@ func (h *Handler) GetMyTrips(c *fiber.Ctx) error {
 		return response.InternalError(c, err.Error())
 	}
 
-	return response.Success(c, "trips retrieved successfully", trips)
+	return response.Success(c, "daftar perjalanan berhasil diambil", trips)
 }
 
 // ListActive godoc
@@ -100,7 +100,7 @@ func (h *Handler) ListActive(c *fiber.Ctx) error {
 	if err != nil {
 		return response.InternalError(c, err.Error())
 	}
-	return response.Success(c, "active trips retrieved successfully", trips)
+	return response.Success(c, "daftar perjalanan aktif berhasil diambil", trips)
 }
 
 // Start godoc
@@ -125,7 +125,7 @@ func (h *Handler) Start(c *fiber.Ctx) error {
 		return response.InternalError(c, err.Error())
 	}
 
-	return response.Success(c, "trip started successfully", nil)
+	return response.Success(c, "perjalanan berhasil dimulai", nil)
 }
 
 // Cancel godoc
@@ -150,7 +150,7 @@ func (h *Handler) Cancel(c *fiber.Ctx) error {
 		return response.InternalError(c, err.Error())
 	}
 
-	return response.Success(c, "trip cancelled successfully", nil)
+	return response.Success(c, "perjalanan berhasil dibatalkan", nil)
 }
 
 // Complete godoc
@@ -177,5 +177,5 @@ func (h *Handler) Complete(c *fiber.Ctx) error {
 		return response.BadRequest(c, err.Error())
 	}
 
-	return response.Success(c, "trip completed successfully", nil)
+	return response.Success(c, "perjalanan berhasil diselesaikan", nil)
 }

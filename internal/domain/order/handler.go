@@ -83,7 +83,7 @@ func (h *Handler) RegisterRoutes(router fiber.Router) {
 func (h *Handler) Create(c *fiber.Ctx) error {
 	var req CreateOrderRequest
 	if err := c.BodyParser(&req); err != nil {
-		return response.BadRequest(c, "invalid request body")
+		return response.BadRequest(c, "format permintaan tidak valid")
 	}
 
 	if errs := validator.Validate(req); errs != nil {
@@ -107,7 +107,7 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 		return response.BadRequest(c, err.Error())
 	}
 
-	return response.Created(c, "order created successfully", order)
+	return response.Created(c, "pesanan berhasil dibuat", order)
 }
 
 // GetMyOrders godoc
@@ -128,7 +128,7 @@ func (h *Handler) GetMyOrders(c *fiber.Ctx) error {
 		return response.InternalError(c, err.Error())
 	}
 
-	return response.Success(c, "my orders retrieved successfully", orders)
+	return response.Success(c, "daftar pesanan berhasil diambil", orders)
 }
 
 // Get godoc
@@ -154,7 +154,7 @@ func (h *Handler) Get(c *fiber.Ctx) error {
 		return response.Forbidden(c, err.Error())
 	}
 
-	return response.Success(c, "order retrieved", order)
+	return response.Success(c, "detail pesanan berhasil diambil", order)
 }
 
 // Cancel godoc
@@ -180,7 +180,7 @@ func (h *Handler) Cancel(c *fiber.Ctx) error {
 		return response.BadRequest(c, err.Error())
 	}
 
-	return response.Success(c, "order cancelled successfully", nil)
+	return response.Success(c, "pesanan berhasil dibatalkan", nil)
 }
 
 // Accept godoc
@@ -207,7 +207,7 @@ func (h *Handler) Accept(c *fiber.Ctx) error {
 		return response.BadRequest(c, err.Error())
 	}
 
-	return response.Success(c, "order accepted successfully", nil)
+	return response.Success(c, "pesanan berhasil diterima", nil)
 }
 
 // Pickup godoc
@@ -231,7 +231,7 @@ func (h *Handler) Pickup(c *fiber.Ctx) error {
 		return response.BadRequest(c, err.Error())
 	}
 
-	return response.Success(c, "order status updated to delivering", nil)
+	return response.Success(c, "status pesanan diperbarui ke pengantaran", nil)
 }
 
 type CompletePayload struct {
@@ -274,7 +274,7 @@ func (h *Handler) Complete(c *fiber.Ctx) error {
 		return response.BadRequest(c, err.Error())
 	}
 
-	return response.Success(c, "order completed successfully", nil)
+	return response.Success(c, "pesanan berhasil diselesaikan", nil)
 }
 
 type PurchasePayload struct {
@@ -316,7 +316,7 @@ func (h *Handler) Purchased(c *fiber.Ctx) error {
 		return response.BadRequest(c, err.Error())
 	}
 
-	return response.Success(c, "purchase phase updated", nil)
+	return response.Success(c, "fase pembelian diperbarui", nil)
 }
 
 // Stream godoc
@@ -393,7 +393,7 @@ func (h *Handler) PayStub(c *fiber.Ctx) error {
 		return response.InternalError(c, "gagal memperbarui pembayaran")
 	}
 
-	return response.Success(c, "payment simulated successfully", nil)
+	return response.Success(c, "simulasi pembayaran berhasil", nil)
 }
 
 // AdminListOrders godoc
@@ -423,7 +423,7 @@ func (h *Handler) AdminListOrders(c *fiber.Ctx) error {
 		return response.InternalError(c, err.Error())
 	}
 
-	return response.Success(c, "orders retrieved successfully", orders)
+	return response.Success(c, "daftar pesanan berhasil diambil", orders)
 }
 
 type DisputePayload struct {
@@ -464,7 +464,7 @@ func (h *Handler) Dispute(c *fiber.Ctx) error {
 		return response.BadRequest(c, err.Error())
 	}
 
-	return response.Success(c, "order status escalated to disputed", nil)
+	return response.Success(c, "status pesanan dinaikkan ke sengketa", nil)
 }
 
 // AdminListDisputes godoc
@@ -490,7 +490,7 @@ func (h *Handler) AdminListDisputes(c *fiber.Ctx) error {
 		return response.InternalError(c, err.Error())
 	}
 
-	return response.Success(c, "disputed orders retrieved", orders)
+	return response.Success(c, "daftar pesanan bersengketa berhasil diambil", orders)
 }
 
 type ResolvePayload struct {
@@ -531,7 +531,7 @@ func (h *Handler) AdminResolveDispute(c *fiber.Ctx) error {
 	claims := c.Locals("user").(*jwt.CustomClaims)
 	log.Printf("[ADMIN_ACTION] Dispute resolved by %s for Order %s with side %s", claims.Email, id, req.Side)
 
-	return response.Success(c, "dispute resolved and escrow transferred", nil)
+	return response.Success(c, "sengketa diselesaikan dan escrow dialihkan", nil)
 }
 
 // AdminCancelOrder godoc
@@ -557,7 +557,7 @@ func (h *Handler) AdminCancelOrder(c *fiber.Ctx) error {
 	claims := c.Locals("user").(*jwt.CustomClaims)
 	log.Printf("[ADMIN_ACTION] Order %s forcefully cancelled by Admin %s", id, claims.Email)
 
-	return response.Success(c, "order cancelled successfully", nil)
+	return response.Success(c, "pesanan berhasil dibatalkan", nil)
 }
 
 // GetAvailableOrders godoc
@@ -576,7 +576,7 @@ func (h *Handler) GetAvailableOrders(c *fiber.Ctx) error {
 		return response.InternalError(c, err.Error())
 	}
 
-	return response.Success(c, "available orders retrieved", orders)
+	return response.Success(c, "daftar pesanan tersedia berhasil diambil", orders)
 }
 
 // Track godoc
@@ -671,7 +671,7 @@ func (h *Handler) AdjustPrice(c *fiber.Ctx) error {
 		return response.BadRequest(c, err.Error())
 	}
 
-	return response.Success(c, "price adjustment requested", nil)
+	return response.Success(c, "pengajuan penyesuaian harga berhasil", nil)
 }
 
 // ApproveAdjustment godoc
@@ -695,7 +695,7 @@ func (h *Handler) ApproveAdjustment(c *fiber.Ctx) error {
 		return response.BadRequest(c, err.Error())
 	}
 
-	return response.Success(c, "price adjustment approved", nil)
+	return response.Success(c, "penyesuaian harga disetujui", nil)
 }
 
 type RejectAdjustmentRequest struct {
@@ -728,7 +728,7 @@ func (h *Handler) RejectAdjustment(c *fiber.Ctx) error {
 		return response.BadRequest(c, err.Error())
 	}
 
-	return response.Success(c, "price adjustment rejected", nil)
+	return response.Success(c, "penyesuaian harga ditolak", nil)
 }
 
 // GetFeeEstimate godoc
@@ -744,7 +744,7 @@ func (h *Handler) RejectAdjustment(c *fiber.Ctx) error {
 func (h *Handler) GetFeeEstimate(c *fiber.Ctx) error {
 	var req EstimateFeeRequest
 	if err := c.BodyParser(&req); err != nil {
-		return response.BadRequest(c, "invalid request body")
+		return response.BadRequest(c, "format permintaan tidak valid")
 	}
 
 	if errs := validator.Validate(req); errs != nil {
@@ -756,5 +756,5 @@ func (h *Handler) GetFeeEstimate(c *fiber.Ctx) error {
 		return response.BadRequest(c, err.Error())
 	}
 
-	return response.Success(c, "fee estimate retrieved", resp)
+	return response.Success(c, "estimasi biaya berhasil diambil", resp)
 }

@@ -6,6 +6,7 @@ import (
 	"github.com/codecoffy/nitip-core/internal/cache"
 	"github.com/codecoffy/nitip-core/internal/domain/user"
 	"github.com/codecoffy/nitip-core/internal/middleware"
+	"github.com/codecoffy/nitip-core/pkg/jwt"
 	"github.com/codecoffy/nitip-core/pkg/response"
 	"github.com/codecoffy/nitip-core/pkg/validator"
 	"github.com/gofiber/fiber/v2"
@@ -63,14 +64,18 @@ func (h *Handler) SubmitReview(c *fiber.Ctx) error {
 		return response.ValidationFailed(c, errs)
 	}
 
-	reviewerIDStr := c.Locals("userId").(string)
-	reviewerID, _ := uuid.Parse(reviewerIDStr)
+	// Ambil claims dari middleware Protected (key: "user"), bukan "userId"
+	claims, ok := c.Locals("user").(*jwt.CustomClaims)
+	if !ok || claims == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
+	reviewerID := claims.UserID
 
 	if err := h.service.SubmitReview(c.Context(), orderID, reviewerID, req.Rating, req.Comment); err != nil {
 		return response.BadRequest(c, err.Error())
 	}
 
-	return response.Success(c, "review submitted and trust score updated", nil)
+	return response.Success(c, "ulasan berhasil dikirim dan skor kepercayaan diperbarui", nil)
 }
 
 // GetReview godoc
@@ -94,5 +99,5 @@ func (h *Handler) GetReview(c *fiber.Ctx) error {
 		return response.NotFound(c, "ulasan tidak ditemukan atau belum diberikan")
 	}
 
-	return response.Success(c, "review retrieved", rv)
+	return response.Success(c, "ulasan berhasil diambil", rv)
 }

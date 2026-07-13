@@ -227,3 +227,12 @@ ngrok:
 	@echo "🚀 Starting ngrok tunnel on port $(APP_PORT)..."
 	ngrok http $(APP_PORT)
 
+## test-fcm: Test push notification. Usage: make test-fcm token=<FCM_DEVICE_TOKEN> [title="Judul"] [body="Pesan"]
+test-fcm:
+ifndef token
+	$(error ❌  usage: make test-fcm token=FCM_DEVICE_TOKEN [title="Judul"] [body="Pesan"])
+endif
+	@TITLE=$${title:-"🔔 Notifikasi Test"}; \
+	BODY=$${body:-"Ini adalah pesan test dari Nitip Backend."}; \
+	go run scripts/test_fcm.go "$(token)" "$$TITLE" "$$BODY"
+

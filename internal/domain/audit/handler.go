@@ -54,7 +54,7 @@ func (h *Handler) AdminListAudits(c *fiber.Ctx) error {
 		return response.InternalError(c, err.Error())
 	}
 
-	return response.Success(c, "audit logs retrieved successfully", fiber.Map{
+	return response.Success(c, "log audit berhasil diambil", fiber.Map{
 		"logs":  logs,
 		"total": total,
 		"page":  page,
