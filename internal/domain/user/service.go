@@ -17,6 +17,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/crypto/bcrypt"
+	"github.com/pquerna/otp/totp"
 )
 
 type CreateUserRequest struct {
@@ -43,12 +44,14 @@ type LoginRequest struct {
 	Email    string `json:"email"    validate:"required,email"`
 	Password string `json:"password" validate:"required"`
 	DeviceId string `json:"device_id" validate:"required"`
+	TotpCode string `json:"totp_code" validate:"omitempty,len=6,numeric"`
 }
 
 type LoginResponse struct {
-	Token        string `json:"token"`
-	RefreshToken string `json:"refresh_token"`
-	User         *User  `json:"user"`
+	RequireTotp  bool   `json:"require_totp,omitempty"`
+	Token        string `json:"token,omitempty"`
+	RefreshToken string `json:"refresh_token,omitempty"`
+	User         *User  `json:"user,omitempty"`
 }
 
 type RefreshRequest struct {
@@ -99,12 +102,18 @@ type Service interface {
 	SetupPin(ctx context.Context, id uuid.UUID, req SetupPinRequest) error
 	VerifyPin(ctx context.Context, id uuid.UUID, pin string) error
 	ChangePin(ctx context.Context, id uuid.UUID, req ChangePinRequest) error
+	UnlockPin(ctx context.Context, id uuid.UUID) error
+
+	// TOTP Management
+	SetupTOTP(ctx context.Context, id uuid.UUID) (string, string, error)
+	VerifyAndEnableTOTP(ctx context.Context, id uuid.UUID, code string) error
+	DisableTOTP(ctx context.Context, id uuid.UUID, code string) error
+	AdminDisableTOTP(ctx context.Context, id uuid.UUID, adminID uuid.UUID) error
 
 	// Admin specific
 	UpdateVerification(ctx context.Context, id, actorID uuid.UUID, isVerified bool) error
 	UpdateTrustScore(ctx context.Context, id, actorID uuid.UUID, score int) error
 	UpdateSuspendStatus(ctx context.Context, id, actorID uuid.UUID, isSuspended bool, reason string) error
-	UnlockPin(ctx context.Context, id uuid.UUID) error
 	UpdateLocation(ctx context.Context, id uuid.UUID, lat, lng float64) error
 	UpdateHome(ctx context.Context, id uuid.UUID, req UpdateHomeRequest) error
 	UpdateProfile(ctx context.Context, id uuid.UUID, req UpdateProfileRequest, avatarFile io.Reader, avatarFilename string) error
@@ -231,6 +240,16 @@ func (s *service) Login(ctx context.Context, req LoginRequest, platform string) 
 			log.Printf("[DEBUG] Login failed: Password mismatch for email %s: %v", req.Email, err)
 		}
 		return nil, errors.New("email atau kata sandi salah")
+	}
+
+	// TOTP Check
+	if user.TotpEnabled {
+		if req.TotpCode == "" {
+			return &LoginResponse{RequireTotp: true}, nil
+		}
+		if user.TotpSecret == nil || !totp.Validate(req.TotpCode, *user.TotpSecret) {
+			return nil, errors.New("kode TOTP tidak valid")
+		}
 	}
 
 	// Platform-based role validation

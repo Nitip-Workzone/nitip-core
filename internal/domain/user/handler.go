@@ -59,6 +59,12 @@ func (h *Handler) RegisterRoutes(router fiber.Router) {
 	adminUser.Put("/:id/trust", h.AdminUpdateTrust)
 	adminUser.Put("/:id/suspend", h.AdminSuspendUser)
 	adminUser.Post("/:id/unlock-pin", h.AdminUnlockPin)
+	adminUser.Post("/:id/totp-disable", h.AdminDisableTOTP)
+
+	// TOTP Management
+	g.Post("/totp/setup", middleware.Protected(h.db, h.redis), middleware.RateLimit(h.redis, 3, 1*time.Minute), h.SetupTOTP)
+	g.Post("/totp/enable", middleware.Protected(h.db, h.redis), middleware.RateLimit(h.redis, 5, 1*time.Minute), h.EnableTOTP)
+	g.Post("/totp/disable", middleware.Protected(h.db, h.redis), middleware.RateLimit(h.redis, 5, 1*time.Minute), h.DisableTOTP)
 
 	authGroup := router.Group("/auth")
 	authGroup.Post("/login", auth.RequireGrant(h.db), middleware.RateLimit(h.redis, 5, 1*time.Minute), h.Login)

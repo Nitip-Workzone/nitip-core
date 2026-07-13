@@ -39,6 +39,8 @@ type User struct {
 	IsAcceptingOrders bool       `bun:"is_accepting_orders,notnull,default:false" json:"is_accepting_orders"`
 	Pin               *string    `bun:"pin" json:"-"`
 	HasPin            bool       `bun:"-" json:"has_pin"`
+	TotpSecret        *string    `bun:"totp_secret" json:"-"`
+	TotpEnabled       bool       `bun:"totp_enabled,notnull,default:false" json:"totp_enabled"`
 	TokenVersion      int        `bun:"token_version,notnull,default:0" json:"-"`
 	CreatedAt         time.Time  `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"created_at"`
 	UpdatedAt         time.Time  `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updated_at"`
@@ -54,6 +56,7 @@ func (u *User) MaskSensitiveData() {
 	u.HomeLat = nil
 	u.HomeLng = nil
 	u.HomeAddress = nil
+	u.TotpSecret = nil
 
 	// Partial mask email (e.g. j***@email.com)
 	if u.Email != "" {
