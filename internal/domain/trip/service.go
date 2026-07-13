@@ -155,11 +155,11 @@ func (s *service) Complete(ctx context.Context, tripID, runnerID uuid.UUID) erro
 	}
 
 	if trip.RunnerID != runnerID {
-		return errors.New("trip not found or unauthorized")
+		return errors.New("perjalanan tidak ditemukan atau Anda tidak memiliki akses")
 	}
 
 	if trip.Status != StatusStarted {
-		return errors.New("cannot complete a trip that has not been started")
+		return errors.New("tidak dapat menyelesaikan perjalanan yang belum dimulai")
 	}
 
 	trip.Status = StatusCompleted

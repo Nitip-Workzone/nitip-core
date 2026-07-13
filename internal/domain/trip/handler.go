@@ -51,7 +51,7 @@ func (h *Handler) RegisterRoutes(router fiber.Router) {
 func (h *Handler) Create(c *fiber.Ctx) error {
 	var req CreateTripRequest
 	if err := c.BodyParser(&req); err != nil {
-		return response.BadRequest(c, "invalid request body")
+		return response.BadRequest(c, "format permintaan tidak valid")
 	}
 
 	if errs := validator.Validate(req); errs != nil {
@@ -116,7 +116,7 @@ func (h *Handler) Start(c *fiber.Ctx) error {
 	idStr := c.Params("id")
 	id, err := uuid.Parse(idStr)
 	if err != nil {
-		return response.BadRequest(c, "invalid trip ID")
+		return response.BadRequest(c, "ID perjalanan tidak valid")
 	}
 
 	claims := c.Locals("user").(*jwt.CustomClaims)
@@ -141,7 +141,7 @@ func (h *Handler) Cancel(c *fiber.Ctx) error {
 	idStr := c.Params("id")
 	id, err := uuid.Parse(idStr)
 	if err != nil {
-		return response.BadRequest(c, "invalid trip ID")
+		return response.BadRequest(c, "ID perjalanan tidak valid")
 	}
 
 	claims := c.Locals("user").(*jwt.CustomClaims)
@@ -168,7 +168,7 @@ func (h *Handler) Complete(c *fiber.Ctx) error {
 	idStr := c.Params("id")
 	id, err := uuid.Parse(idStr)
 	if err != nil {
-		return response.BadRequest(c, "invalid trip ID")
+		return response.BadRequest(c, "ID perjalanan tidak valid")
 	}
 
 	claims := c.Locals("user").(*jwt.CustomClaims)

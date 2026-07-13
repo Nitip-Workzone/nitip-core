@@ -31,13 +31,13 @@ func Protected(db *bun.DB, r *cache.Redis) fiber.Handler {
 
 		if tokenStr == "" {
 			log.Printf("[AUTH_DEBUG] Denied: Token is empty")
-			return response.Unauthorized(c, "missing or invalid authorization")
+			return response.Unauthorized(c, "token autentikasi tidak ditemukan atau tidak valid")
 		}
 
 		claims, err := jwt.ParseToken(tokenStr)
 		if err != nil {
 			log.Printf("[AUTH_DEBUG] Denied: JWT Parse Error: %v", err)
-			return response.Unauthorized(c, "invalid or expired token")
+			return response.Unauthorized(c, "token tidak valid atau sudah kedaluwarsa")
 		}
 
 		// --- Session Validation (Token Versioning) ---
@@ -92,7 +92,7 @@ func Role(requiredRoles ...string) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		claims, ok := c.Locals("user").(*jwt.CustomClaims)
 		if !ok {
-			return response.Unauthorized(c, "unauthorized access")
+			return response.Unauthorized(c, "tidak memiliki akses")
 		}
 
 		for _, r := range requiredRoles {
@@ -101,6 +101,6 @@ func Role(requiredRoles ...string) fiber.Handler {
 			}
 		}
 
-		return response.Forbidden(c, "you do not have permission to access this resource")
+		return response.Forbidden(c, "Anda tidak memiliki izin untuk mengakses halaman ini")
 	}
 }

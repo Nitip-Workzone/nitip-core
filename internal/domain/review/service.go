@@ -26,31 +26,31 @@ func NewService(repo Repository, orderRepo order.Repository, db *bun.DB) Service
 
 func (s *service) SubmitReview(ctx context.Context, orderID, reviewerID uuid.UUID, rating int, comment string) error {
 	if rating < 1 || rating > 5 {
-		return errors.New("rating must be between 1 and 5")
+		return errors.New("rating harus antara 1 sampai 5")
 	}
 
 	// Wait, we need to make sure the order belongs to them and is completed!
 	o, err := s.orderRepo.FindByID(ctx, orderID)
 	if err != nil {
-		return errors.New("order not found")
+		return errors.New("pesanan tidak ditemukan")
 	}
 
 	if o.RequesterID != reviewerID {
-		return errors.New("unauthorized: you can only review your own orders")
+		return errors.New("anda hanya dapat mengulas pesanan anda sendiri")
 	}
 
 	if o.Status != order.StatusCompleted {
-		return errors.New("order must be completed before reviewing")
+		return errors.New("pesanan harus selesai sebelum dapat diulas")
 	}
 
 	if o.RunnerID == nil {
-		return errors.New("order has no runner assigned")
+		return errors.New("pesanan belum memiliki runner")
 	}
 
 	// Check if already reviewed
 	existing, _ := s.repo.GetByOrderID(ctx, s.db, orderID)
 	if existing != nil {
-		return errors.New("this order has already been reviewed")
+		return errors.New("pesanan ini sudah diulas")
 	}
 
 	return s.repo.RunInTx(ctx, func(ctx context.Context, tx bun.Tx) error {

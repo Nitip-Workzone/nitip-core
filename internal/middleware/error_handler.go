@@ -7,7 +7,7 @@ import (
 // ErrorHandler is the global fiber error handler that returns consistent JSON errors.
 func ErrorHandler(c *fiber.Ctx, err error) error {
 	code := fiber.StatusInternalServerError
-	message := "internal server error"
+	message := "terjadi kesalahan pada server"
 
 	if e, ok := err.(*fiber.Error); ok {
 		code = e.Code

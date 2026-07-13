@@ -40,7 +40,7 @@ func (h *Handler) Grant(c *fiber.Ctx) error {
 	signature := c.Get("X-Signature")
 
 	if apiKey == "" || timestamp == "" || signature == "" {
-		return response.Unauthorized(c, "missing required headers: X-API-Key, X-Timestamp, X-Signature")
+		return response.Unauthorized(c, "header wajib tidak lengkap: X-API-Key, X-Timestamp, X-Signature")
 	}
 
 	// Verify HMAC signature (API secret is never sent over the wire)
@@ -54,12 +54,12 @@ func (h *Handler) Grant(c *fiber.Ctx) error {
 	grant, err := h.service.CreateGrantToken(c.Context(), client.ID)
 	if err != nil {
 		log.Printf("[AUTH_GRANT] Failed to create grant token: %v", err)
-		return response.InternalError(c, "failed to issue grant token")
+		return response.InternalError(c, "gagal menerbitkan token akses")
 	}
 
 	log.Printf("[AUTH_GRANT] Grant token issued for client: %s (%s)", client.AppName, client.Platform)
 
-	return response.Success(c, "grant token issued", GrantResponse{
+	return response.Success(c, "token akses berhasil diterbitkan", GrantResponse{
 		GrantToken: grant.Token,
 		ExpiresAt:  grant.ExpiresAt,
 	})
@@ -73,17 +73,17 @@ func RequireGrant(db *bun.DB) fiber.Handler {
 		grantToken := c.Get("X-Grant-Token")
 
 		if grantToken == "" {
-			return response.Unauthorized(c, "missing X-Grant-Token header. Please obtain a grant token via POST /auth/grant first")
+			return response.Unauthorized(c, "header X-Grant-Token tidak ditemukan. Silakan dapatkan token melalui POST /auth/grant terlebih dahulu")
 		}
 
 		if err := svc.ConsumeGrantToken(c.Context(), grantToken); err != nil {
 			switch err {
 			case ErrGrantTokenExpired:
-				return response.Unauthorized(c, "grant token has expired. Please request a new one via POST /auth/grant")
+				return response.Unauthorized(c, "token akses sudah kedaluwarsa. Silakan minta token baru melalui POST /auth/grant")
 			case ErrGrantTokenUsed:
-				return response.Unauthorized(c, "grant token has already been used. Please request a new one via POST /auth/grant")
+				return response.Unauthorized(c, "token akses sudah digunakan. Silakan minta token baru melalui POST /auth/grant")
 			default:
-				return response.Unauthorized(c, "invalid grant token")
+				return response.Unauthorized(c, "token akses tidak valid")
 			}
 		}
 

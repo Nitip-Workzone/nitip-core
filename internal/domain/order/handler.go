@@ -145,7 +145,7 @@ func (h *Handler) GetMyOrders(c *fiber.Ctx) error {
 func (h *Handler) Get(c *fiber.Ctx) error {
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {
-		return response.BadRequest(c, "invalid order id")
+		return response.BadRequest(c, "ID pesanan tidak valid")
 	}
 
 	claims := c.Locals("user").(*jwt.CustomClaims)
@@ -171,7 +171,7 @@ func (h *Handler) Get(c *fiber.Ctx) error {
 func (h *Handler) Cancel(c *fiber.Ctx) error {
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {
-		return response.BadRequest(c, "invalid order id")
+		return response.BadRequest(c, "ID pesanan tidak valid")
 	}
 
 	claims := c.Locals("user").(*jwt.CustomClaims)
@@ -198,7 +198,7 @@ func (h *Handler) Cancel(c *fiber.Ctx) error {
 func (h *Handler) Accept(c *fiber.Ctx) error {
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {
-		return response.BadRequest(c, "invalid order id")
+		return response.BadRequest(c, "ID pesanan tidak valid")
 	}
 
 	claims := c.Locals("user").(*jwt.CustomClaims)
@@ -222,7 +222,7 @@ func (h *Handler) Accept(c *fiber.Ctx) error {
 func (h *Handler) Pickup(c *fiber.Ctx) error {
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {
-		return response.BadRequest(c, "invalid order id")
+		return response.BadRequest(c, "ID pesanan tidak valid")
 	}
 
 	claims := c.Locals("user").(*jwt.CustomClaims)
@@ -256,12 +256,12 @@ type CompletePayload struct {
 func (h *Handler) Complete(c *fiber.Ctx) error {
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {
-		return response.BadRequest(c, "invalid order id")
+		return response.BadRequest(c, "ID pesanan tidak valid")
 	}
 
 	var req CompletePayload
 	if err := c.BodyParser(&req); err != nil {
-		return response.BadRequest(c, "invalid body")
+		return response.BadRequest(c, "format permintaan tidak valid")
 	}
 
 	if errs := validator.Validate(req); errs != nil {
@@ -298,12 +298,12 @@ type PurchasePayload struct {
 func (h *Handler) Purchased(c *fiber.Ctx) error {
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {
-		return response.BadRequest(c, "invalid order id")
+		return response.BadRequest(c, "ID pesanan tidak valid")
 	}
 
 	var req PurchasePayload
 	if err := c.BodyParser(&req); err != nil {
-		return response.BadRequest(c, "invalid body")
+		return response.BadRequest(c, "format permintaan tidak valid")
 	}
 
 	if errs := validator.Validate(req); errs != nil {
@@ -331,7 +331,7 @@ func (h *Handler) Purchased(c *fiber.Ctx) error {
 func (h *Handler) Stream(c *fiber.Ctx) error {
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {
-		return response.BadRequest(c, "invalid order id")
+		return response.BadRequest(c, "ID pesanan tidak valid")
 	}
 
 	c.Set("Content-Type", "text/event-stream")
@@ -383,14 +383,14 @@ func (h *Handler) Stream(c *fiber.Ctx) error {
 func (h *Handler) PayStub(c *fiber.Ctx) error {
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {
-		return response.BadRequest(c, "invalid order id")
+		return response.BadRequest(c, "ID pesanan tidak valid")
 	}
 
 	// For MVP, literally just call service to update payment status to escrow/paid
 	// This would normally be executed by a Midtrans webhook handler
 	err = h.service.UpdatePaymentStatus(c.Context(), id, PaymentEscrow)
 	if err != nil {
-		return response.InternalError(c, "failed to update payment")
+		return response.InternalError(c, "gagal memperbarui pembayaran")
 	}
 
 	return response.Success(c, "payment simulated successfully", nil)
@@ -446,12 +446,12 @@ type DisputePayload struct {
 func (h *Handler) Dispute(c *fiber.Ctx) error {
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {
-		return response.BadRequest(c, "invalid order id")
+		return response.BadRequest(c, "ID pesanan tidak valid")
 	}
 
 	var req DisputePayload
 	if err := c.BodyParser(&req); err != nil {
-		return response.BadRequest(c, "invalid body")
+		return response.BadRequest(c, "format permintaan tidak valid")
 	}
 
 	if errs := validator.Validate(req); errs != nil {
@@ -513,12 +513,12 @@ type ResolvePayload struct {
 func (h *Handler) AdminResolveDispute(c *fiber.Ctx) error {
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {
-		return response.BadRequest(c, "invalid order id")
+		return response.BadRequest(c, "ID pesanan tidak valid")
 	}
 
 	var req ResolvePayload
 	if err := c.BodyParser(&req); err != nil {
-		return response.BadRequest(c, "invalid body")
+		return response.BadRequest(c, "format permintaan tidak valid")
 	}
 	if errs := validator.Validate(req); errs != nil {
 		return response.ValidationFailed(c, errs)
@@ -547,7 +547,7 @@ func (h *Handler) AdminResolveDispute(c *fiber.Ctx) error {
 func (h *Handler) AdminCancelOrder(c *fiber.Ctx) error {
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {
-		return response.BadRequest(c, "invalid order id")
+		return response.BadRequest(c, "ID pesanan tidak valid")
 	}
 
 	if err := h.service.ForceCancelOrder(c.Context(), id); err != nil {
@@ -591,7 +591,7 @@ func (h *Handler) GetAvailableOrders(c *fiber.Ctx) error {
 func (h *Handler) Track(c *fiber.Ctx) error {
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {
-		return response.BadRequest(c, "invalid order id")
+		return response.BadRequest(c, "ID pesanan tidak valid")
 	}
 
 	c.Set("Content-Type", "text/event-stream")
@@ -653,12 +653,12 @@ type AdjustmentRequest struct {
 func (h *Handler) AdjustPrice(c *fiber.Ctx) error {
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {
-		return response.BadRequest(c, "invalid order id")
+		return response.BadRequest(c, "ID pesanan tidak valid")
 	}
 
 	var req AdjustmentRequest
 	if err := c.BodyParser(&req); err != nil {
-		return response.BadRequest(c, "invalid body")
+		return response.BadRequest(c, "format permintaan tidak valid")
 	}
 
 	if errs := validator.Validate(req); errs != nil {
@@ -686,7 +686,7 @@ func (h *Handler) AdjustPrice(c *fiber.Ctx) error {
 func (h *Handler) ApproveAdjustment(c *fiber.Ctx) error {
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {
-		return response.BadRequest(c, "invalid order id")
+		return response.BadRequest(c, "ID pesanan tidak valid")
 	}
 
 	claims := c.Locals("user").(*jwt.CustomClaims)
@@ -716,7 +716,7 @@ type RejectAdjustmentRequest struct {
 func (h *Handler) RejectAdjustment(c *fiber.Ctx) error {
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {
-		return response.BadRequest(c, "invalid order id")
+		return response.BadRequest(c, "ID pesanan tidak valid")
 	}
 
 	var req RejectAdjustmentRequest

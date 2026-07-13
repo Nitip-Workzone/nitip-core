@@ -26,13 +26,13 @@ const (
 )
 
 var (
-	ErrInvalidCredentials = errors.New("invalid API key or secret")
-	ErrClientInactive     = errors.New("API client is inactive")
-	ErrInvalidSignature   = errors.New("invalid HMAC signature")
-	ErrTimestampExpired   = errors.New("request timestamp expired or invalid")
-	ErrGrantTokenExpired  = errors.New("grant token has expired")
-	ErrGrantTokenUsed     = errors.New("grant token has already been used")
-	ErrGrantTokenInvalid  = errors.New("invalid grant token")
+	ErrInvalidCredentials = errors.New("API key atau secret tidak valid")
+	ErrClientInactive     = errors.New("klien API tidak aktif")
+	ErrInvalidSignature   = errors.New("tanda tangan tidak valid")
+	ErrTimestampExpired   = errors.New("timestamp permintaan sudah kedaluwarsa atau tidak valid")
+	ErrGrantTokenExpired  = errors.New("token akses sudah kedaluwarsa")
+	ErrGrantTokenUsed     = errors.New("token akses sudah digunakan")
+	ErrGrantTokenInvalid  = errors.New("token akses tidak valid")
 )
 
 type Service struct {

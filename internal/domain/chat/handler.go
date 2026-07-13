@@ -51,7 +51,7 @@ func (h *Handler) RegisterRoutes(router fiber.Router) {
 func (h *Handler) GetMessages(c *fiber.Ctx) error {
 	orderID, err := uuid.Parse(c.Params("id"))
 	if err != nil {
-		return response.BadRequest(c, "invalid order id")
+		return response.BadRequest(c, "ID pesanan tidak valid")
 	}
 
 	userClaims := c.Locals("user").(*jwt.CustomClaims)
@@ -82,14 +82,14 @@ func (h *Handler) GetMessages(c *fiber.Ctx) error {
 func (h *Handler) SendMessage(c *fiber.Ctx) error {
 	orderID, err := uuid.Parse(c.Params("id"))
 	if err != nil {
-		return response.BadRequest(c, "invalid order id")
+		return response.BadRequest(c, "ID pesanan tidak valid")
 	}
 
 	userClaims := c.Locals("user").(*jwt.CustomClaims)
 
 	var req SendMessageRequest
 	if err := c.BodyParser(&req); err != nil {
-		return response.BadRequest(c, "invalid request body")
+		return response.BadRequest(c, "format permintaan tidak valid")
 	}
 
 	if errs := validator.Validate(req); errs != nil {
@@ -121,26 +121,26 @@ func (h *Handler) SendMessage(c *fiber.Ctx) error {
 func (h *Handler) SendImage(c *fiber.Ctx) error {
 	orderID, err := uuid.Parse(c.Params("id"))
 	if err != nil {
-		return response.BadRequest(c, "invalid order id")
+		return response.BadRequest(c, "ID pesanan tidak valid")
 	}
 
 	userClaims := c.Locals("user").(*jwt.CustomClaims)
 
 	file, err := c.FormFile("image")
 	if err != nil {
-		return response.BadRequest(c, "image file is required")
+		return response.BadRequest(c, "file gambar wajib diunggah")
 	}
 	if file.Size > 5*1024*1024 {
-		return response.BadRequest(c, "image too large (max 5MB)")
+		return response.BadRequest(c, "ukuran gambar terlalu besar (maksimal 5MB)")
 	}
 
 	if !fileutil.IsImage(file) {
-		return response.BadRequest(c, "file must be an image (jpg, jpeg, png)")
+		return response.BadRequest(c, "file harus berupa gambar (jpg, jpeg, png)")
 	}
 
 	f, err := file.Open()
 	if err != nil {
-		return response.InternalError(c, "failed to open file")
+		return response.InternalError(c, "gagal membuka file")
 	}
 	defer func() { _ = f.Close() }()
 

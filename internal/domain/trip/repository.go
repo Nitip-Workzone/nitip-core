@@ -99,7 +99,7 @@ func (r *repository) UpdateCapacity(ctx context.Context, db bun.IDB, id uuid.UUI
 
 	rows, _ := res.RowsAffected()
 	if rows == 0 {
-		return errors.New("insufficient trip capacity (atomic check)")
+		return errors.New("kapasitas perjalanan tidak mencukupi")
 	}
 	return nil
 }

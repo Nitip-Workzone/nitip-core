@@ -16,8 +16,8 @@ import (
 )
 
 var (
-	ErrUnauthorized  = errors.New("unauthorized: you are not a participant in this order")
-	ErrOrderNotFound = errors.New("order not found")
+	ErrUnauthorized  = errors.New("anda bukan peserta dalam pesanan ini")
+	ErrOrderNotFound = errors.New("pesanan tidak ditemukan")
 )
 
 type Service interface {

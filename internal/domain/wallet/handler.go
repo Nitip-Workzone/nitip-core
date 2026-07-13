@@ -129,7 +129,7 @@ func (h *Handler) TopUp(c *fiber.Ctx) error {
 
 	var req AmountRequest
 	if err := c.BodyParser(&req); err != nil {
-		return response.BadRequest(c, "invalid request body")
+		return response.BadRequest(c, "format permintaan tidak valid")
 	}
 
 	if errs := validator.Validate(req); errs != nil {
@@ -162,7 +162,7 @@ type SimulateSuccessRequest struct {
 func (h *Handler) SimulateSuccess(c *fiber.Ctx) error {
 	var req SimulateSuccessRequest
 	if err := c.BodyParser(&req); err != nil {
-		return response.BadRequest(c, "invalid request body")
+		return response.BadRequest(c, "format permintaan tidak valid")
 	}
 
 	if errs := validator.Validate(req); errs != nil {
@@ -268,7 +268,7 @@ func (h *Handler) Withdraw(c *fiber.Ctx) error {
 
 	var req WithdrawRequest
 	if err := c.BodyParser(&req); err != nil {
-		return response.BadRequest(c, "invalid request body")
+		return response.BadRequest(c, "format permintaan tidak valid")
 	}
 
 	if errs := validator.Validate(req); errs != nil {
@@ -322,7 +322,7 @@ func (h *Handler) AdminListWithdrawals(c *fiber.Ctx) error {
 func (h *Handler) AdminApproveWithdrawal(c *fiber.Ctx) error {
 	txID, err := uuid.Parse(c.Params("id"))
 	if err != nil {
-		return response.BadRequest(c, "invalid transaction id")
+		return response.BadRequest(c, "ID transaksi tidak valid")
 	}
 
 	claims := c.Locals("user").(*jwt.CustomClaims)
@@ -400,12 +400,12 @@ func (h *Handler) verifyCallbackToken(c *fiber.Ctx) bool {
 // @Router       /webhooks/qris [post]
 func (h *Handler) WebhookQris(c *fiber.Ctx) error {
 	if !h.verifyCallbackToken(c) {
-		return response.Forbidden(c, "invalid callback token")
+		return response.Forbidden(c, "token callback tidak valid")
 	}
 
 	var payload WebhookQrisPayload
 	if err := c.BodyParser(&payload); err != nil {
-		return response.BadRequest(c, "invalid webhook payload")
+		return response.BadRequest(c, "data webhook tidak valid")
 	}
 
 	if payload.Status == "PAID" || payload.Status == "SUCCESS" {
@@ -436,17 +436,17 @@ type DisbursementWebhookRequest struct {
 // @Router       /webhooks/disbursement [post]
 func (h *Handler) WebhookDisbursement(c *fiber.Ctx) error {
 	if !h.verifyCallbackToken(c) {
-		return response.Forbidden(c, "invalid callback token")
+		return response.Forbidden(c, "token callback tidak valid")
 	}
 
 	var req DisbursementWebhookRequest
 	if err := c.BodyParser(&req); err != nil {
-		return response.BadRequest(c, "invalid request body")
+		return response.BadRequest(c, "format permintaan tidak valid")
 	}
 
 	txID, err := uuid.Parse(req.TrxID)
 	if err != nil {
-		return response.BadRequest(c, "invalid transaction id")
+		return response.BadRequest(c, "ID transaksi tidak valid")
 	}
 
 	status := StatusCompleted
@@ -493,7 +493,7 @@ func (h *Handler) WebhookMidtrans(c *fiber.Ctx) error {
 	var payload MidtransNotification
 	if err := c.BodyParser(&payload); err != nil {
 		log.Printf("[MIDTRANS-WEBHOOK] BodyParser error: %v", err)
-		return response.BadRequest(c, "invalid webhook payload")
+		return response.BadRequest(c, "data webhook tidak valid")
 	}
 
 	// Handle empty/ping request from Midtrans dashboard
@@ -514,7 +514,7 @@ func (h *Handler) WebhookMidtrans(c *fiber.Ctx) error {
 			log.Printf("[MIDTRANS-WEBHOOK] Warning: Invalid signature key: got %s, expected %s. Bypassing because AppEnv is development.", payload.SignatureKey, computedSign)
 			return response.Success(c, "webhook processed (dev mode bypass)", nil)
 		}
-		return response.Forbidden(c, "invalid signature key")
+		return response.Forbidden(c, "kunci tanda tangan tidak valid")
 	}
 
 	// If paid, finalize the top up

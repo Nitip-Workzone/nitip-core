@@ -51,12 +51,12 @@ type SubmitReviewRequest struct {
 func (h *Handler) SubmitReview(c *fiber.Ctx) error {
 	orderID, err := uuid.Parse(c.Params("id"))
 	if err != nil {
-		return response.BadRequest(c, "invalid order id")
+		return response.BadRequest(c, "ID pesanan tidak valid")
 	}
 
 	var req SubmitReviewRequest
 	if err := c.BodyParser(&req); err != nil {
-		return response.BadRequest(c, "invalid request body")
+		return response.BadRequest(c, "format permintaan tidak valid")
 	}
 
 	if errs := validator.Validate(req); errs != nil {
@@ -86,12 +86,12 @@ func (h *Handler) SubmitReview(c *fiber.Ctx) error {
 func (h *Handler) GetReview(c *fiber.Ctx) error {
 	orderID, err := uuid.Parse(c.Params("id"))
 	if err != nil {
-		return response.BadRequest(c, "invalid order id")
+		return response.BadRequest(c, "ID pesanan tidak valid")
 	}
 
 	rv, err := h.service.GetReviewByOrder(c.Context(), orderID)
 	if err != nil {
-		return response.NotFound(c, "review not found or not yet rated")
+		return response.NotFound(c, "ulasan tidak ditemukan atau belum diberikan")
 	}
 
 	return response.Success(c, "review retrieved", rv)

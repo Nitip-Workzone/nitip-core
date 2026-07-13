@@ -53,40 +53,40 @@ func (h *Handler) Submit(c *fiber.Ctx) error {
 
 	number := c.FormValue("id_card_number")
 	if number == "" {
-		return response.BadRequest(c, "id_card_number is required")
+		return response.BadRequest(c, "nomor kartu identitas wajib diisi")
 	}
 
 	idCardFile, err := c.FormFile("id_card")
 	if err != nil {
-		return response.BadRequest(c, "id_card image is required")
+		return response.BadRequest(c, "gambar kartu identitas wajib diunggah")
 	}
 	if idCardFile.Size > 5*1024*1024 {
-		return response.BadRequest(c, "id_card image is too large (max 5MB)")
+		return response.BadRequest(c, "ukuran gambar kartu identitas terlalu besar (maksimal 5MB)")
 	}
 	if !fileutil.IsImage(idCardFile) {
-		return response.BadRequest(c, "id_card must be an image file (jpg, jpeg, png)")
+		return response.BadRequest(c, "kartu identitas harus berupa file gambar (jpg, jpeg, png)")
 	}
 
 	selfieFile, err := c.FormFile("selfie")
 	if err != nil {
-		return response.BadRequest(c, "selfie image is required")
+		return response.BadRequest(c, "gambar selfie wajib diunggah")
 	}
 	if selfieFile.Size > 5*1024*1024 {
-		return response.BadRequest(c, "selfie image is too large (max 5MB)")
+		return response.BadRequest(c, "ukuran gambar selfie terlalu besar (maksimal 5MB)")
 	}
 	if !fileutil.IsImage(selfieFile) {
-		return response.BadRequest(c, "selfie must be an image file (jpg, jpeg, png)")
+		return response.BadRequest(c, "selfie harus berupa file gambar (jpg, jpeg, png)")
 	}
 
 	ic, err := idCardFile.Open()
 	if err != nil {
-		return response.InternalError(c, "failed to open id card image")
+		return response.InternalError(c, "gagal membuka gambar kartu identitas")
 	}
 	defer func() { _ = ic.Close() }()
 
 	sf, err := selfieFile.Open()
 	if err != nil {
-		return response.InternalError(c, "failed to open selfie image")
+		return response.InternalError(c, "gagal membuka gambar selfie")
 	}
 	defer func() { _ = sf.Close() }()
 
@@ -170,12 +170,12 @@ type ReviewRequest struct {
 func (h *Handler) Review(c *fiber.Ctx) error {
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {
-		return response.BadRequest(c, "invalid kyc id")
+		return response.BadRequest(c, "ID KYC tidak valid")
 	}
 
 	var req ReviewRequest
 	if err := c.BodyParser(&req); err != nil {
-		return response.BadRequest(c, "invalid request body")
+		return response.BadRequest(c, "format permintaan tidak valid")
 	}
 
 	claims := c.Locals("user").(*jwt.CustomClaims)

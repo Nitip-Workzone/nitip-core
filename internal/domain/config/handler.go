@@ -67,12 +67,12 @@ type updateConfigRequest struct {
 func (h *Handler) AdminUpdateConfig(c *fiber.Ctx) error {
 	key := c.Params("key")
 	if key == "" {
-		return response.BadRequest(c, "invalid config key")
+		return response.BadRequest(c, "konfigurasi tidak valid")
 	}
 
 	var req updateConfigRequest
 	if err := c.BodyParser(&req); err != nil {
-		return response.BadRequest(c, "invalid request body")
+		return response.BadRequest(c, "format permintaan tidak valid")
 	}
 
 	if errs := validator.Validate(req); errs != nil {

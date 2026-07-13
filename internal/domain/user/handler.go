@@ -19,6 +19,7 @@ import (
 	"github.com/gofiber/websocket/v2"
 	"github.com/google/uuid"
 	"github.com/uptrace/bun"
+	"golang.org/x/crypto/bcrypt"
 )
 
 type Handler struct {
@@ -49,6 +50,7 @@ func (h *Handler) RegisterRoutes(router fiber.Router) {
 	// Admin-only User Management
 	adminUser := router.Group("/admin/users", middleware.Protected(h.db, h.redis), middleware.Role(RoleAdmin))
 	adminUser.Get("/", h.AdminListUsers)
+	adminUser.Post("/", h.AdminCreate)
 	adminUser.Get("/all", h.List) // Maps to full list
 	adminUser.Get("/:id", h.Get)
 	adminUser.Delete("/:id", h.Delete)
@@ -77,7 +79,7 @@ func (h *Handler) List(c *fiber.Ctx) error {
 	if err != nil {
 		return response.InternalError(c, err.Error())
 	}
-	return response.Success(c, "users retrieved successfully", users)
+	return response.Success(c, "daftar pengguna berhasil diambil", users)
 }
 
 // Get godoc
@@ -93,7 +95,7 @@ func (h *Handler) List(c *fiber.Ctx) error {
 func (h *Handler) Get(c *fiber.Ctx) error {
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {
-		return response.BadRequest(c, "invalid user id")
+		return response.BadRequest(c, "ID pengguna tidak valid")
 	}
 
 	// Get requester ID if available (optional for public info, but we want masking)
@@ -104,9 +106,9 @@ func (h *Handler) Get(c *fiber.Ctx) error {
 
 	user, err := h.service.GetByID(c.Context(), id, requesterID)
 	if err != nil {
-		return response.NotFound(c, "user not found")
+		return response.NotFound(c, "pengguna tidak ditemukan")
 	}
-	return response.Success(c, "user retrieved successfully", user)
+	return response.Success(c, "data pengguna berhasil diambil", user)
 }
 
 // Create godoc
@@ -136,7 +138,7 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 	if err != nil {
 		return response.InternalError(c, err.Error())
 	}
-	return response.Created(c, "user created successfully", user)
+	return response.Created(c, "pengguna berhasil didaftarkan", user)
 }
 
 // Delete godoc
@@ -151,7 +153,7 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 func (h *Handler) Delete(c *fiber.Ctx) error {
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {
-		return response.BadRequest(c, "invalid user id")
+		return response.BadRequest(c, "ID pengguna tidak valid")
 	}
 
 	if err := h.service.Delete(c.Context(), id); err != nil {
@@ -189,7 +191,7 @@ func (h *Handler) Login(c *fiber.Ctx) error {
 		return response.Unauthorized(c, err.Error())
 	}
 
-	return response.Success(c, "login successful", res)
+	return response.Success(c, "login berhasil", res)
 }
 
 // Refresh godoc
@@ -219,7 +221,7 @@ func (h *Handler) Refresh(c *fiber.Ctx) error {
 		return response.Unauthorized(c, err.Error())
 	}
 
-	return response.Success(c, "token refreshed successfully", res)
+	return response.Success(c, "token berhasil diperbarui", res)
 }
 
 // Logout godoc
@@ -233,7 +235,7 @@ func (h *Handler) Refresh(c *fiber.Ctx) error {
 func (h *Handler) Logout(c *fiber.Ctx) error {
 	userClaims, ok := c.Locals("user").(*jwt.CustomClaims)
 	if !ok {
-		return response.Unauthorized(c, "Unauthorized access")
+		return response.Unauthorized(c, "tidak memiliki akses")
 	}
 
 	// Clear device_id in DB to invalidate the session
@@ -245,7 +247,7 @@ func (h *Handler) Logout(c *fiber.Ctx) error {
 		Exec(c.Context())
 
 	if err != nil {
-		return response.InternalError(c, "Gagal melakukan logout")
+		return response.InternalError(c, "gagal melakukan logout")
 	}
 
 	// Clear Redis cache
@@ -254,7 +256,7 @@ func (h *Handler) Logout(c *fiber.Ctx) error {
 		_ = h.redis.Del(c.Context(), cacheKey)
 	}
 
-	return response.Success(c, "logout successful", nil)
+	return response.Success(c, "logout berhasil", nil)
 }
 
 // AdminListUsers godoc
@@ -290,7 +292,7 @@ func (h *Handler) AdminListUsers(c *fiber.Ctx) error {
 	if err != nil {
 		return response.InternalError(c, err.Error())
 	}
-	return response.Success(c, "users retrieved successfully", users)
+	return response.Success(c, "daftar pengguna berhasil diambil", users)
 }
 
 // AdminVerifyUser godoc
@@ -306,13 +308,13 @@ func (h *Handler) AdminListUsers(c *fiber.Ctx) error {
 func (h *Handler) AdminVerifyUser(c *fiber.Ctx) error {
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {
-		return response.BadRequest(c, "invalid user id")
+		return response.BadRequest(c, "ID pengguna tidak valid")
 	}
 
 	vStr := c.Query("is_verified")
 	isVerified, err := strconv.ParseBool(vStr)
 	if err != nil {
-		return response.BadRequest(c, "invalid is_verified value")
+		return response.BadRequest(c, "nilai is_verified tidak valid")
 	}
 
 	adminID := c.Locals("user").(*jwt.CustomClaims).UserID
@@ -322,7 +324,7 @@ func (h *Handler) AdminVerifyUser(c *fiber.Ctx) error {
 
 	log.Printf("[ADMIN_ACTION] Admin %s updated verification for User %s to %v", adminID, id, isVerified)
 
-	return response.Success(c, "user verification status updated", nil)
+	return response.Success(c, "status verifikasi pengguna berhasil diperbarui", nil)
 }
 
 // AdminUpdateTrust godoc
@@ -338,13 +340,13 @@ func (h *Handler) AdminVerifyUser(c *fiber.Ctx) error {
 func (h *Handler) AdminUpdateTrust(c *fiber.Ctx) error {
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {
-		return response.BadRequest(c, "invalid user id")
+		return response.BadRequest(c, "ID pengguna tidak valid")
 	}
 
 	scoreStr := c.Query("score")
 	score, err := strconv.Atoi(scoreStr)
 	if err != nil {
-		return response.BadRequest(c, "invalid score value")
+		return response.BadRequest(c, "nilai skor tidak valid")
 	}
 
 	adminID := c.Locals("user").(*jwt.CustomClaims).UserID
@@ -354,7 +356,7 @@ func (h *Handler) AdminUpdateTrust(c *fiber.Ctx) error {
 
 	log.Printf("[ADMIN_ACTION] Admin %s updated trust score for User %s to %v", adminID, id, score)
 
-	return response.Success(c, "user trust score updated", nil)
+	return response.Success(c, "skor kepercayaan pengguna berhasil diperbarui", nil)
 }
 
 // AdminSuspendUser godoc
@@ -371,18 +373,18 @@ func (h *Handler) AdminUpdateTrust(c *fiber.Ctx) error {
 func (h *Handler) AdminSuspendUser(c *fiber.Ctx) error {
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {
-		return response.BadRequest(c, "invalid user id")
+		return response.BadRequest(c, "ID pengguna tidak valid")
 	}
 
 	sStr := c.Query("is_suspended")
 	isSuspended, err := strconv.ParseBool(sStr)
 	if err != nil {
-		return response.BadRequest(c, "invalid is_suspended value")
+		return response.BadRequest(c, "nilai is_suspended tidak valid")
 	}
 
 	reason := c.Query("reason")
 	if isSuspended && reason == "" {
-		return response.BadRequest(c, "reason is required for suspension")
+		return response.BadRequest(c, "alasan wajib diisi untuk suspensi")
 	}
 
 	adminID := c.Locals("user").(*jwt.CustomClaims).UserID
@@ -392,7 +394,7 @@ func (h *Handler) AdminSuspendUser(c *fiber.Ctx) error {
 
 	log.Printf("[ADMIN_ACTION] Admin %s updated suspend status for User %s to %v", adminID, id, isSuspended)
 
-	return response.Success(c, "user suspend status updated", nil)
+	return response.Success(c, "status penangguhan pengguna berhasil diperbarui", nil)
 }
 
 // GetMe godoc
@@ -409,13 +411,13 @@ func (h *Handler) GetMe(c *fiber.Ctx) error {
 	// 1. Get claims from context (set by Protected middleware)
 	userClaims, ok := c.Locals("user").(*jwt.CustomClaims)
 	if !ok {
-		return response.Unauthorized(c, "Unauthorized access: invalid token claims")
+		return response.Unauthorized(c, "tidak memiliki akses: token tidak valid")
 	}
 
 	// 2. Fetch user from DB to get latest non-sensitive info
 	user, err := h.service.GetByID(c.Context(), userClaims.UserID, userClaims.UserID)
 	if err != nil {
-		return response.NotFound(c, "User profile not found")
+		return response.NotFound(c, "profil pengguna tidak ditemukan")
 	}
 
 	// 3. Optional: Passive location update if X-Location header is present
@@ -427,7 +429,7 @@ func (h *Handler) GetMe(c *fiber.Ctx) error {
 	}
 
 	// Note: Password field is already excluded via json:"-" tags in User model.
-	return response.Success(c, "Profile retrieved successfully", user)
+	return response.Success(c, "profil berhasil diambil", user)
 }
 
 // UpdateHome godoc
@@ -446,12 +448,12 @@ func (h *Handler) GetMe(c *fiber.Ctx) error {
 func (h *Handler) UpdateHome(c *fiber.Ctx) error {
 	userClaims, ok := c.Locals("user").(*jwt.CustomClaims)
 	if !ok {
-		return response.Unauthorized(c, "Unauthorized access: invalid token claims")
+		return response.Unauthorized(c, "tidak memiliki akses: token tidak valid")
 	}
 
 	var req UpdateHomeRequest
 	if err := c.BodyParser(&req); err != nil {
-		return response.BadRequest(c, "invalid request body")
+		return response.BadRequest(c, "format permintaan tidak valid")
 	}
 
 	if errs := validator.Validate(req); errs != nil {
@@ -462,7 +464,7 @@ func (h *Handler) UpdateHome(c *fiber.Ctx) error {
 		return response.InternalError(c, err.Error())
 	}
 
-	return response.Success(c, "home location updated successfully", nil)
+	return response.Success(c, "lokasi rumah berhasil diperbarui", nil)
 }
 
 // UpdateProfile godoc
@@ -482,12 +484,12 @@ func (h *Handler) UpdateHome(c *fiber.Ctx) error {
 func (h *Handler) UpdateProfile(c *fiber.Ctx) error {
 	userClaims, ok := c.Locals("user").(*jwt.CustomClaims)
 	if !ok {
-		return response.Unauthorized(c, "Unauthorized access: invalid token claims")
+		return response.Unauthorized(c, "tidak memiliki akses: token tidak valid")
 	}
 
 	var req UpdateProfileRequest
 	if err := c.BodyParser(&req); err != nil {
-		return response.BadRequest(c, "invalid request body")
+		return response.BadRequest(c, "format permintaan tidak valid")
 	}
 
 	if errs := validator.Validate(req); errs != nil {
@@ -501,14 +503,14 @@ func (h *Handler) UpdateProfile(c *fiber.Ctx) error {
 	file, err := c.FormFile("avatar")
 	if err == nil {
 		if file.Size > 5*1024*1024 {
-			return response.BadRequest(c, "avatar image is too large (max 5MB)")
+			return response.BadRequest(c, "ukuran gambar avatar terlalu besar (maksimal 5MB)")
 		}
 		if !fileutil.IsImage(file) {
-			return response.BadRequest(c, "avatar must be an image file (jpg, jpeg, png)")
+			return response.BadRequest(c, "avatar harus berupa file gambar (jpg, jpeg, png)")
 		}
 		f, err := file.Open()
 		if err != nil {
-			return response.InternalError(c, "failed to open avatar image")
+			return response.InternalError(c, "gagal membuka gambar avatar")
 		}
 		defer func() { _ = f.Close() }()
 		avatarReader = f
@@ -519,7 +521,7 @@ func (h *Handler) UpdateProfile(c *fiber.Ctx) error {
 		return response.InternalError(c, err.Error())
 	}
 
-	return response.Success(c, "profile updated successfully", nil)
+	return response.Success(c, "profil berhasil diperbarui", nil)
 }
 
 // AdminUpdateProfile godoc
@@ -540,12 +542,12 @@ func (h *Handler) UpdateProfile(c *fiber.Ctx) error {
 func (h *Handler) AdminUpdateProfile(c *fiber.Ctx) error {
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {
-		return response.BadRequest(c, "invalid user id")
+		return response.BadRequest(c, "ID pengguna tidak valid")
 	}
 
 	var req UpdateProfileRequest
 	if err := c.BodyParser(&req); err != nil {
-		return response.BadRequest(c, "invalid request body")
+		return response.BadRequest(c, "format permintaan tidak valid")
 	}
 
 	if errs := validator.Validate(req); errs != nil {
@@ -559,14 +561,14 @@ func (h *Handler) AdminUpdateProfile(c *fiber.Ctx) error {
 	file, err := c.FormFile("avatar")
 	if err == nil {
 		if file.Size > 5*1024*1024 {
-			return response.BadRequest(c, "avatar image is too large (max 5MB)")
+			return response.BadRequest(c, "ukuran gambar avatar terlalu besar (maksimal 5MB)")
 		}
 		if !fileutil.IsImage(file) {
-			return response.BadRequest(c, "avatar must be an image file (jpg, jpeg, png)")
+			return response.BadRequest(c, "avatar harus berupa file gambar (jpg, jpeg, png)")
 		}
 		f, err := file.Open()
 		if err != nil {
-			return response.InternalError(c, "failed to open avatar image")
+			return response.InternalError(c, "gagal membuka gambar avatar")
 		}
 		defer func() { _ = f.Close() }()
 		avatarReader = f
@@ -577,7 +579,7 @@ func (h *Handler) AdminUpdateProfile(c *fiber.Ctx) error {
 		return response.InternalError(c, err.Error())
 	}
 
-	return response.Success(c, "user profile updated successfully by admin", nil)
+	return response.Success(c, "profil pengguna berhasil diperbarui oleh admin", nil)
 }
 
 // UpdateLocation godoc
@@ -593,7 +595,7 @@ func (h *Handler) AdminUpdateProfile(c *fiber.Ctx) error {
 func (h *Handler) UpdateLocation(c *fiber.Ctx) error {
 	var req LocationUpdate
 	if err := c.BodyParser(&req); err != nil {
-		return response.BadRequest(c, "invalid request body")
+		return response.BadRequest(c, "format permintaan tidak valid")
 	}
 
 	claims := c.Locals("user").(*jwt.CustomClaims)
@@ -603,7 +605,7 @@ func (h *Handler) UpdateLocation(c *fiber.Ctx) error {
 	}
 	log.Printf("[HTTP_TRACKING] Received location from %s: %f, %f", claims.UserID, req.Lat, req.Lng)
 
-	return response.Success(c, "location updated successfully", nil)
+	return response.Success(c, "lokasi berhasil diperbarui", nil)
 }
 
 // LocationUpdate represents the structure of the WS message
@@ -680,7 +682,7 @@ func (h *Handler) StreamLocation(c *websocket.Conn) {
 func (h *Handler) SetupPin(c *fiber.Ctx) error {
 	userClaims, ok := c.Locals("user").(*jwt.CustomClaims)
 	if !ok {
-		return response.Unauthorized(c, "Unauthorized access")
+		return response.Unauthorized(c, "tidak memiliki akses")
 	}
 
 	var req SetupPinRequest
@@ -714,7 +716,7 @@ func (h *Handler) SetupPin(c *fiber.Ctx) error {
 func (h *Handler) ChangePin(c *fiber.Ctx) error {
 	userClaims, ok := c.Locals("user").(*jwt.CustomClaims)
 	if !ok {
-		return response.Unauthorized(c, "Unauthorized access")
+		return response.Unauthorized(c, "tidak memiliki akses")
 	}
 
 	var req ChangePinRequest
@@ -748,7 +750,7 @@ func (h *Handler) ChangePin(c *fiber.Ctx) error {
 func (h *Handler) VerifyPin(c *fiber.Ctx) error {
 	userClaims, ok := c.Locals("user").(*jwt.CustomClaims)
 	if !ok {
-		return response.Unauthorized(c, "Unauthorized access")
+		return response.Unauthorized(c, "tidak memiliki akses")
 	}
 
 	var req VerifyPinRequest
@@ -780,7 +782,7 @@ func (h *Handler) VerifyPin(c *fiber.Ctx) error {
 func (h *Handler) AdminUnlockPin(c *fiber.Ctx) error {
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {
-		return response.BadRequest(c, "invalid user id")
+		return response.BadRequest(c, "ID pengguna tidak valid")
 	}
 
 	if err := h.service.UnlockPin(c.Context(), id); err != nil {
@@ -790,7 +792,7 @@ func (h *Handler) AdminUnlockPin(c *fiber.Ctx) error {
 	adminID := c.Locals("user").(*jwt.CustomClaims).UserID
 	log.Printf("[ADMIN_ACTION] Admin %s unlocked PIN for User %s", adminID, id)
 
-	return response.Success(c, "user PIN unlocked successfully", nil)
+	return response.Success(c, "PIN pengguna berhasil dibuka", nil)
 }
 
 // UpdateAcceptingOrders godoc
@@ -808,7 +810,7 @@ func (h *Handler) AdminUnlockPin(c *fiber.Ctx) error {
 func (h *Handler) UpdateAcceptingOrders(c *fiber.Ctx) error {
 	userClaims, ok := c.Locals("user").(*jwt.CustomClaims)
 	if !ok {
-		return response.Unauthorized(c, "Unauthorized access")
+		return response.Unauthorized(c, "tidak memiliki akses")
 	}
 
 	var req UpdateAcceptingOrdersRequest
@@ -826,3 +828,53 @@ func (h *Handler) UpdateAcceptingOrders(c *fiber.Ctx) error {
 	}
 	return response.Success(c, fmt.Sprintf("Penerimaan order berhasil %s", status), nil)
 }
+
+// AdminCreate godoc
+// @Summary      [ADMIN] Create a new user manually
+// @Description  Admin can create any user role by confirming their own password.
+// @Tags         [Admin] User Management
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        body  body      AdminCreateUserRequest  true  "Create user payload"
+// @Success      201   {object}  response.envelope{data=User}
+// @Failure      400   {object}  response.envelope
+// @Failure      401   {object}  response.envelope
+// @Failure      500   {object}  response.envelope
+// @Router       /admin/users [post]
+func (h *Handler) AdminCreate(c *fiber.Ctx) error {
+	adminClaims, ok := c.Locals("user").(*jwt.CustomClaims)
+	if !ok {
+		return response.Unauthorized(c, "tidak memiliki akses")
+	}
+
+	var req AdminCreateUserRequest
+	if err := c.BodyParser(&req); err != nil {
+		return response.BadRequest(c, "format permintaan tidak valid")
+	}
+
+	if errs := validator.Validate(req); errs != nil {
+		return response.ValidationFailed(c, errs)
+	}
+
+	// Verify currently logged in admin's password
+	var adminUser User
+	err := h.db.NewSelect().Model(&adminUser).Where("id = ?", adminClaims.UserID).Scan(c.Context())
+	if err != nil {
+		return response.InternalError(c, "gagal memverifikasi akun admin")
+	}
+
+	if err := bcrypt.CompareHashAndPassword([]byte(adminUser.Password), []byte(req.AdminPassword)); err != nil {
+		return response.BadRequest(c, "konfirmasi password admin salah")
+	}
+
+	user, err := h.service.AdminCreate(c.Context(), req)
+	if err != nil {
+		return response.InternalError(c, err.Error())
+	}
+
+	log.Printf("[ADMIN_ACTION] Admin %s created User %s (%s) with role %s", adminClaims.UserID, user.ID, user.Email, user.Role)
+
+	return response.Created(c, "pengguna berhasil didaftarkan oleh admin", user)
+}
+

@@ -89,7 +89,7 @@ func (r *repository) UpdateWalletBalance(ctx context.Context, db bun.IDB, wallet
 	if err == nil {
 		rows, _ := res.RowsAffected()
 		if rows == 0 && amount < 0 {
-			return errors.New("insufficient balance (database guard)")
+			return errors.New("saldo tidak mencukupi (proteksi database)")
 		}
 	}
 	return err

@@ -54,7 +54,7 @@ func (s *service) Submit(ctx context.Context, userID uuid.UUID, req SubmitKycReq
 	// 1. Check if there's already a pending or approved submission
 	existing, err := s.repo.GetByUserID(ctx, userID)
 	if err == nil && (existing.Status == StatusPending || existing.Status == StatusApproved) {
-		return nil, errors.New("you already have an active or pending kyc submission")
+		return nil, errors.New("anda sudah memiliki pengajuan KYC yang aktif atau tertunda")
 	}
 
 	// 2. Upload images to Storage (returns relative path/key)
@@ -118,7 +118,7 @@ func (s *service) Review(ctx context.Context, kycID, actorID uuid.UUID, approved
 	}
 
 	if kyc.Status != StatusPending {
-		return errors.New("submission is already processed")
+		return errors.New("pengajuan sudah diproses")
 	}
 
 	if approved {

@@ -28,6 +28,17 @@ type CreateUserRequest struct {
 	WhatsappNumber string `json:"whatsapp_number" validate:"required,min=9,max=15,numeric"`
 }
 
+type AdminCreateUserRequest struct {
+	Name           string `json:"name"            validate:"required,min=2,max=100"`
+	Email          string `json:"email"           validate:"required,email"`
+	Password       string `json:"password"        validate:"required,min=8,max=72"`
+	Role           string `json:"role"            validate:"required,oneof=requester runner admin"`
+	WhatsappNumber string `json:"whatsapp_number" validate:"required,min=9,max=15,numeric"`
+	IsVerified     bool   `json:"is_verified"`
+	AdminPassword  string `json:"admin_password"  validate:"required"`
+}
+
+
 type LoginRequest struct {
 	Email    string `json:"email"    validate:"required,email"`
 	Password string `json:"password" validate:"required"`
@@ -79,6 +90,7 @@ type Service interface {
 	GetByID(ctx context.Context, id uuid.UUID, requestorID uuid.UUID) (*User, error)
 	GetByIDs(ctx context.Context, ids []uuid.UUID) ([]User, error)
 	Create(ctx context.Context, req CreateUserRequest) (*User, error)
+	AdminCreate(ctx context.Context, req AdminCreateUserRequest) (*User, error)
 	Login(ctx context.Context, req LoginRequest, platform string) (*LoginResponse, error)
 	Refresh(ctx context.Context, refreshToken string) (*LoginResponse, error)
 	Delete(ctx context.Context, id uuid.UUID) error
@@ -143,7 +155,7 @@ func (s *service) GetByIDs(ctx context.Context, ids []uuid.UUID) ([]User, error)
 func (s *service) Create(ctx context.Context, req CreateUserRequest) (*User, error) {
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
-		return nil, errors.New("failed to hash password")
+		return nil, errors.New("gagal mengenkripsi kata sandi")
 	}
 
 	role := RoleRequester
@@ -169,6 +181,37 @@ func (s *service) Create(ctx context.Context, req CreateUserRequest) (*User, err
 	user.ComputeHasPin()
 	return user, nil
 }
+
+func (s *service) AdminCreate(ctx context.Context, req AdminCreateUserRequest) (*User, error) {
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	if err != nil {
+		return nil, errors.New("gagal mengenkripsi kata sandi")
+	}
+
+	now := time.Now()
+	user := &User{
+		ID:             uuid.New(),
+		Name:           req.Name,
+		Email:          req.Email,
+		WhatsappNumber: req.WhatsappNumber,
+		Password:       string(hashedPassword),
+		Role:           req.Role,
+		IsVerified:     req.IsVerified,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+
+	if req.IsVerified {
+		user.VerifiedAt = &now
+	}
+
+	if err := s.repo.Create(ctx, user); err != nil {
+		return nil, err
+	}
+	user.ComputeHasPin()
+	return user, nil
+}
+
 
 func (s *service) Login(ctx context.Context, req LoginRequest, platform string) (*LoginResponse, error) {
 	isDev := os.Getenv("APP_ENV") != "production"

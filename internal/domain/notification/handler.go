@@ -92,7 +92,7 @@ func (h *Handler) MarkAsRead(c *fiber.Ctx) error {
 
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {
-		return response.BadRequest(c, "Invalid notification ID")
+		return response.BadRequest(c, "ID notifikasi tidak valid")
 	}
 
 	if err := h.service.MarkAsRead(c.Context(), id, userID); err != nil {

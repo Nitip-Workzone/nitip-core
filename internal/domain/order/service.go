@@ -156,11 +156,11 @@ func (s *service) Create(ctx context.Context, requesterID uuid.UUID, req CreateO
 		return nil, err
 	}
 	if u.Role != user.RoleRequester {
-		return nil, errors.New("unauthorized: only users with requester role can create orders")
+		return nil, errors.New("hanya pengguna dengan role requester yang dapat membuat pesanan")
 	}
 
 	if u.IsSuspended {
-		return nil, errors.New("cannot create order: your account is suspended")
+		return nil, errors.New("tidak dapat membuat pesanan: akun Anda sedang ditangguhkan")
 	}
 
 	// --- Account & COD Restrictions ---
@@ -421,7 +421,7 @@ func (s *service) AcceptOrder(ctx context.Context, orderID, runnerID uuid.UUID) 
 	}
 
 	if order.Status != StatusPending {
-		return errors.New("order is no longer pending")
+		return errors.New("pesanan sudah tidak dalam status menunggu")
 	}
 
 	r, err := s.userSvc.GetByID(ctx, runnerID, runnerID)
@@ -429,7 +429,7 @@ func (s *service) AcceptOrder(ctx context.Context, orderID, runnerID uuid.UUID) 
 		return err
 	}
 	if r.IsSuspended {
-		return errors.New("cannot accept order: your account is suspended")
+		return errors.New("tidak dapat menerima pesanan: akun Anda sedang ditangguhkan")
 	}
 
 	if !r.IsVerified && !config.App.BypassKYCValidation {
@@ -442,7 +442,7 @@ func (s *service) AcceptOrder(ctx context.Context, orderID, runnerID uuid.UUID) 
 	}
 
 	if order.RequesterID == runnerID {
-		return errors.New("cannot accept your own order")
+		return errors.New("tidak dapat menerima pesanan Anda sendiri")
 	}
 
 	// Capacity Management: Find Runner's current Trip
@@ -459,16 +459,16 @@ func (s *service) AcceptOrder(ctx context.Context, orderID, runnerID uuid.UUID) 
 
 	// Logic: If no active trip found AND runner is not in "Accepting Orders" mode, reject
 	if activeTrip == nil && !r.IsAcceptingOrders {
-		return errors.New("cannot accept order: you must have an active trip or be in 'Online' mode")
+		return errors.New("tidak dapat menerima pesanan: Anda harus memiliki perjalanan aktif atau dalam mode 'Online'")
 	}
 
 	// Validate Capacity (only if trip exists)
 	if activeTrip != nil {
 		if activeTrip.AvailableWeightKg < order.WeightKg {
-			return errors.New("insufficient weight capacity on this trip")
+			return errors.New("kapasitas berat pada perjalanan ini tidak mencukupi")
 		}
 		if activeTrip.AvailableVolumeLiters < order.VolumeLiters {
-			return errors.New("insufficient volume capacity on this trip")
+			return errors.New("kapasitas volume pada perjalanan ini tidak mencukupi")
 		}
 	}
 
@@ -477,7 +477,7 @@ func (s *service) AcceptOrder(ctx context.Context, orderID, runnerID uuid.UUID) 
 		// 1. Check Escrow (Already held during Create)
 		if order.PaymentMethod == MethodEscrow {
 			if order.PaymentStatus != PaymentEscrow {
-				return errors.New("order payment is not secured in escrow")
+				return errors.New("pembayaran pesanan belum diamankan dalam escrow")
 			}
 		}
 
@@ -544,21 +544,21 @@ func (s *service) PickupOrder(ctx context.Context, orderID, runnerID uuid.UUID) 
 	}
 
 	if order.RunnerID == nil || *order.RunnerID != runnerID {
-		return errors.New("unauthorized: you are not the runner for this order")
+		return errors.New("anda bukan runner untuk pesanan ini")
 	}
 
 	switch order.ServiceCategory {
 	case CategoryBeli:
 		if order.Status != StatusPurchasing {
-			return errors.New("order category 'beli' must be purchased (receipt uploaded) before it can be picked up")
+			return errors.New("kategori pesanan 'beli' harus dibeli (kwitansi diunggah) sebelum dapat diambil")
 		}
 	case CategoryKirim:
 		if order.Status != StatusAccepted {
-			return errors.New("order category 'kirim' must be accepted before it can be picked up")
+			return errors.New("kategori pesanan 'kirim' harus diterima sebelum dapat diambil")
 		}
 	default:
 		if order.Status != StatusAccepted && order.Status != StatusPurchasing {
-			return errors.New("order is not in a state that can be picked up")
+			return errors.New("pesanan tidak dalam status yang dapat diambil")
 		}
 	}
 
@@ -584,11 +584,11 @@ func (s *service) CancelOrder(ctx context.Context, orderID, requesterID uuid.UUI
 	}
 
 	if ord.RequesterID != requesterID {
-		return errors.New("unauthorized: only the requester can cancel this order")
+		return errors.New("hanya peminta yang dapat membatalkan pesanan ini")
 	}
 
 	if ord.Status == StatusCompleted || ord.Status == StatusCancelled || ord.Status == StatusDelivering {
-		return errors.New("order cannot be cancelled at this stage")
+		return errors.New("pesanan tidak dapat dibatalkan pada tahap ini")
 	}
 
 	// Logic: Charge checking fee if status is PURCHASING or if there's an adjustment
@@ -608,12 +608,12 @@ func (s *service) CancelOrder(ctx context.Context, orderID, requesterID uuid.UUI
 				}
 
 				if err := s.walletSvc.PartialReleaseEscrow(ctx, tx, *ord.RunnerID, ord.RequesterID, ord.ID, fee, refundAmount); err != nil {
-					return errors.New("failed to process partial refund: " + err.Error())
+					return errors.New("gagal memproses pengembalian parsial: " + err.Error())
 				}
 			} else {
 				// Refund full amount
 				if err := s.walletSvc.RefundEscrow(ctx, tx, ord.RequesterID, ord.ID, totalEscrow); err != nil {
-					return errors.New("failed to refund escrow: " + err.Error())
+					return errors.New("gagal mengembalikan dana escrow: " + err.Error())
 				}
 			}
 			ord.PaymentStatus = PaymentRefunded
@@ -622,7 +622,7 @@ func (s *service) CancelOrder(ctx context.Context, orderID, requesterID uuid.UUI
 		// Restore Capacity if runner was assigned
 		if ord.RunnerID != nil && ord.TripID != nil {
 			if err := s.tripRepo.RestoreCapacity(ctx, tx, *ord.TripID, ord.WeightKg, ord.VolumeLiters); err != nil {
-				return errors.New("failed to restore trip capacity")
+				return errors.New("gagal memulihkan kapasitas perjalanan")
 			}
 		}
 
@@ -645,20 +645,20 @@ func (s *service) SubmitPurchaseReceipt(ctx context.Context, orderID, runnerID u
 	}
 
 	if order.RunnerID == nil || *order.RunnerID != runnerID {
-		return errors.New("unauthorized: you are not the runner for this order")
+		return errors.New("anda bukan runner untuk pesanan ini")
 	}
 
 	if order.ServiceCategory == CategoryKirim {
-		return errors.New("order category 'kirim' does not support the purchasing phase")
+		return errors.New("kategori pesanan 'kirim' tidak mendukung fase pembelian")
 	}
 
 	// Must be in Accepted state before Purchasing
 	if order.Status != StatusAccepted {
-		return errors.New("order is not ready for purchasing phase")
+		return errors.New("pesanan belum siap untuk fase pembelian")
 	}
 
 	if receiptURL == "" {
-		return errors.New("receipt image URL is required")
+		return errors.New("URL gambar kwitansi wajib diisi")
 	}
 
 	order.Status = StatusPurchasing
@@ -683,11 +683,11 @@ func (s *service) CompleteOrder(ctx context.Context, orderID, runnerID uuid.UUID
 	}
 
 	if order.RunnerID == nil || *order.RunnerID != runnerID {
-		return errors.New("unauthorized: you are not the runner for this order")
+		return errors.New("anda bukan runner untuk pesanan ini")
 	}
 
 	if order.Status != StatusDelivering {
-		return errors.New("order cannot be completed from current status (must be in delivering phase)")
+		return errors.New("pesanan tidak dapat diselesaikan dari status saat ini (harus dalam fase pengiriman)")
 	}
 
 	if order.CompletionCode != code {
@@ -703,13 +703,13 @@ func (s *service) CompleteOrder(ctx context.Context, orderID, runnerID uuid.UUID
 			totalRunnerPayout := order.EstimatedCost + (order.DeliveryFee - order.ServiceFee - order.CheckingFee)
 
 			if err := s.walletSvc.ReleaseEscrowWithRefund(ctx, tx, runnerID, order.RequesterID, order.ID, totalRunnerPayout, platformFee, refundAmount); err != nil {
-				return errors.New("failed to release escrow: " + err.Error())
+				return errors.New("gagal melepaskan dana escrow: " + err.Error())
 			}
 			order.PaymentStatus = PaymentReleased
 		case MethodCOD:
 			platformFee := order.ServiceFee
 			if err := s.walletSvc.DeductCODPlatformFee(ctx, tx, runnerID, order.ID, platformFee); err != nil {
-				return errors.New("failed to deduct COD platform fee: " + err.Error())
+				return errors.New("gagal memotong biaya platform COD: " + err.Error())
 			}
 			order.PaymentStatus = PaymentReleased
 		}
@@ -760,7 +760,7 @@ func (s *service) ForceCancelOrder(ctx context.Context, orderID uuid.UUID) error
 	}
 
 	if order.Status == StatusCompleted || order.Status == StatusCancelled {
-		return errors.New("cannot cancel an already completed or cancelled order")
+		return errors.New("tidak dapat membatalkan pesanan yang sudah selesai atau dibatalkan")
 	}
 
 	// --- Unified Admin Force-Cancel Transaction ---
@@ -769,7 +769,7 @@ func (s *service) ForceCancelOrder(ctx context.Context, orderID uuid.UUID) error
 		if order.PaymentMethod == MethodEscrow && order.PaymentStatus == PaymentEscrow {
 			totalEscrow := order.EstimatedCost + order.DeliveryFee
 			if err := s.walletSvc.RefundEscrow(ctx, tx, order.RequesterID, orderID, totalEscrow); err != nil {
-				return errors.New("failed to refund escrow: " + err.Error())
+				return errors.New("gagal mengembalikan dana escrow: " + err.Error())
 			}
 			order.PaymentStatus = PaymentRefunded
 		}
@@ -777,7 +777,7 @@ func (s *service) ForceCancelOrder(ctx context.Context, orderID uuid.UUID) error
 		// 2. Restore Capacity
 		if order.RunnerID != nil && order.TripID != nil {
 			if err := s.tripRepo.RestoreCapacity(ctx, tx, *order.TripID, order.WeightKg, order.VolumeLiters); err != nil {
-				return errors.New("failed to restore trip capacity")
+				return errors.New("gagal memulihkan kapasitas perjalanan")
 			}
 		}
 
@@ -795,24 +795,24 @@ func (s *service) DisputeOrder(ctx context.Context, orderID, requesterID uuid.UU
 	}
 
 	if order.RequesterID != requesterID {
-		return errors.New("only the requester can dispute this order")
+		return errors.New("hanya peminta yang dapat mengajukan sengketa untuk pesanan ini")
 	}
 
 	if order.Status != StatusCompleted {
-		return errors.New("only completed orders can be disputed")
+		return errors.New("hanya pesanan selesai yang dapat disengketakan")
 	}
 
 	// 24 Hour Limit Enforcement
 	if time.Since(order.UpdatedAt) > 24*time.Hour {
-		return errors.New("dispute period (24 hours after completion) has expired")
+		return errors.New("batas waktu pengajuan sengketa (24 jam setelah selesai) telah berakhir")
 	}
 
 	if order.PaymentStatus == PaymentRefunded {
-		return errors.New("order is already refunded")
+		return errors.New("pesanan sudah dikembalikan dananya")
 	}
 
 	if proofURL == "" {
-		return errors.New("proof image URL is required to open a dispute")
+		return errors.New("URL gambar bukti wajib diisi untuk mengajukan sengketa")
 	}
 
 	order.Status = StatusDisputed
@@ -843,7 +843,7 @@ func (s *service) ResolveDispute(ctx context.Context, orderID uuid.UUID, side st
 	}
 
 	if order.Status != StatusDisputed {
-		return errors.New("order is not under dispute")
+		return errors.New("pesanan tidak dalam status sengketa")
 	}
 
 	// --- Unified Resolution Transaction ---
@@ -853,7 +853,7 @@ func (s *service) ResolveDispute(ctx context.Context, orderID uuid.UUID, side st
 			case user.RoleRequester:
 				totalAmount := order.EstimatedCost + order.DeliveryFee
 				if err := s.walletSvc.RefundEscrow(ctx, tx, order.RequesterID, orderID, totalAmount); err != nil {
-					return errors.New("escrow refund failed: " + err.Error())
+					return errors.New("gagal mengembalikan dana escrow: " + err.Error())
 				}
 				order.PaymentStatus = PaymentRefunded
 				order.Status = StatusCancelled
@@ -861,23 +861,23 @@ func (s *service) ResolveDispute(ctx context.Context, orderID uuid.UUID, side st
 				// Restore Capacity
 				if order.RunnerID != nil && order.TripID != nil {
 					if err := s.tripRepo.RestoreCapacity(ctx, tx, *order.TripID, order.WeightKg, order.VolumeLiters); err != nil {
-						return errors.New("failed to restore trip capacity")
+						return errors.New("gagal memulihkan kapasitas perjalanan")
 					}
 				}
 			case user.RoleRunner:
 				if order.RunnerID == nil {
-					return errors.New("order has no runner")
+					return errors.New("pesanan tidak memiliki runner")
 				}
 				platformFee := order.ServiceFee
 				refundAmount := order.CheckingFee
 				totalRunnerPayout := order.EstimatedCost + (order.DeliveryFee - order.ServiceFee - order.CheckingFee)
 				if err := s.walletSvc.ReleaseEscrowWithRefund(ctx, tx, *order.RunnerID, order.RequesterID, orderID, totalRunnerPayout, platformFee, refundAmount); err != nil {
-					return errors.New("escrow release failed: " + err.Error())
+					return errors.New("gagal melepaskan dana escrow: " + err.Error())
 				}
 				order.PaymentStatus = PaymentReleased
 				order.Status = StatusCompleted
 			default:
-				return errors.New("invalid resolution side, must be 'requester' or 'runner'")
+				return errors.New("pihak penyelesaian tidak valid, harus 'requester' atau 'runner'")
 			}
 		} else {
 			order.Status = StatusCompleted
@@ -1095,19 +1095,19 @@ func (s *service) RequestPriceAdjustment(ctx context.Context, orderID, runnerID 
 	}
 
 	if order.RunnerID == nil || *order.RunnerID != runnerID {
-		return errors.New("unauthorized: you are not the runner for this order")
+		return errors.New("anda bukan runner untuk pesanan ini")
 	}
 
 	if order.Status != StatusAccepted && order.Status != StatusPurchasing {
-		return errors.New("cannot adjust price in current order status")
+		return errors.New("tidak dapat menyesuaikan harga pada status pesanan saat ini")
 	}
 
 	if order.AdjustmentStatus != "" {
-		return errors.New("price adjustment has already been requested for this order (limit 1x)")
+		return errors.New("pengajuan penyesuaian harga sudah dilakukan untuk pesanan ini (batas 1x)")
 	}
 
 	if adjustedCost <= order.EstimatedCost {
-		return errors.New("adjusted cost must be higher than current estimated cost")
+		return errors.New("biaya yang disesuaikan harus lebih tinggi dari estimasi saat ini")
 	}
 
 	order.AdjustedCost = adjustedCost
@@ -1136,11 +1136,11 @@ func (s *service) ApprovePriceAdjustment(ctx context.Context, orderID, requester
 	}
 
 	if ord.RequesterID != requesterID {
-		return errors.New("unauthorized: only the requester can approve penyesuaian harga")
+		return errors.New("hanya peminta yang dapat menyetujui penyesuaian harga")
 	}
 
 	if ord.AdjustmentStatus != AdjustmentPending {
-		return errors.New("no pending price adjustment found")
+		return errors.New("tidak ada pengajuan penyesuaian harga yang tertunda")
 	}
 
 	diff := ord.AdjustedCost - ord.EstimatedCost
@@ -1158,7 +1158,7 @@ func (s *service) ApprovePriceAdjustment(ctx context.Context, orderID, requester
 	err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		if requiresHold && ord.PaymentMethod == MethodEscrow {
 			if err := s.walletSvc.HoldEscrow(ctx, tx, requesterID, orderID, diff); err != nil {
-				return errors.New("failed to hold additional escrow funds: " + err.Error())
+				return errors.New("gagal menahan dana escrow tambahan: " + err.Error())
 			}
 		}
 
@@ -1194,11 +1194,11 @@ func (s *service) RejectPriceAdjustment(ctx context.Context, orderID, requesterI
 	}
 
 	if ord.RequesterID != requesterID {
-		return errors.New("unauthorized")
+		return errors.New("tidak memiliki akses")
 	}
 
 	if ord.AdjustmentStatus != AdjustmentPending {
-		return errors.New("no pending price adjustment found")
+		return errors.New("tidak ada pengajuan penyesuaian harga yang tertunda")
 	}
 
 	// --- Unified Rejection Transaction ---
@@ -1220,11 +1220,11 @@ func (s *service) RejectPriceAdjustment(ctx context.Context, orderID, requesterI
 					}
 
 					if err := s.walletSvc.PartialReleaseEscrow(ctx, tx, *ord.RunnerID, ord.RequesterID, ord.ID, fee, refundAmount); err != nil {
-						return errors.New("failed to process partial refund: " + err.Error())
+						return errors.New("gagal memproses pengembalian parsial: " + err.Error())
 					}
 				} else {
 					if err := s.walletSvc.RefundEscrow(ctx, tx, ord.RequesterID, ord.ID, totalEscrow); err != nil {
-						return errors.New("failed to refund escrow: " + err.Error())
+						return errors.New("gagal mengembalikan dana escrow: " + err.Error())
 					}
 				}
 				ord.PaymentStatus = PaymentRefunded
@@ -1233,7 +1233,7 @@ func (s *service) RejectPriceAdjustment(ctx context.Context, orderID, requesterI
 			// Restore Capacity
 			if ord.RunnerID != nil && ord.TripID != nil {
 				if err := s.tripRepo.RestoreCapacity(ctx, tx, *ord.TripID, ord.WeightKg, ord.VolumeLiters); err != nil {
-					return errors.New("failed to restore trip capacity")
+					return errors.New("gagal memulihkan kapasitas perjalanan")
 				}
 			}
 		}

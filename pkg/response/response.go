@@ -68,7 +68,7 @@ func NoContent(c *fiber.Ctx) error {
 func ValidationFailed(c *fiber.Ctx, errs []ValidationError) error {
 	return c.Status(fiber.StatusUnprocessableEntity).JSON(envelope{
 		Success: false,
-		Message: "validation failed",
+		Message: "validasi gagal",
 		Errors:  errs,
 	})
 }
@@ -82,7 +82,7 @@ func BadRequest(c *fiber.Ctx, message string) error {
 
 func Unauthorized(c *fiber.Ctx, message string) error {
 	if message == "" {
-		message = "unauthorized"
+		message = "tidak memiliki akses"
 	}
 	return c.Status(fiber.StatusUnauthorized).JSON(envelope{
 		Success: false,
@@ -92,7 +92,7 @@ func Unauthorized(c *fiber.Ctx, message string) error {
 
 func Forbidden(c *fiber.Ctx, message string) error {
 	if message == "" {
-		message = "forbidden"
+		message = "akses ditolak"
 	}
 	return c.Status(fiber.StatusForbidden).JSON(envelope{
 		Success: false,
@@ -102,7 +102,7 @@ func Forbidden(c *fiber.Ctx, message string) error {
 
 func NotFound(c *fiber.Ctx, message string) error {
 	if message == "" {
-		message = "resource not found"
+		message = "data tidak ditemukan"
 	}
 	return c.Status(fiber.StatusNotFound).JSON(envelope{
 		Success: false,
@@ -112,7 +112,7 @@ func NotFound(c *fiber.Ctx, message string) error {
 
 func InternalError(c *fiber.Ctx, message string) error {
 	if message == "" {
-		message = "internal server error"
+		message = "terjadi kesalahan pada server"
 	}
 
 	// Security: Mask database errors in production/response

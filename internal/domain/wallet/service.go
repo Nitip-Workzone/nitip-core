@@ -97,7 +97,7 @@ func (s *service) GetTransactions(ctx context.Context, userID uuid.UUID, limit, 
 
 func (s *service) TopUp(ctx context.Context, userID uuid.UUID, amount float64, reference string) (*WalletTransaction, error) {
 	if amount <= 0 {
-		return nil, errors.New("amount must be greater than zero")
+		return nil, errors.New("jumlah harus lebih besar dari nol")
 	}
 
 	w, err := s.GetBalance(ctx, userID)
@@ -268,7 +268,7 @@ func (s *service) FinalizeTopUp(ctx context.Context, reference string) (*WalletT
 		}
 
 		if wtx.Status != StatusPending || wtx.Type != TypeTopUp {
-			return errors.New("invalid transaction for finalization or already processed")
+			return errors.New("transaksi tidak valid untuk finalisasi atau sudah diproses")
 		}
 
 		// 1. Update status
@@ -353,7 +353,7 @@ func (s *service) RequestWithdrawal(ctx context.Context, userID uuid.UUID, amoun
 		return nil, err
 	}
 	if u.IsSuspended {
-		return nil, errors.New("cannot request withdrawal: your account is suspended")
+		return nil, errors.New("tidak dapat mengajukan penarikan: akun Anda sedang ditangguhkan")
 	}
 
 	// 0. Verify PIN
@@ -362,7 +362,7 @@ func (s *service) RequestWithdrawal(ctx context.Context, userID uuid.UUID, amoun
 	}
 
 	if amount <= 0 {
-		return nil, errors.New("amount must be greater than zero")
+		return nil, errors.New("jumlah harus lebih besar dari nol")
 	}
 
 	// 1. Ambil info channel jika ada
@@ -371,10 +371,10 @@ func (s *service) RequestWithdrawal(ctx context.Context, userID uuid.UUID, amoun
 	if channelID != nil {
 		channel, err = s.repo.GetWithdrawalChannelByID(ctx, s.db, *channelID)
 		if err != nil {
-			return nil, errors.New("withdrawal channel not found")
+			return nil, errors.New("saluran penarikan tidak ditemukan")
 		}
 		if !channel.IsActive {
-			return nil, errors.New("selected withdrawal channel is currently inactive")
+			return nil, errors.New("saluran penarikan yang dipilih sedang tidak aktif")
 		}
 		if amount < channel.MinAmount {
 			return nil, fmt.Errorf("minimum withdrawal for this channel is Rp %.0f", channel.MinAmount)
@@ -411,7 +411,7 @@ func (s *service) RequestWithdrawal(ctx context.Context, userID uuid.UUID, amoun
 		}
 
 		if wTxState.Balance < totalDeduction {
-			return errors.New("insufficient balance (including admin fee)")
+			return errors.New("saldo tidak mencukupi (termasuk biaya admin)")
 		}
 
 		// 2. Deduct funds immediately (Amount + Fee)
@@ -474,7 +474,7 @@ func (s *service) HoldEscrow(ctx context.Context, db bun.IDB, userID, orderID uu
 	}
 
 	if w.Balance < amount {
-		return errors.New("insufficient balance for escrow")
+		return errors.New("saldo tidak mencukupi untuk escrow")
 	}
 
 	if err := s.repo.UpdateWalletBalance(ctx, db, w.ID, -amount); err != nil {
@@ -741,7 +741,7 @@ func (s *service) ApproveWithdrawal(ctx context.Context, txID, actorID uuid.UUID
 		}
 
 		if wtx.Status != StatusPending || wtx.Type != TypeWithdrawal {
-			return errors.New("cannot approve a non-pending withdrawal")
+			return errors.New("tidak dapat menyetujui penarikan yang tidak dalam status menunggu")
 		}
 
 		if err := s.repo.UpdateTransactionStatus(ctx, tx, txID, StatusCompleted); err != nil {
@@ -775,7 +775,7 @@ func (s *service) FinalizeWithdrawal(ctx context.Context, txID uuid.UUID, status
 	}
 
 	if tx.Type != TypeWithdrawal {
-		return errors.New("transaction is not a withdrawal")
+		return errors.New("transaksi bukan merupakan penarikan")
 	}
 
 	if tx.Status != StatusPending {
