@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/codecoffy/nitip-core/config"
 	"github.com/codecoffy/nitip-core/internal/cache"
 	"github.com/codecoffy/nitip-core/pkg/jwt"
 	"github.com/codecoffy/nitip-core/pkg/response"
@@ -18,7 +19,9 @@ import (
 func Protected(db *bun.DB, r *cache.Redis) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		authHeader := c.Get("Authorization")
-		log.Printf("[AUTH_DEBUG] Incoming request: %s %s | AuthHeader: %s", c.Method(), c.Path(), authHeader)
+		if config.App.AppEnv != "production" {
+			log.Printf("[AUTH_DEBUG] Incoming request: %s %s | AuthHeader: %s", c.Method(), c.Path(), authHeader)
+		}
 
 		tokenStr := ""
 
@@ -30,13 +33,17 @@ func Protected(db *bun.DB, r *cache.Redis) fiber.Handler {
 		}
 
 		if tokenStr == "" {
-			log.Printf("[AUTH_DEBUG] Denied: Token is empty")
+			if config.App.AppEnv != "production" {
+				log.Printf("[AUTH_DEBUG] Denied: Token is empty")
+			}
 			return response.Unauthorized(c, "token autentikasi tidak ditemukan atau tidak valid")
 		}
 
 		claims, err := jwt.ParseToken(tokenStr)
 		if err != nil {
-			log.Printf("[AUTH_DEBUG] Denied: JWT Parse Error: %v", err)
+			if config.App.AppEnv != "production" {
+				log.Printf("[AUTH_DEBUG] Denied: JWT Parse Error: %v", err)
+			}
 			return response.Unauthorized(c, "token tidak valid atau sudah kedaluwarsa")
 		}
 
@@ -65,7 +72,9 @@ func Protected(db *bun.DB, r *cache.Redis) fiber.Handler {
 				Scan(c.Context(), &currentVersion)
 
 			if err != nil {
-				log.Printf("[AUTH_DEBUG] Denied: User/Session not found in DB for ID %s", claims.UserID)
+				if config.App.AppEnv != "production" {
+					log.Printf("[AUTH_DEBUG] Denied: User/Session not found in DB for ID %s", claims.UserID)
+				}
 				return response.Unauthorized(c, "sesi tidak ditemukan")
 			}
 
@@ -77,7 +86,9 @@ func Protected(db *bun.DB, r *cache.Redis) fiber.Handler {
 
 		// 3. Compare Version
 		if claims.TokenVersion != currentVersion {
-			log.Printf("[AUTH_DEBUG] Denied: Version Mismatch for User %s. Claim: %d, DB: %d", claims.UserID, claims.TokenVersion, currentVersion)
+			if config.App.AppEnv != "production" {
+				log.Printf("[AUTH_DEBUG] Denied: Version Mismatch for User %s. Claim: %d, DB: %d", claims.UserID, claims.TokenVersion, currentVersion)
+			}
 			return response.Unauthorized(c, "sesi Anda telah berakhir, silakan login kembali")
 		}
 
