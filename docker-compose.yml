@@ -4,7 +4,7 @@ services:
       - nitip-net
     build: .
     container_name: nitip-core
-    restart: on-failure:5
+    restart: unless-stopped
     env_file: .env
     environment:
       # Ensure db host matches container name
@@ -22,12 +22,10 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      # Probe ke /health endpoint; jika proses mati karena panic, probe gagal → Docker restart
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8000/health || exit 1"]
-      interval: 15s
+      test: ["CMD", "wget", "-qO-", "http://localhost:8000/health"]
+      interval: 10s
       timeout: 5s
-      retries: 3
-      start_period: 10s
+      retries: 5
     deploy:
       resources:
         limits:

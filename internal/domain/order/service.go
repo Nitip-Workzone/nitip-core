@@ -223,10 +223,12 @@ func (s *service) Create(ctx context.Context, requesterID uuid.UUID, req CreateO
 	feeStr := s.configSvc.GetValue(ctx, "order_checking_fee", "5000")
 	checkingFee, _ := strconv.ParseFloat(feeStr, 64)
 
-	// Extract ServiceFee (Markup 10% only applies to base fee, excluding checking fee)
-	// Example: (Total - CheckingFee) = Base * 1.1
+	// Extract ServiceFee (Platform markup applies to base fee, excluding checking fee)
+	feePercentStr2 := s.configSvc.GetValue(ctx, "platform_fee_percent", "10")
+	feePercent2, _ := strconv.ParseFloat(feePercentStr2, 64)
+	feeMultiplier2 := 1 + (feePercent2 / 100)
 	baseWithMarkup := deliveryFee - checkingFee
-	serviceFee := baseWithMarkup - (baseWithMarkup / 1.1)
+	serviceFee := baseWithMarkup - (baseWithMarkup / feeMultiplier2)
 
 	completionCode, err := generateCompletionCode()
 	if err != nil {
@@ -1264,8 +1266,11 @@ func (s *service) calculateDeliveryFee(ctx context.Context, distance, weight, vo
 		totalFee = feeBase + (routeDistance * feePerKM) + (weight * feePerKG) + (volume * feePerL)
 	}
 
-	// Add 10% Platform Markup
-	totalWithMarkup := totalFee * 1.1
+	// Add Platform Markup from config (default 10%)
+	feePercentStr := s.configSvc.GetValue(ctx, "platform_fee_percent", "10")
+	feePercent, _ := strconv.ParseFloat(feePercentStr, 64)
+	feeMultiplier := 1 + (feePercent / 100)
+	totalWithMarkup := totalFee * feeMultiplier
 
 	// Add Checking Fee (Deposit)
 	checkingFeeStr := s.configSvc.GetValue(ctx, "order_checking_fee", "5000")
