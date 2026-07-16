@@ -28,8 +28,8 @@ func NewStorage(cfg *config.Config, firebaseApp *firebase.App) (Storage, error) 
 	case "firebase":
 		return NewFirebaseStorage(firebaseApp, cfg)
 	case "local":
-		return NewLocalStorage("./uploads", "http://localhost:8000") // TODO: Move to config
+		return NewLocalStorage("./uploads", cfg.StorageBaseURL)
 	default:
-		return NewLocalStorage("./uploads", "http://localhost:8000")
+		return NewLocalStorage("./uploads", cfg.StorageBaseURL)
 	}
 }

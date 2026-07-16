@@ -38,6 +38,7 @@ type Config struct {
 
 	// Storage
 	StorageDriver   string // "firebase" | "minio" | "local"
+	StorageBaseURL  string
 	MinioEndpoint   string
 	MinioAccessKey  string
 	MinioSecretKey  string
@@ -92,6 +93,7 @@ func Load() *Config {
 
 		// Storage
 		StorageDriver:   getEnv("STORAGE_DRIVER", "local"), // Default to local for dev
+		StorageBaseURL:  getEnv("STORAGE_BASE_URL", "http://localhost:8000"),
 		MinioEndpoint:   getEnv("MINIO_ENDPOINT", "localhost:9000"),
 		MinioAccessKey:  getEnv("MINIO_ACCESS_KEY", ""),
 		MinioSecretKey:  getEnv("MINIO_SECRET_KEY", ""),
