@@ -1281,22 +1281,48 @@ func (s *service) calculateDeliveryFee(ctx context.Context, distance, weight, vo
 	return math.Ceil(totalWithMarkup/500) * 500
 }
 
+func sanitizeStorageKey(urlStr string) string {
+	if urlStr == "" {
+		return ""
+	}
+	// Jika key berupa URL absolut (misal dari storage.nitip.id atau localhost), bersihkan domainnya agar menjadi relative key
+	if strings.HasPrefix(urlStr, "http://") || strings.HasPrefix(urlStr, "https://") {
+		temp := urlStr
+		if strings.HasPrefix(temp, "https://") {
+			temp = strings.TrimPrefix(temp, "https://")
+		} else {
+			temp = strings.TrimPrefix(temp, "http://")
+		}
+		
+		slashIdx := strings.Index(temp, "/")
+		if slashIdx != -1 {
+			path := temp[slashIdx+1:]
+			path = strings.TrimPrefix(path, "uploads/")
+			return path
+		}
+	}
+	return urlStr
+}
+
 func (s *service) signURLs(ctx context.Context, o *Order) {
 	if o == nil {
 		return
 	}
 	if o.ReceiptImageURL != "" {
-		if signed, err := s.storage.GetSignedURL(ctx, o.ReceiptImageURL, 1*time.Hour); err == nil {
+		key := sanitizeStorageKey(o.ReceiptImageURL)
+		if signed, err := s.storage.GetSignedURL(ctx, key, 1*time.Hour); err == nil {
 			o.ReceiptImageURL = signed
 		}
 	}
 	if o.DeliveryImageURL != "" {
-		if signed, err := s.storage.GetSignedURL(ctx, o.DeliveryImageURL, 1*time.Hour); err == nil {
+		key := sanitizeStorageKey(o.DeliveryImageURL)
+		if signed, err := s.storage.GetSignedURL(ctx, key, 1*time.Hour); err == nil {
 			o.DeliveryImageURL = signed
 		}
 	}
 	if o.DisputeProofURL != "" {
-		if signed, err := s.storage.GetSignedURL(ctx, o.DisputeProofURL, 1*time.Hour); err == nil {
+		key := sanitizeStorageKey(o.DisputeProofURL)
+		if signed, err := s.storage.GetSignedURL(ctx, key, 1*time.Hour); err == nil {
 			o.DisputeProofURL = signed
 		}
 	}
