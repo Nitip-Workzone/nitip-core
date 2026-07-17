@@ -25,7 +25,8 @@ func NewLocalStorage(basePath, baseURL string) (*LocalStorage, error) {
 
 func (s *LocalStorage) Upload(ctx context.Context, folder string, filename string, content io.Reader) (string, error) {
 	ext := filepath.Ext(filename)
-	relPath := filepath.Join(folder, uuid.New().String()+ext)
+	base := filepath.Base(filename[:len(filename)-len(ext)])
+	relPath := filepath.Join(folder, fmt.Sprintf("%s_%s%s", base, uuid.New().String(), ext))
 	absPath := filepath.Join(s.basePath, relPath)
 
 	if err := os.MkdirAll(filepath.Dir(absPath), 0755); err != nil {

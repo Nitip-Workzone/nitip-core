@@ -28,10 +28,10 @@ type Order struct {
 	UpdatedAt      time.Time  `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updated_at"`
 
 	// Phase 2: Proof & Dispute
-	ReceiptImageURL  string     `bun:"receipt_image_url,nullzero" json:"receipt_image_url,omitempty"`
-	DeliveryImageURL string     `bun:"delivery_image_url,nullzero" json:"delivery_image_url,omitempty"`
+	ReceiptImageURL  string     `bun:"receipt_image_url,nullzero" json:"receipt_image_url"`
+	DeliveryImageURL string     `bun:"delivery_image_url,nullzero" json:"delivery_image_url"`
 	DisputeReason    string     `bun:"dispute_reason,nullzero" json:"dispute_reason,omitempty"`
-	DisputeProofURL  string     `bun:"dispute_proof_url,nullzero" json:"dispute_proof_url,omitempty"`
+	DisputeProofURL  string     `bun:"dispute_proof_url,nullzero" json:"dispute_proof_url"`
 	DisputedAt       *time.Time `bun:"disputed_at" json:"disputed_at,omitempty"`
 
 	// Price Adjustment

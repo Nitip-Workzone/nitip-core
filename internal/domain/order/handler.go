@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"strconv"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"github.com/codecoffy/nitip-core/internal/cache"
 	"github.com/codecoffy/nitip-core/internal/domain/user"
 	"github.com/codecoffy/nitip-core/internal/middleware"
+	"github.com/codecoffy/nitip-core/pkg/fileutil"
 	"github.com/codecoffy/nitip-core/pkg/jwt"
 	"github.com/codecoffy/nitip-core/pkg/response"
 	"github.com/codecoffy/nitip-core/pkg/validator"
@@ -243,15 +245,16 @@ type CompletePayload struct {
 // @Summary      Complete an order
 // @Description  Runner completing an ongoing order by providing completion code from penitip and optional delivery image proof
 // @Tags         [Runner] Order Execution
+// @Accept       multipart/form-data
 // @Produce      json
 // @Security     BearerAuth
-// @Param        id    path  string           true  "Order UUID"  Format(uuid)
-// @Param        body  body  CompletePayload  true  "Completion Code and Optional Delivery Image Proof"
+// @Param        id              path      string  true  "Order UUID"  Format(uuid)
+// @Param        completion_code formData  string  true  "Completion Code"
+// @Param        delivery_image  formData  file    false "Delivery Proof Image"
 // @Success      200   {object}  response.envelope
 // @Failure      400   {object}  response.envelope
 // @Failure      401   {object}  response.envelope
 // @Failure      403   {object}  response.envelope
-// @Failure      422   {object}  response.envelope{errors=[]response.ValidationError}
 // @Router       /orders/{id}/complete [post]
 func (h *Handler) Complete(c *fiber.Ctx) error {
 	id, err := uuid.Parse(c.Params("id"))
@@ -259,18 +262,40 @@ func (h *Handler) Complete(c *fiber.Ctx) error {
 		return response.BadRequest(c, "ID pesanan tidak valid")
 	}
 
-	var req CompletePayload
-	if err := c.BodyParser(&req); err != nil {
-		return response.BadRequest(c, "format permintaan tidak valid")
+	code := c.FormValue("completion_code")
+	if code == "" {
+		// Fallback to JSON body parser if they sent it as JSON for compatibility
+		var jsonReq CompletePayload
+		if err := c.BodyParser(&jsonReq); err == nil {
+			code = jsonReq.CompletionCode
+		}
+	}
+	if code == "" {
+		return response.BadRequest(c, "kode konfirmasi (completion_code) wajib diisi")
 	}
 
-	if errs := validator.Validate(req); errs != nil {
-		return response.ValidationFailed(c, errs)
+	var deliveryReader io.Reader
+	var deliveryFilename string
+	file, err := c.FormFile("delivery_image")
+	if err == nil {
+		if file.Size > 5*1024*1024 {
+			return response.BadRequest(c, "ukuran gambar bukti terlalu besar (maksimal 5MB)")
+		}
+		if !fileutil.IsImage(file) {
+			return response.BadRequest(c, "bukti penyerahan harus berupa file gambar (jpg, jpeg, png)")
+		}
+		f, err := file.Open()
+		if err != nil {
+			return response.InternalError(c, "gagal membuka file bukti penyerahan")
+		}
+		defer func() { _ = f.Close() }()
+		deliveryReader = f
+		deliveryFilename = file.Filename
 	}
 
 	claims := c.Locals("user").(*jwt.CustomClaims)
 
-	if err := h.service.CompleteOrder(c.Context(), id, claims.UserID, req.CompletionCode, req.DeliveryImageURL); err != nil {
+	if err := h.service.CompleteOrder(c.Context(), id, claims.UserID, code, deliveryReader, deliveryFilename); err != nil {
 		return response.BadRequest(c, err.Error())
 	}
 
@@ -283,17 +308,17 @@ type PurchasePayload struct {
 
 // Purchased godoc
 // @Summary      Mark order as purchased
-// @Description  Runner marks the order as purchased and uploads a receipt
+// @Description  Runner marks the order as purchased and uploads a receipt file
 // @Tags         [Runner] Order Execution
+// @Accept       multipart/form-data
 // @Produce      json
 // @Security     BearerAuth
-// @Param        id    path  string           true  "Order UUID"  Format(uuid)
-// @Param        body  body  PurchasePayload  true  "Receipt URL"
+// @Param        id       path      string  true  "Order UUID"  Format(uuid)
+// @Param        receipt  formData  file    true  "Receipt Image file"
 // @Success      200   {object}  response.envelope
 // @Failure      400   {object}  response.envelope
 // @Failure      401   {object}  response.envelope
 // @Failure      403   {object}  response.envelope
-// @Failure      422   {object}  response.envelope{errors=[]response.ValidationError}
 // @Router       /orders/{id}/purchased [post]
 func (h *Handler) Purchased(c *fiber.Ctx) error {
 	id, err := uuid.Parse(c.Params("id"))
@@ -301,18 +326,26 @@ func (h *Handler) Purchased(c *fiber.Ctx) error {
 		return response.BadRequest(c, "ID pesanan tidak valid")
 	}
 
-	var req PurchasePayload
-	if err := c.BodyParser(&req); err != nil {
-		return response.BadRequest(c, "format permintaan tidak valid")
+	file, err := c.FormFile("receipt")
+	if err != nil {
+		return response.BadRequest(c, "file gambar kwitansi (receipt) wajib diunggah")
+	}
+	if file.Size > 5*1024*1024 {
+		return response.BadRequest(c, "ukuran file gambar kwitansi terlalu besar (maksimal 5MB)")
+	}
+	if !fileutil.IsImage(file) {
+		return response.BadRequest(c, "kwitansi harus berupa file gambar (jpg, jpeg, png)")
 	}
 
-	if errs := validator.Validate(req); errs != nil {
-		return response.ValidationFailed(c, errs)
+	f, err := file.Open()
+	if err != nil {
+		return response.InternalError(c, "gagal membuka file kwitansi")
 	}
+	defer func() { _ = f.Close() }()
 
 	claims := c.Locals("user").(*jwt.CustomClaims)
 
-	if err := h.service.SubmitPurchaseReceipt(c.Context(), id, claims.UserID, req.ReceiptURL); err != nil {
+	if err := h.service.SubmitPurchaseReceipt(c.Context(), id, claims.UserID, f, file.Filename); err != nil {
 		return response.BadRequest(c, err.Error())
 	}
 

@@ -36,7 +36,8 @@ func NewMinioStorage(cfg *config.Config) (*MinioStorage, error) {
 
 func (s *MinioStorage) Upload(ctx context.Context, folder string, filename string, content io.Reader) (string, error) {
 	ext := filepath.Ext(filename)
-	objectKey := fmt.Sprintf("%s/%s%s", folder, uuid.New().String(), ext)
+	base := filepath.Base(filename[:len(filename)-len(ext)])
+	objectKey := fmt.Sprintf("%s/%s_%s%s", folder, base, uuid.New().String(), ext)
 
 	_, err := s.client.PutObject(ctx, s.bucket, objectKey, content, -1, minio.PutObjectOptions{})
 	if err != nil {

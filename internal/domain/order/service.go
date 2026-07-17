@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"io"
 	"math/big"
 	"time"
 
@@ -22,6 +23,7 @@ import (
 	"github.com/codecoffy/nitip-core/internal/domain/wallet"
 	"github.com/codecoffy/nitip-core/internal/infrastructure/storage"
 	"github.com/codecoffy/nitip-core/internal/notification"
+	"github.com/codecoffy/nitip-core/pkg/fileutil"
 	"github.com/codecoffy/nitip-core/pkg/geo"
 	"github.com/google/uuid"
 	"github.com/uptrace/bun"
@@ -92,8 +94,8 @@ type Service interface {
 	AcceptOrder(ctx context.Context, orderID, runnerID uuid.UUID) error
 	PickupOrder(ctx context.Context, orderID, runnerID uuid.UUID) error
 	CancelOrder(ctx context.Context, orderID, requesterID uuid.UUID) error
-	SubmitPurchaseReceipt(ctx context.Context, orderID, runnerID uuid.UUID, receiptURL string) error
-	CompleteOrder(ctx context.Context, orderID, runnerID uuid.UUID, code string, deliveryImageURL string) error
+	SubmitPurchaseReceipt(ctx context.Context, orderID, runnerID uuid.UUID, receiptReader io.Reader, receiptFilename string) error
+	CompleteOrder(ctx context.Context, orderID, runnerID uuid.UUID, code string, deliveryReader io.Reader, deliveryFilename string) error
 	UpdatePaymentStatus(ctx context.Context, orderID uuid.UUID, paymentStatus string) error
 	GetAvailableOrders(ctx context.Context, runnerID uuid.UUID) ([]Order, error)
 	EstimateFee(ctx context.Context, req EstimateFeeRequest) (*EstimateFeeResponse, error)
@@ -353,6 +355,7 @@ func (s *service) GetByID(ctx context.Context, id uuid.UUID, requestingUserID uu
 	}
 
 	s.populateRunnerInfo(ctx, order)
+	s.signURLs(ctx, order)
 
 	// Authorization Logic:
 	// 1. Admin can see anything
@@ -370,8 +373,6 @@ func (s *service) GetByID(ctx context.Context, id uuid.UUID, requestingUserID uu
 		return order, nil
 	}
 
-	// 4. Sign URLs for privacy
-	s.signURLs(ctx, order)
 	return order, nil
 }
 
@@ -640,7 +641,7 @@ func (s *service) CancelOrder(ctx context.Context, orderID, requesterID uuid.UUI
 	return err
 }
 
-func (s *service) SubmitPurchaseReceipt(ctx context.Context, orderID, runnerID uuid.UUID, receiptURL string) error {
+func (s *service) SubmitPurchaseReceipt(ctx context.Context, orderID, runnerID uuid.UUID, receiptReader io.Reader, receiptFilename string) error {
 	order, err := s.repo.FindByID(ctx, orderID)
 	if err != nil {
 		return err
@@ -659,12 +660,26 @@ func (s *service) SubmitPurchaseReceipt(ctx context.Context, orderID, runnerID u
 		return errors.New("pesanan belum siap untuk fase pembelian")
 	}
 
-	if receiptURL == "" {
-		return errors.New("URL gambar kwitansi wajib diisi")
+	if receiptReader == nil {
+		return errors.New("file gambar kwitansi wajib diunggah")
+	}
+
+	// Compress and resize image (max 1200px, 75% quality)
+	compressed, err := fileutil.CompressAndResizeImage(receiptReader, 1200, 75)
+	if err != nil {
+		return fmt.Errorf("gagal mengompresi gambar kwitansi: %w", err)
+	}
+
+	// Upload using storage driver to orders/{orderID}/receipt_{timestamp}.jpg
+	folder := fmt.Sprintf("orders/%s", orderID.String())
+	filename := fmt.Sprintf("receipt_%d.jpg", time.Now().Unix())
+	path, err := s.storage.Upload(ctx, folder, filename, compressed)
+	if err != nil {
+		return fmt.Errorf("gagal mengunggah kwitansi ke penyimpanan: %w", err)
 	}
 
 	order.Status = StatusPurchasing
-	order.ReceiptImageURL = receiptURL
+	order.ReceiptImageURL = path
 	order.UpdatedAt = time.Now()
 
 	if err := s.repo.Update(ctx, s.db, order); err != nil {
@@ -673,12 +688,12 @@ func (s *service) SubmitPurchaseReceipt(ctx context.Context, orderID, runnerID u
 
 	s.auditSvc.Log(ctx, &runnerID, audit.ActionOrderPurchased, "order", orderID.String(),
 		map[string]interface{}{"status": StatusAccepted},
-		map[string]interface{}{"status": StatusPurchasing, "receipt_image_url": receiptURL}, "", "")
+		map[string]interface{}{"status": StatusPurchasing, "receipt_image_url": path}, "", "")
 
 	return nil
 }
 
-func (s *service) CompleteOrder(ctx context.Context, orderID, runnerID uuid.UUID, code string, deliveryImageURL string) error {
+func (s *service) CompleteOrder(ctx context.Context, orderID, runnerID uuid.UUID, code string, deliveryReader io.Reader, deliveryFilename string) error {
 	order, err := s.repo.FindByID(ctx, orderID)
 	if err != nil {
 		return err
@@ -694,6 +709,23 @@ func (s *service) CompleteOrder(ctx context.Context, orderID, runnerID uuid.UUID
 
 	if order.CompletionCode != code {
 		return errors.New("kode konfirmasi salah")
+	}
+
+	var path string
+	if deliveryReader != nil {
+		// Compress and resize image (max 1200px, 75% quality)
+		compressed, err := fileutil.CompressAndResizeImage(deliveryReader, 1200, 75)
+		if err != nil {
+			return fmt.Errorf("gagal mengompresi bukti penyerahan: %w", err)
+		}
+
+		// Upload to orders/{orderID}/delivery_{timestamp}.jpg
+		folder := fmt.Sprintf("orders/%s", orderID.String())
+		filename := fmt.Sprintf("delivery_%d.jpg", time.Now().Unix())
+		path, err = s.storage.Upload(ctx, folder, filename, compressed)
+		if err != nil {
+			return fmt.Errorf("gagal mengunggah bukti penyerahan ke penyimpanan: %w", err)
+		}
 	}
 
 	// --- Unified Completion Transaction ---
@@ -716,8 +748,8 @@ func (s *service) CompleteOrder(ctx context.Context, orderID, runnerID uuid.UUID
 			order.PaymentStatus = PaymentReleased
 		}
 
-		if deliveryImageURL != "" {
-			order.DeliveryImageURL = deliveryImageURL
+		if path != "" {
+			order.DeliveryImageURL = path
 		}
 		order.Status = StatusCompleted
 		order.UpdatedAt = time.Now()
@@ -727,7 +759,7 @@ func (s *service) CompleteOrder(ctx context.Context, orderID, runnerID uuid.UUID
 		}
 
 		// Audit Log (Transactional)
-		s.auditSvc.LogWithDB(ctx, tx, &runnerID, audit.ActionOrderComplete, "order", orderID.String(), nil, map[string]interface{}{"status": StatusCompleted, "delivery_image_url": deliveryImageURL}, "", "")
+		s.auditSvc.LogWithDB(ctx, tx, &runnerID, audit.ActionOrderComplete, "order", orderID.String(), nil, map[string]interface{}{"status": StatusCompleted, "delivery_image_url": path}, "", "")
 
 		return nil
 	})

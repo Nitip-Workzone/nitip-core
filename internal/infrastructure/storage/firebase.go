@@ -43,7 +43,8 @@ func (s *FirebaseStorage) Upload(ctx context.Context, folder string, filename st
 	}
 
 	ext := filepath.Ext(filename)
-	objectKey := fmt.Sprintf("%s/%s%s", folder, uuid.New().String(), ext)
+	base := filepath.Base(filename[:len(filename)-len(ext)])
+	objectKey := fmt.Sprintf("%s/%s_%s%s", folder, base, uuid.New().String(), ext)
 
 	obj := s.bucket.Object(objectKey)
 	wc := obj.NewWriter(ctx)

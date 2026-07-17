@@ -96,7 +96,7 @@ func (h *Handler) GetReview(c *fiber.Ctx) error {
 
 	rv, err := h.service.GetReviewByOrder(c.Context(), orderID)
 	if err != nil {
-		return response.NotFound(c, "ulasan tidak ditemukan atau belum diberikan")
+		return response.Success(c, "ulasan tidak ditemukan atau belum diberikan", nil)
 	}
 
 	return response.Success(c, "ulasan berhasil diambil", rv)
