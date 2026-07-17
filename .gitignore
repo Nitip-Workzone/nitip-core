@@ -35,3 +35,4 @@ mapping/photon_data/
 tmp/
 
 firebase-credentials.json
+scripts/test_fcm.go
