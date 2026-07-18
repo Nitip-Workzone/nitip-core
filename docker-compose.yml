@@ -104,35 +104,37 @@ services:
     image: redis:7-alpine
     container_name: nitip-redis
     restart: unless-stopped
-    # Batasi penggunaan memori redis dan gunakan LRU eviction agar tidak OOM
+    # Batasi penggunaan memori, gunakan LRU, perkecil frekuensi background task (hz 5) dan nonaktifkan defragmentasi otomatis untuk hemat CPU
     command: >
       redis-server
       --maxmemory 192mb
       --maxmemory-policy allkeys-lru
       --save ""
       --appendonly no
+      --hz 5
+      --activedefrag no
     ports:
       - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 30s
+      interval: 60s # Naikkan interval healthcheck agar tidak terlalu sering spawn proses redis-cli
       timeout: 5s
-      retries: 5
+      retries: 3
     deploy:
       resources:
         limits:
-          cpus: "0.2"
-          memory: 256M
+          cpus: "0.1" # Turunkan limit maks dari 0.2 ke 0.1
+          memory: 128M # Turunkan limit RAM ke 128MB karena maxmemory hanya 192MB (redis real-use sangat kecil)
         reservations:
-          cpus: "0.05"
-          memory: 64M
+          cpus: "0.02"
+          memory: 32M
     logging:
       driver: "json-file"
       options:
-        max-size: "10m"
-        max-file: "3"
+        max-size: "5m"
+        max-file: "2"
         labels: "logging_job=redis"
 
   dozzle:
