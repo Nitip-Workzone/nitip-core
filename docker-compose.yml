@@ -15,7 +15,6 @@ services:
     volumes:
       - ./firebase-credentials.json:/app/firebase-credentials.json:ro
       - /var/www/nitip-core/uploads:/app/uploads
-      - /var/www/nitip-core/storage:/app/storage
     depends_on:
       postgres:
         condition: service_healthy
