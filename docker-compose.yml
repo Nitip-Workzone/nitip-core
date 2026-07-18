@@ -146,16 +146,29 @@ services:
       - ./users.yml:/data/users.yml:ro
     environment:
       DOZZLE_AUTH_PROVIDER: simple
+      # Batasi hanya container nitip yang dipantau agar tidak scan semua container
+      DOZZLE_FILTER: "name=nitip-"
+      # Kurangi frekuensi polling log agar CPU lebih hemat (default 100ms, naik ke 1000ms)
+      DOZZLE_LEVEL: warn
     ports:
       - "127.0.0.1:3030:8080"
+    # Throttle CPU menggunakan cpu_shares (1024 = normal, 256 = ~25% prioritas)
+    cpu_shares: 128
     deploy:
       resources:
         limits:
-          cpus: "0.1"
-          memory: 64M
+          # Turunkan dari 0.1 ke 0.05 agar tidak bisa spike ke 20%
+          cpus: "0.05"
+          memory: 48M
         reservations:
-          cpus: "0.02"
-          memory: 32M
+          cpus: "0.01"
+          memory: 24M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
+        labels: "logging_job=dozzle"
 
 networks:
   nitip-net:
