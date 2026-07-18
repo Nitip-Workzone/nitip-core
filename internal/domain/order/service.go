@@ -21,8 +21,9 @@ import (
 	"github.com/codecoffy/nitip-core/internal/domain/trip"
 	"github.com/codecoffy/nitip-core/internal/domain/user"
 	"github.com/codecoffy/nitip-core/internal/domain/wallet"
-	"github.com/codecoffy/nitip-core/internal/infrastructure/storage"
+	"github.com/codecoffy/nitip-core/internal/storage"
 	"github.com/codecoffy/nitip-core/internal/notification"
+	"bytes"
 	"github.com/codecoffy/nitip-core/pkg/fileutil"
 	"github.com/codecoffy/nitip-core/pkg/geo"
 	"github.com/google/uuid"
@@ -48,7 +49,7 @@ type CreateOrderRequest struct {
 	PickupAddress string  `json:"pickup_address"`
 	DeliveryLat   float64 `json:"delivery_lat"   validate:"required"`
 	DeliveryLng   float64 `json:"delivery_lng"   validate:"required"`
-	EstimatedCost float64 `json:"estimated_cost" validate:"required,min=0"`
+	EstimatedCost float64 `json:"estimated_cost" validate:"min=0"`
 	PaymentMethod string  `json:"payment_method" validate:"required,oneof=escrow cod"`
 	WeightKg      float64 `json:"weight_kg"      validate:"required,min=0"`
 	VolumeLiters  float64 `json:"volume_liters"  validate:"required,min=0"` // Frontend maps S/M/L to liters
@@ -163,6 +164,10 @@ func (s *service) Create(ctx context.Context, requesterID uuid.UUID, req CreateO
 
 	if u.IsSuspended {
 		return nil, errors.New("tidak dapat membuat pesanan: akun Anda sedang ditangguhkan")
+	}
+
+	if req.ServiceCategory == CategoryBeli && req.EstimatedCost <= 0 {
+		return nil, errors.New("estimasi harga barang (estimated_cost) wajib diisi untuk kategori pembelian")
 	}
 
 	// --- Account & COD Restrictions ---
@@ -670,10 +675,14 @@ func (s *service) SubmitPurchaseReceipt(ctx context.Context, orderID, runnerID u
 		return fmt.Errorf("gagal mengompresi gambar kwitansi: %w", err)
 	}
 
+	var size int64
+	if buf, ok := compressed.(*bytes.Buffer); ok {
+		size = int64(buf.Len())
+	}
+
 	// Upload using storage driver to orders/{orderID}/receipt_{timestamp}.jpg
-	folder := fmt.Sprintf("orders/%s", orderID.String())
-	filename := fmt.Sprintf("receipt_%d.jpg", time.Now().Unix())
-	path, err := s.storage.Upload(ctx, folder, filename, compressed)
+	objectKey := fmt.Sprintf("orders/%s/receipt_%d.jpg", orderID.String(), time.Now().Unix())
+	path, err := s.storage.Upload(ctx, objectKey, compressed, size, "image/jpeg")
 	if err != nil {
 		return fmt.Errorf("gagal mengunggah kwitansi ke penyimpanan: %w", err)
 	}
@@ -719,10 +728,14 @@ func (s *service) CompleteOrder(ctx context.Context, orderID, runnerID uuid.UUID
 			return fmt.Errorf("gagal mengompresi bukti penyerahan: %w", err)
 		}
 
+		var size int64
+		if buf, ok := compressed.(*bytes.Buffer); ok {
+			size = int64(buf.Len())
+		}
+
 		// Upload to orders/{orderID}/delivery_{timestamp}.jpg
-		folder := fmt.Sprintf("orders/%s", orderID.String())
-		filename := fmt.Sprintf("delivery_%d.jpg", time.Now().Unix())
-		path, err = s.storage.Upload(ctx, folder, filename, compressed)
+		objectKey := fmt.Sprintf("orders/%s/delivery_%d.jpg", orderID.String(), time.Now().Unix())
+		path, err = s.storage.Upload(ctx, objectKey, compressed, size, "image/jpeg")
 		if err != nil {
 			return fmt.Errorf("gagal mengunggah bukti penyerahan ke penyimpanan: %w", err)
 		}
@@ -1342,19 +1355,19 @@ func (s *service) signURLs(ctx context.Context, o *Order) {
 	}
 	if o.ReceiptImageURL != "" {
 		key := sanitizeStorageKey(o.ReceiptImageURL)
-		if signed, err := s.storage.GetSignedURL(ctx, key, 1*time.Hour); err == nil {
+		if signed, err := s.storage.SignedURL(ctx, key, 1*time.Hour); err == nil {
 			o.ReceiptImageURL = signed
 		}
 	}
 	if o.DeliveryImageURL != "" {
 		key := sanitizeStorageKey(o.DeliveryImageURL)
-		if signed, err := s.storage.GetSignedURL(ctx, key, 1*time.Hour); err == nil {
+		if signed, err := s.storage.SignedURL(ctx, key, 1*time.Hour); err == nil {
 			o.DeliveryImageURL = signed
 		}
 	}
 	if o.DisputeProofURL != "" {
 		key := sanitizeStorageKey(o.DisputeProofURL)
-		if signed, err := s.storage.GetSignedURL(ctx, key, 1*time.Hour); err == nil {
+		if signed, err := s.storage.SignedURL(ctx, key, 1*time.Hour); err == nil {
 			o.DisputeProofURL = signed
 		}
 	}

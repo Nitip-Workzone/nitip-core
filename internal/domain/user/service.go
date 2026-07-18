@@ -1,18 +1,20 @@
 package user
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"log"
+	"net/http"
 	"os"
 	"strconv"
 	"time"
 
 	"github.com/codecoffy/nitip-core/internal/cache"
 	"github.com/codecoffy/nitip-core/internal/domain/audit"
-	"github.com/codecoffy/nitip-core/internal/infrastructure/storage"
+	"github.com/codecoffy/nitip-core/internal/storage"
 	"github.com/codecoffy/nitip-core/pkg/jwt"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
@@ -133,11 +135,25 @@ func NewService(repo Repository, redis *cache.Redis, auditSvc audit.Service, sto
 }
 
 func (s *service) GetAll(ctx context.Context) ([]User, error) {
-	return s.repo.FindAll(ctx)
+	users, err := s.repo.FindAll(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for i := range users {
+		s.signAvatar(ctx, &users[i])
+	}
+	return users, nil
 }
 
 func (s *service) GetAllWithFilters(ctx context.Context, role string, isVerified, isSuspended *bool) ([]User, error) {
-	return s.repo.FindAllWithFilters(ctx, role, isVerified, isSuspended)
+	users, err := s.repo.FindAllWithFilters(ctx, role, isVerified, isSuspended)
+	if err != nil {
+		return nil, err
+	}
+	for i := range users {
+		s.signAvatar(ctx, &users[i])
+	}
+	return users, nil
 }
 
 func (s *service) GetByID(ctx context.Context, id uuid.UUID, requestorID uuid.UUID) (*User, error) {
@@ -154,11 +170,19 @@ func (s *service) GetByID(ctx context.Context, id uuid.UUID, requestorID uuid.UU
 	}
 
 	u.ComputeHasPin()
+	s.signAvatar(ctx, u)
 	return u, nil
 }
 
 func (s *service) GetByIDs(ctx context.Context, ids []uuid.UUID) ([]User, error) {
-	return s.repo.FindByIDs(ctx, ids)
+	users, err := s.repo.FindByIDs(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	for i := range users {
+		s.signAvatar(ctx, &users[i])
+	}
+	return users, nil
 }
 
 func (s *service) Create(ctx context.Context, req CreateUserRequest) (*User, error) {
@@ -289,6 +313,7 @@ func (s *service) Login(ctx context.Context, req LoginRequest, platform string) 
 	}
 
 	user.ComputeHasPin()
+	s.signAvatar(ctx, user)
 	return &LoginResponse{
 		Token:        token,
 		RefreshToken: refreshToken,
@@ -342,6 +367,7 @@ func (s *service) Refresh(ctx context.Context, refreshToken string) (*LoginRespo
 	}
 
 	user.ComputeHasPin()
+	s.signAvatar(ctx, user)
 	return &LoginResponse{
 		Token:        accessToken,
 		RefreshToken: newRefreshToken,
@@ -603,9 +629,23 @@ func (s *service) UpdateProfile(ctx context.Context, id uuid.UUID, req UpdatePro
 	}
 
 	if avatarFile != nil && s.storage != nil {
-		folder := "avatars"
-		filename := fmt.Sprintf("avatar_%s_%d_%s", id.String(), time.Now().Unix(), avatarFilename)
-		path, err := s.storage.Upload(ctx, folder, filename, avatarFile)
+		var buf bytes.Buffer
+		size, err := io.Copy(&buf, avatarFile)
+		if err != nil {
+			return fmt.Errorf("failed to read avatar file: %w", err)
+		}
+
+		limit := 512
+		if buf.Len() < limit {
+			limit = buf.Len()
+		}
+		contentType := http.DetectContentType(buf.Bytes()[:limit])
+		if contentType == "application/octet-stream" {
+			contentType = "image/jpeg"
+		}
+
+		objectKey := fmt.Sprintf("avatars/%s.jpg", id.String())
+		path, err := s.storage.Upload(ctx, objectKey, &buf, size, contentType)
 		if err != nil {
 			return fmt.Errorf("failed to upload avatar: %w", err)
 		}
@@ -618,4 +658,13 @@ func (s *service) UpdateProfile(ctx context.Context, id uuid.UUID, req UpdatePro
 
 func (s *service) GetRedis() *cache.Redis {
 	return s.redis
+}
+
+func (s *service) signAvatar(ctx context.Context, u *User) {
+	if u == nil || u.AvatarUrl == nil || *u.AvatarUrl == "" {
+		return
+	}
+	if signed, err := s.storage.SignedURL(ctx, *u.AvatarUrl, 1*time.Hour); err == nil {
+		u.AvatarUrl = &signed
+	}
 }

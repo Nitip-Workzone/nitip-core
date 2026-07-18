@@ -26,7 +26,7 @@ import (
 	"github.com/codecoffy/nitip-core/internal/domain/user"
 	"github.com/codecoffy/nitip-core/internal/domain/wallet"
 	infraFirebase "github.com/codecoffy/nitip-core/internal/infrastructure/firebase"
-	"github.com/codecoffy/nitip-core/internal/infrastructure/storage"
+	"github.com/codecoffy/nitip-core/internal/storage"
 	applogger "github.com/codecoffy/nitip-core/internal/logger"
 	"github.com/codecoffy/nitip-core/internal/notification"
 	"go.uber.org/zap"
@@ -138,8 +138,11 @@ func main() {
 	var storageSvc storage.Storage
 	var chatHub *chat.Hub
 
-	// Storage initialization based on driver (Minio, Firebase, or Local)
-	storageSvc, _ = storage.NewStorage(cfg, firebaseApp)
+	// Storage initialization based on driver (Tencent COS or Local)
+	storageSvc, err = storage.NewFromEnv(cfg)
+	if err != nil {
+		logger.Fatal("failed to initialize storage service", zap.Error(err))
+	}
 
 	// 6. Wire domain handlers
 	auditRepo := audit.NewRepository(db)

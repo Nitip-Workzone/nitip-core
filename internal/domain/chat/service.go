@@ -1,16 +1,18 @@
 package chat
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"time"
 
 	notifDomain "github.com/codecoffy/nitip-core/internal/domain/notification"
 	"github.com/codecoffy/nitip-core/internal/domain/order"
 	"github.com/codecoffy/nitip-core/internal/domain/user"
-	"github.com/codecoffy/nitip-core/internal/infrastructure/storage"
+	"github.com/codecoffy/nitip-core/internal/storage"
 	"github.com/codecoffy/nitip-core/internal/notification"
 	"github.com/google/uuid"
 )
@@ -164,8 +166,26 @@ func (s *service) UploadImage(ctx context.Context, orderID, userID uuid.UUID, fi
 	}
 
 	// 2. Upload to Storage (returns relative path/key)
-	folder := fmt.Sprintf("chat/%s", orderID.String())
-	path, err := s.storage.Upload(ctx, folder, filename, content)
+	var buf bytes.Buffer
+	size, err := io.Copy(&buf, content)
+	if err != nil {
+		return "", fmt.Errorf("failed to read chat image content: %w", err)
+	}
+
+	contentType := "image/jpeg"
+	limit := 512
+	if buf.Len() < limit {
+		limit = buf.Len()
+	}
+	if limit > 0 {
+		contentType = http.DetectContentType(buf.Bytes()[:limit])
+		if contentType == "application/octet-stream" {
+			contentType = "image/jpeg"
+		}
+	}
+
+	objectKey := fmt.Sprintf("chat/%s/%s", orderID.String(), filename)
+	path, err := s.storage.Upload(ctx, objectKey, &buf, size, contentType)
 	if err != nil {
 		return "", err
 	}
@@ -228,7 +248,7 @@ func (s *service) signURLs(ctx context.Context, msg *ChatMessage) {
 		return
 	}
 	// Sign content if it's an image path
-	signed, err := s.storage.GetSignedURL(ctx, msg.Content, 1*time.Hour)
+	signed, err := s.storage.SignedURL(ctx, msg.Content, 1*time.Hour)
 	if err == nil {
 		msg.Content = signed
 	}

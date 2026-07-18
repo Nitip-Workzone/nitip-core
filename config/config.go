@@ -53,6 +53,16 @@ type Config struct {
 
 	// Webhook Security
 	WebhookCallbackToken string
+
+	// Storage Details
+	LocalStoragePath    string
+	LocalStorageBaseURL string
+	CosSecretID         string
+	CosSecretKey        string
+	CosRegion           string
+	CosBucket           string
+	CosBaseURL          string
+	CosSignExpire       string
 }
 
 var App *Config
@@ -108,6 +118,16 @@ func Load() *Config {
 
 		// Webhook Security
 		WebhookCallbackToken: getEnv("WEBHOOK_CALLBACK_TOKEN", ""),
+
+		// Tencent COS & Local Storage details
+		LocalStoragePath:    getEnv("LOCAL_STORAGE_PATH", "./uploads"),
+		LocalStorageBaseURL: getEnv("LOCAL_STORAGE_BASE_URL", "http://localhost:8000/uploads"),
+		CosSecretID:         getEnv("COS_SECRET_ID", ""),
+		CosSecretKey:        getEnv("COS_SECRET_KEY", ""),
+		CosRegion:           getEnv("COS_REGION", "ap-singapore"),
+		CosBucket:           getEnv("COS_BUCKET", ""),
+		CosBaseURL:          getEnv("COS_BASE_URL", ""),
+		CosSignExpire:       getEnv("COS_SIGN_EXPIRE", "5m"),
 	}
 
 	App = cfg

@@ -1,16 +1,19 @@
 package kyc
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log"
+	"net/http"
 	"time"
 
 	"github.com/codecoffy/nitip-core/internal/domain/audit"
 	notifDomain "github.com/codecoffy/nitip-core/internal/domain/notification"
 	"github.com/codecoffy/nitip-core/internal/domain/user"
-	"github.com/codecoffy/nitip-core/internal/infrastructure/storage"
+	"github.com/codecoffy/nitip-core/internal/storage"
 	"github.com/codecoffy/nitip-core/internal/notification"
 	"github.com/google/uuid"
 )
@@ -58,13 +61,46 @@ func (s *service) Submit(ctx context.Context, userID uuid.UUID, req SubmitKycReq
 	}
 
 	// 2. Upload images to Storage (returns relative path/key)
-	folder := "kyc/" + userID.String()
-	idCardPath, err := s.storage.Upload(ctx, folder, "id_card_"+req.IdCardName, req.IdCardFile)
+	var idCardBuf bytes.Buffer
+	idCardSize, err := io.Copy(&idCardBuf, req.IdCardFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read id card file: %w", err)
+	}
+	idCardContentType := "image/jpeg"
+	idCardLimit := 512
+	if idCardBuf.Len() < idCardLimit {
+		idCardLimit = idCardBuf.Len()
+	}
+	if idCardLimit > 0 {
+		idCardContentType = http.DetectContentType(idCardBuf.Bytes()[:idCardLimit])
+		if idCardContentType == "application/octet-stream" {
+			idCardContentType = "image/jpeg"
+		}
+	}
+	idCardKey := fmt.Sprintf("kyc/%s/id_card.jpg", userID.String())
+	idCardPath, err := s.storage.Upload(ctx, idCardKey, &idCardBuf, idCardSize, idCardContentType)
 	if err != nil {
 		return nil, err
 	}
 
-	selfiePath, err := s.storage.Upload(ctx, folder, "selfie_"+req.SelfieName, req.SelfieFile)
+	var selfieBuf bytes.Buffer
+	selfieSize, err := io.Copy(&selfieBuf, req.SelfieFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read selfie file: %w", err)
+	}
+	selfieContentType := "image/jpeg"
+	selfieLimit := 512
+	if selfieBuf.Len() < selfieLimit {
+		selfieLimit = selfieBuf.Len()
+	}
+	if selfieLimit > 0 {
+		selfieContentType = http.DetectContentType(selfieBuf.Bytes()[:selfieLimit])
+		if selfieContentType == "application/octet-stream" {
+			selfieContentType = "image/jpeg"
+		}
+	}
+	selfieKey := fmt.Sprintf("kyc/%s/selfie.jpg", userID.String())
+	selfiePath, err := s.storage.Upload(ctx, selfieKey, &selfieBuf, selfieSize, selfieContentType)
 	if err != nil {
 		return nil, err
 	}
@@ -187,14 +223,14 @@ func (s *service) signURLs(ctx context.Context, kyc *KycSubmission) {
 	}
 	// Sign IdCardImageURL
 	if kyc.IdCardImageURL != "" {
-		signed, err := s.storage.GetSignedURL(ctx, kyc.IdCardImageURL, 1*time.Hour)
+		signed, err := s.storage.SignedURL(ctx, kyc.IdCardImageURL, 1*time.Hour)
 		if err == nil {
 			kyc.IdCardImageURL = signed
 		}
 	}
 	// Sign SelfieImageURL
 	if kyc.SelfieImageURL != "" {
-		signed, err := s.storage.GetSignedURL(ctx, kyc.SelfieImageURL, 1*time.Hour)
+		signed, err := s.storage.SignedURL(ctx, kyc.SelfieImageURL, 1*time.Hour)
 		if err == nil {
 			kyc.SelfieImageURL = signed
 		}
