@@ -7,15 +7,15 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
-      # Ensure db host matches container name
       DB_HOST: nitip-postgres
       REDIS_ADDR: nitip-redis:6379
-      # Batasi Go runtime hanya pakai 2 CPU core, hindari over-scheduling goroutine
       GOMAXPROCS: "2"
     ports:
       - "127.0.0.1:8080:8000"
     volumes:
       - ./firebase-credentials.json:/app/firebase-credentials.json:ro
+      - /var/www/nitip-core/uploads:/app/uploads
+      - /var/www/nitip-core/storage:/app/storage
     depends_on:
       postgres:
         condition: service_healthy
@@ -30,13 +30,11 @@ services:
     deploy:
       resources:
         limits:
-          # Sisakan ~1 core untuk postgres + redis agar tidak saling rebutan
           cpus: "1.2"
           memory: 512M
         reservations:
           cpus: "0.5"
           memory: 256M
-    # Batasi jumlah file descriptor agar tidak exhausted saat banyak koneksi
     ulimits:
       nofile:
         soft: 65536
@@ -62,7 +60,6 @@ services:
       - "127.0.0.1:${DB_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    # Tuning postgres untuk 200 aktif user dengan RAM 3.6GB
     command: >
       postgres
       -c shared_buffers=512MB
@@ -104,7 +101,6 @@ services:
     image: redis:7-alpine
     container_name: nitip-redis
     restart: unless-stopped
-    # Batasi penggunaan memori, gunakan LRU, perkecil frekuensi background task (hz 5) dan nonaktifkan defragmentasi otomatis untuk hemat CPU
     command: >
       redis-server
       --maxmemory 192mb
@@ -119,14 +115,14 @@ services:
       - redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 60s # Naikkan interval healthcheck agar tidak terlalu sering spawn proses redis-cli
+      interval: 60s
       timeout: 5s
       retries: 3
     deploy:
       resources:
         limits:
-          cpus: "0.1" # Turunkan limit maks dari 0.2 ke 0.1
-          memory: 128M # Turunkan limit RAM ke 128MB karena maxmemory hanya 192MB (redis real-use sangat kecil)
+          cpus: "0.1"
+          memory: 128M
         reservations:
           cpus: "0.02"
           memory: 32M
@@ -148,18 +144,14 @@ services:
       - ./users.yml:/data/users.yml:ro
     environment:
       DOZZLE_AUTH_PROVIDER: simple
-      # Batasi hanya container nitip yang dipantau agar tidak scan semua container
       DOZZLE_FILTER: "name=nitip-"
-      # Kurangi frekuensi polling log agar CPU lebih hemat (default 100ms, naik ke 1000ms)
       DOZZLE_LEVEL: warn
     ports:
       - "127.0.0.1:3030:8080"
-    # Throttle CPU menggunakan cpu_shares (1024 = normal, 256 = ~25% prioritas)
     cpu_shares: 128
     deploy:
       resources:
         limits:
-          # Turunkan dari 0.1 ke 0.05 agar tidak bisa spike ke 20%
           cpus: "0.05"
           memory: 48M
         reservations:
