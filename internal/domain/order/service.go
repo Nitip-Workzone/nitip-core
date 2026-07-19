@@ -12,6 +12,7 @@ import (
 	"math"
 	"math/big"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -1509,17 +1510,36 @@ func (s *service) populatePaymentInfo(ctx context.Context, o *Order) {
 		return
 	}
 	if o.PaymentMethod == "escrow" && o.PaymentSource == "qris" && o.PaymentStatus == PaymentUnpaid && o.Status != "cancelled" {
+		// If already generated and not expired (15 minutes), keep using it
+		if o.QRISData != "" && time.Since(o.CreatedAt) < 15*time.Minute {
+			return
+		}
+
 		cacheKey := fmt.Sprintf("order:qris:%s", o.ID.String())
 		qrisStr, err := s.redis.Get(ctx, cacheKey)
-		if err == nil && qrisStr != "" {
+		if err == nil && qrisStr != "" && time.Since(o.CreatedAt) < 15*time.Minute {
 			o.QRISData = qrisStr
 			return
 		}
 
 		qrString, err := s.generateOrderQRIS(ctx, o)
 		if err == nil && qrString != "" {
+			// If Midtrans/Mock QRIS is a raw QRIS string (not a URL), wrap it so the frontend can render it!
+			if !strings.HasPrefix(qrString, "http://") && !strings.HasPrefix(qrString, "https://") {
+				qrString = fmt.Sprintf("https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=%s", url.QueryEscape(qrString))
+			}
 			o.QRISData = qrString
 			_ = s.redis.Set(ctx, cacheKey, qrString, 15*time.Minute)
+
+			// Save the generated QRIS back to orders table in database so it persists!
+			_, dbErr := s.db.NewUpdate().
+				Model(o).
+				Column("qris_data").
+				WherePK().
+				Exec(ctx)
+			if dbErr != nil {
+				log.Printf("[QRIS-SAVE-ERROR] Failed to save QRIS to DB: %v", dbErr)
+			}
 		}
 	}
 }

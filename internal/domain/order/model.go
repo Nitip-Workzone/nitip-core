@@ -65,7 +65,7 @@ type Order struct {
 	RunnerPhone     string `bun:"-" json:"runner_phone,omitempty"`
 	FeedbackRating  *int   `bun:"-" json:"feedback_rating,omitempty"`
 	FeedbackComment string `bun:"-" json:"feedback_comment,omitempty"`
-	QRISData        string `bun:"-" json:"qris_data,omitempty"`
+	QRISData        string `bun:"qris_data,nullzero" json:"qris_data,omitempty"`
 }
 
 var (
