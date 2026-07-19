@@ -42,6 +42,7 @@ func (h *Handler) RegisterRoutes(router fiber.Router) {
 	orders.Get("/me", middleware.Role(user.RoleRequester, user.RoleRunner), h.GetMyOrders)
 	orders.Post("/:id/cancel", middleware.Role(user.RoleRequester), h.Cancel)
 	orders.Post("/:id/dispute", middleware.Role(user.RoleRequester), h.Dispute)
+	orders.Post("/:id/refresh-qris", middleware.Role(user.RoleRequester), h.RefreshQRIS)
 
 	// Runner endpoints
 	orders.Get("/available", middleware.Role(user.RoleRunner), h.GetAvailableOrders)
@@ -790,4 +791,20 @@ func (h *Handler) GetFeeEstimate(c *fiber.Ctx) error {
 	}
 
 	return response.Success(c, "estimasi biaya berhasil diambil", resp)
+}
+
+func (h *Handler) RefreshQRIS(c *fiber.Ctx) error {
+	idStr := c.Params("id")
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		return response.BadRequest(c, "ID order tidak valid")
+	}
+
+	claims := c.Locals("user").(*jwt.CustomClaims)
+	order, err := h.service.RefreshQRIS(c.Context(), id, claims.UserID)
+	if err != nil {
+		return response.BadRequest(c, err.Error())
+	}
+
+	return response.Success(c, "QRIS berhasil diperbarui", order)
 }

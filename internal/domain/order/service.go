@@ -128,6 +128,7 @@ type Service interface {
 	// Lifecycle
 	StartBackgroundCleanup(ctx context.Context)
 	StartPaymentWorkerPool(ctx context.Context, numWorkers int)
+	RefreshQRIS(ctx context.Context, orderID, requesterID uuid.UUID) (*Order, error)
 }
 
 type service struct {
@@ -1528,4 +1529,43 @@ func (s *service) paymentWorker(ctx context.Context, id int) {
 			job.ErrChan <- err
 		}
 	}
+}
+
+func (s *service) RefreshQRIS(ctx context.Context, orderID, requesterID uuid.UUID) (*Order, error) {
+	order, err := s.repo.FindByID(ctx, orderID)
+	if err != nil {
+		log.Printf("[QRIS-REFRESH] Order %s not found: %v", orderID, err)
+		return nil, errors.New("order tidak ditemukan")
+	}
+
+	if order.RequesterID != requesterID {
+		log.Printf("[QRIS-REFRESH] Unauthorized refresh attempt for Order %s by User %s", orderID, requesterID)
+		return nil, errors.New("unauthorized")
+	}
+
+	if order.Status == "cancelled" {
+		log.Printf("[QRIS-REFRESH] Order %s already cancelled, refresh aborted", orderID)
+		return nil, errors.New("pesanan sudah dibatalkan, tidak dapat memperbarui QRIS")
+	}
+
+	if order.PaymentStatus != PaymentUnpaid || order.PaymentMethod != "escrow" || order.PaymentSource != "qris" {
+		log.Printf("[QRIS-REFRESH] Order %s is not an unpaid QRIS escrow order", orderID)
+		return nil, errors.New("pesanan tidak memerlukan pembayaran QRIS")
+	}
+
+	// Update created_at to now
+	order.CreatedAt = time.Now()
+	order.UpdatedAt = time.Now()
+
+	err = s.repo.Update(ctx, s.db, order)
+	if err != nil {
+		log.Printf("[QRIS-REFRESH] Failed to update Order %s in database: %v", orderID, err)
+		return nil, err
+	}
+
+	// Populate QRIS Data
+	order.QRISData = fmt.Sprintf("https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=nitip-order-%s", order.ID.String())
+
+	log.Printf("[QRIS-REFRESH] Successfully refreshed QRIS payment countdown for Order %s (New CreatedAt: %v)", orderID, order.CreatedAt)
+	return order, nil
 }
