@@ -125,8 +125,17 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 func (h *Handler) GetMyOrders(c *fiber.Ctx) error {
 	claims := c.Locals("user").(*jwt.CustomClaims)
 
-	// Fetch all orders where the user is either the requester or the runner
-	orders, err := h.service.GetByUser(c.Context(), claims.UserID)
+	page, _ := strconv.Atoi(c.Query("page", "1"))
+	if page < 1 {
+		page = 1
+	}
+	limit, _ := strconv.Atoi(c.Query("limit", "15"))
+	if limit < 1 {
+		limit = 15
+	}
+	offset := (page - 1) * limit
+
+	orders, err := h.service.GetByUser(c.Context(), claims.UserID, limit, offset)
 	if err != nil {
 		return response.InternalError(c, err.Error())
 	}

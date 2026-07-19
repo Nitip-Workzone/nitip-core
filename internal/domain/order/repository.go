@@ -17,7 +17,7 @@ type Repository interface {
 	FindByID(ctx context.Context, id uuid.UUID) (*Order, error)
 	FindByRequesterID(ctx context.Context, requesterID uuid.UUID) ([]Order, error)
 	FindByRunnerID(ctx context.Context, runnerID uuid.UUID) ([]Order, error)
-	FindByUserID(ctx context.Context, userID uuid.UUID) ([]Order, error)
+	FindByUserID(ctx context.Context, userID uuid.UUID, limit, offset int) ([]Order, error)
 	Create(ctx context.Context, db bun.IDB, order *Order) error
 	Update(ctx context.Context, db bun.IDB, order *Order) error
 	UpdateWithStatusCheck(ctx context.Context, db bun.IDB, order *Order, expectedStatus string) (bool, error)
@@ -191,16 +191,21 @@ func (r *repository) FindByRunnerID(ctx context.Context, runnerID uuid.UUID) ([]
 	return orders, err
 }
 
-func (r *repository) FindByUserID(ctx context.Context, userID uuid.UUID) ([]Order, error) {
+func (r *repository) FindByUserID(ctx context.Context, userID uuid.UUID, limit, offset int) ([]Order, error) {
 	orders := []Order{}
-	err := r.db.NewSelect().
+	query := r.db.NewSelect().
 		Model(&orders).
 		WhereGroup(" AND ", func(q *bun.SelectQuery) *bun.SelectQuery {
 			return q.Where("o.requester_id = ?", userID).
 				WhereOr("o.runner_id = ?", userID)
 		}).
-		Order("o.created_at DESC").
-		Scan(ctx)
+		Order("o.created_at DESC")
+
+	if limit > 0 {
+		query = query.Limit(limit).Offset(offset)
+	}
+
+	err := query.Scan(ctx)
 	return orders, err
 }
 
