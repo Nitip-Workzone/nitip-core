@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -187,7 +188,13 @@ func (s *service) InitiateTopUp(ctx context.Context, userID uuid.UUID, amount fl
 			},
 		}
 
+		reqJSON, _ := json.Marshal(req)
+		log.Printf("[MIDTRANS-CHARGE-REQUEST] Payload: %s", string(reqJSON))
 		chargeResp, midtransErr := client.ChargeTransaction(req)
+		if chargeResp != nil {
+			respJSON, _ := json.Marshal(chargeResp)
+			log.Printf("[MIDTRANS-CHARGE-RESPONSE] Body: %s", string(respJSON))
+		}
 		if !isMidtransErrorNil(midtransErr) {
 			log.Printf("[MIDTRANS-CHARGE-ERROR] StatusCode: %d, Message: %s", midtransErr.StatusCode, midtransErr.Message)
 			if midtransErr.StatusCode == 402 {
@@ -225,20 +232,26 @@ func (s *service) InitiateTopUp(ctx context.Context, userID uuid.UUID, amount fl
 			pgUrl = "http://localhost:4000"
 		}
 
+		log.Printf("[MOCK-QRIS-CHARGE-REQUEST] URL: %s/api/qris/generate, Payload: %s", pgUrl, string(body))
 		resp, err := http.Post(fmt.Sprintf("%s/api/qris/generate", pgUrl), "application/json", bytes.NewBuffer(body))
 		if err != nil {
+			log.Printf("[MOCK-QRIS-CHARGE-ERROR] Connection error: %v", err)
 			return nil, fmt.Errorf("gagal menghubungi payment gateway: %v", err)
 		}
 		defer func() {
 			_ = resp.Body.Close()
 		}()
 
+		respBytes, _ := io.ReadAll(resp.Body)
+		log.Printf("[MOCK-QRIS-CHARGE-RESPONSE] Status: %s, Body: %s", resp.Status, string(respBytes))
+
 		var qrisResp struct {
 			Status     string `json:"status"`
 			TrxID      string `json:"trx_id"`
 			QrisString string `json:"qris_string"`
 		}
-		if err := json.NewDecoder(resp.Body).Decode(&qrisResp); err != nil {
+		if err := json.Unmarshal(respBytes, &qrisResp); err != nil {
+			log.Printf("[MOCK-QRIS-CHARGE-ERROR] Parse error: %v", err)
 			return nil, fmt.Errorf("gagal membaca respon payment gateway")
 		}
 
@@ -367,20 +380,26 @@ func (s *service) InquiryAccount(ctx context.Context, req InquiryAccountRequest)
 	}
 	reqHttp.Header.Set("Content-Type", "application/json")
 
+	log.Printf("[DISBURSEMENT-INQUIRY-REQUEST] URL: %s/api/disbursement/inquiry, Payload: %s", pgUrl, string(body))
 	resp, err := http.DefaultClient.Do(reqHttp)
 	if err != nil {
+		log.Printf("[DISBURSEMENT-INQUIRY-ERROR] Connection error: %v", err)
 		return nil, fmt.Errorf("gagal menghubungi payment gateway (timeout): %v", err)
 	}
 	defer func() {
 		_ = resp.Body.Close()
 	}()
 
+	respBytes, _ := io.ReadAll(resp.Body)
+	log.Printf("[DISBURSEMENT-INQUIRY-RESPONSE] Status: %s, Body: %s", resp.Status, string(respBytes))
+
 	if resp.StatusCode != http.StatusOK {
 		return nil, errors.New("gagal melakukan verifikasi rekening")
 	}
 
 	var res InquiryAccountResponse
-	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+	if err := json.Unmarshal(respBytes, &res); err != nil {
+		log.Printf("[DISBURSEMENT-INQUIRY-ERROR] Parse error: %v", err)
 		return nil, errors.New("gagal membaca respon verifikasi")
 	}
 
@@ -904,16 +923,18 @@ func (s *service) triggerPgDisbursement(wtx *WalletTransaction, channel *Withdra
 	}
 
 	body, _ := json.Marshal(payload)
+	log.Printf("[DISBURSEMENT-TRANSFER-REQUEST] URL: %s/api/disbursement/transfer, Payload: %s", pgUrl, string(body))
 	resp, err := http.Post(fmt.Sprintf("%s/api/disbursement/transfer", pgUrl), "application/json", bytes.NewBuffer(body))
 	if err != nil {
-		fmt.Printf("[WALLET] Error triggering PG disbursement: %v\n", err)
+		log.Printf("[WALLET] Error triggering PG disbursement: %v", err)
 		return
 	}
 	defer func() {
 		_ = resp.Body.Close()
 	}()
 
-	fmt.Printf("[WALLET] Disbursement request sent to PG for Trx: %s, Status: %d\n", wtx.ID, resp.StatusCode)
+	respBytes, _ := io.ReadAll(resp.Body)
+	log.Printf("[DISBURSEMENT-TRANSFER-RESPONSE] Status: %d, Body: %s", resp.StatusCode, string(respBytes))
 }
 
 func isMidtransErrorNil(err *midtrans.Error) bool {
