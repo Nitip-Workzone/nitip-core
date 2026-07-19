@@ -861,6 +861,10 @@ func (s *service) processPayment(ctx context.Context, orderID uuid.UUID, payment
 		if err != nil {
 			return err
 		}
+		var orderObj *Order
+		if rowsAffected > 0 {
+			orderObj, _ = s.repo.FindByID(ctx, orderID)
+		}
 
 		if rowsAffected == 0 {
 			// Idempotency: check if already paid
@@ -877,6 +881,23 @@ func (s *service) processPayment(ctx context.Context, orderID uuid.UUID, payment
 		s.auditSvc.Log(ctx, &runnerID, audit.ActionOrderUpdate, "order", orderID.String(),
 			map[string]interface{}{"payment_status": PaymentUnpaid},
 			map[string]interface{}{"payment_status": PaymentEscrow}, "", "")
+
+		// Record wallet transaction for QRIS payment
+		if orderObj != nil && orderObj.PaymentSource == "qris" {
+			w, err := s.walletSvc.GetBalance(ctx, orderObj.RequesterID)
+			if err == nil && w != nil {
+				wtx := &wallet.WalletTransaction{
+					ID:        uuid.New(),
+					WalletID:  w.ID,
+					OrderID:   &orderObj.ID,
+					Type:      wallet.TypeEscrowHold,
+					Amount:    -orderObj.TotalPayment,
+					Reference: fmt.Sprintf("QRIS-PAY-%s", orderObj.ID.String()[:8]),
+					Status:    wallet.StatusCompleted,
+				}
+				_, _ = s.db.NewInsert().Model(wtx).Exec(ctx)
+			}
+		}
 
 		return nil
 	}
