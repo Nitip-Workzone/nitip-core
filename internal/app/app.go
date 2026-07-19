@@ -2,19 +2,19 @@ package app
 
 import (
 	"context"
+	"log"
 	"os"
+	"strings"
 	"time"
 
 	_ "github.com/codecoffy/nitip-core/docs" // swagger generated docs
 	"github.com/codecoffy/nitip-core/internal/middleware"
-	"github.com/gofiber/contrib/fiberzap/v2"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	fiberRecover "github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/gofiber/fiber/v2/middleware/requestid"
 	fiberSwagger "github.com/gofiber/swagger"
 	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
 )
 
 type App struct {
@@ -55,18 +55,46 @@ func New(logger *zap.Logger) *App {
 		AllowMethods: "GET, POST, PUT, PATCH, DELETE, OPTIONS",
 	}))
 
-	// 4. Request / Response Logger
-	f.Use(fiberzap.New(fiberzap.Config{
-		Logger: logger,
-		Fields: []string{"latency", "status", "method", "url", "requestId", "ip"},
-		Levels: []zapcore.Level{
-			zapcore.DebugLevel,
-			zapcore.InfoLevel,
-			zapcore.InfoLevel,
-			zapcore.DebugLevel,
-			zapcore.ErrorLevel,
-		},
-	}))
+	// 4. Request / Response Logger (Payload & Response Body Audit Logger)
+	f.Use(func(c *fiber.Ctx) error {
+		method := c.Method()
+		path := c.Path()
+		reqBody := c.Body()
+
+		var reqStr string
+		if len(reqBody) > 0 {
+			reqStr = string(reqBody)
+			reqStr = strings.ReplaceAll(reqStr, "\n", "")
+			reqStr = strings.ReplaceAll(reqStr, "\t", "")
+			if len(reqStr) > 1000 {
+				reqStr = reqStr[:1000] + "..."
+			}
+		}
+
+		// Proceed with request
+		err := c.Next()
+
+		respBody := c.Response().Body()
+		var respStr string
+		if len(respBody) > 0 {
+			respStr = string(respBody)
+			respStr = strings.ReplaceAll(respStr, "\n", "")
+			respStr = strings.ReplaceAll(respStr, "\t", "")
+			if len(respStr) > 1000 {
+				respStr = respStr[:1000] + "..."
+			}
+		}
+
+		status := c.Response().StatusCode()
+		if len(reqStr) > 0 {
+			log.Printf("[HTTP-REQ] %s %s | Payload: %s", method, path, reqStr)
+		} else {
+			log.Printf("[HTTP-REQ] %s %s", method, path)
+		}
+		log.Printf("[HTTP-RESP] %s %s | Status: %d | Body: %s", method, path, status, respStr)
+
+		return err
+	})
 
 	// 5. Security Headers
 	isProd := os.Getenv("APP_ENV") == "production"
