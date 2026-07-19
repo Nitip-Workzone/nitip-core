@@ -23,6 +23,7 @@ type Order struct {
 	Status         string     `bun:"status,notnull,default:'pending'" json:"status"`
 	PaymentStatus  string     `bun:"payment_status,notnull,default:'unpaid'" json:"payment_status"`
 	PaymentMethod  string     `bun:"payment_method,notnull,default:'escrow'" json:"payment_method"`
+	PaymentSource  string     `bun:"payment_source,notnull,default:'wallet'" json:"payment_source"`
 	CODHandlingFee float64    `bun:"cod_handling_fee,notnull,default:0" json:"cod_handling_fee"`
 	CreatedAt      time.Time  `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"created_at"`
 	UpdatedAt      time.Time  `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updated_at"`
@@ -60,8 +61,11 @@ type Order struct {
 	CompletionCode  string `bun:"completion_code,nullzero" json:"completion_code,omitempty"`
 
 	// Virtual fields (populated dynamically, not stored in DB)
-	RunnerName  string `bun:"-" json:"runner_name,omitempty"`
-	RunnerPhone string `bun:"-" json:"runner_phone,omitempty"`
+	RunnerName      string `bun:"-" json:"runner_name,omitempty"`
+	RunnerPhone     string `bun:"-" json:"runner_phone,omitempty"`
+	FeedbackRating  *int   `bun:"-" json:"feedback_rating,omitempty"`
+	FeedbackComment string `bun:"-" json:"feedback_comment,omitempty"`
+	QRISData        string `bun:"-" json:"qris_data,omitempty"`
 }
 
 var (

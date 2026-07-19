@@ -86,6 +86,10 @@ func (r *repository) FindAvailable(ctx context.Context, params FindAvailablePara
 		Model(&orders).
 		Where("status = ?", StatusPending).
 		Where("created_at > ?", params.Cutoff).
+		WhereGroup(" AND ", func(q *bun.SelectQuery) *bun.SelectQuery {
+			return q.Where("payment_status = ?", PaymentEscrow).
+				WhereOr("payment_method = ?", MethodCOD)
+		}).
 		Order("created_at DESC")
 
 	if len(params.AllowedTypes) > 0 {

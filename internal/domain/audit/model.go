@@ -37,5 +37,6 @@ const (
 	ActionOrderCancel       = "ORDER_CANCEL"
 	ActionOrderPurchased    = "ORDER_PURCHASED"
 	ActionOrderPickup       = "ORDER_PICKUP"
+	ActionOrderUpdate       = "ORDER_UPDATE"
 	ActionWithdrawalApprove = "WITHDRAWAL_APPROVE"
 )

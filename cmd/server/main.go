@@ -228,6 +228,7 @@ func main() {
 	// 8. Start background workers
 	matchingSvc.StartWorkerPool(ctx, 10)
 	orderSvc.StartBackgroundCleanup(ctx)
+	orderSvc.StartPaymentWorkerPool(ctx, 5)
 	_ = walletSvc.RecoverPendingWithdrawals(ctx)
 
 	// 9. Start server in a goroutine

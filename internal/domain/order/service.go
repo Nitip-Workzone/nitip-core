@@ -1,17 +1,19 @@
 package order
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"errors"
 	"fmt"
 	"io"
-	"math/big"
-	"time"
-
+	"log"
 	"math"
+	"math/big"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/codecoffy/nitip-core/config"
 	"github.com/codecoffy/nitip-core/internal/cache"
@@ -21,14 +23,19 @@ import (
 	"github.com/codecoffy/nitip-core/internal/domain/trip"
 	"github.com/codecoffy/nitip-core/internal/domain/user"
 	"github.com/codecoffy/nitip-core/internal/domain/wallet"
-	"github.com/codecoffy/nitip-core/internal/storage"
 	"github.com/codecoffy/nitip-core/internal/notification"
-	"bytes"
+	"github.com/codecoffy/nitip-core/internal/storage"
 	"github.com/codecoffy/nitip-core/pkg/fileutil"
 	"github.com/codecoffy/nitip-core/pkg/geo"
 	"github.com/google/uuid"
 	"github.com/uptrace/bun"
 )
+
+type PaymentJob struct {
+	OrderID uuid.UUID
+	Status  string
+	ErrChan chan error
+}
 
 const (
 	TypeInstant = "instant"
@@ -51,6 +58,7 @@ type CreateOrderRequest struct {
 	DeliveryLng   float64 `json:"delivery_lng"   validate:"required"`
 	EstimatedCost float64 `json:"estimated_cost" validate:"min=0"`
 	PaymentMethod string  `json:"payment_method" validate:"required,oneof=escrow cod"`
+	PaymentSource string  `json:"payment_source" validate:"omitempty,oneof=wallet qris"`
 	WeightKg      float64 `json:"weight_kg"      validate:"required,min=0"`
 	VolumeLiters  float64 `json:"volume_liters"  validate:"required,min=0"` // Frontend maps S/M/L to liters
 
@@ -119,37 +127,41 @@ type Service interface {
 
 	// Lifecycle
 	StartBackgroundCleanup(ctx context.Context)
+	StartPaymentWorkerPool(ctx context.Context, numWorkers int)
 }
 
 type service struct {
-	repo        Repository
-	userSvc     user.Service
-	tripRepo    trip.Repository
-	matchingSvc Matcher
-	walletSvc   wallet.Service
-	configSvc   systemconfig.Service
-	fcm         notification.Notifier
-	notifSvc    notifDomain.Service
-	redis       *cache.Redis
-	db          *bun.DB
-	auditSvc    audit.Service
-	storage     storage.Storage
+	repo         Repository
+	userSvc      user.Service
+	tripRepo     trip.Repository
+	matchingSvc  Matcher
+	walletSvc    wallet.Service
+	configSvc    systemconfig.Service
+	fcm          notification.Notifier
+	notifSvc     notifDomain.Service
+	redis        *cache.Redis
+	db           *bun.DB
+	auditSvc     audit.Service
+	storage      storage.Storage
+	paymentQueue chan PaymentJob
+	paymentOnce  sync.Once
 }
 
 func NewService(repo Repository, userSvc user.Service, tripRepo trip.Repository, matchingSvc Matcher, walletSvc wallet.Service, configSvc systemconfig.Service, fcm notification.Notifier, notifSvc notifDomain.Service, redis *cache.Redis, db *bun.DB, auditSvc audit.Service, storage storage.Storage) Service {
 	return &service{
-		repo:        repo,
-		userSvc:     userSvc,
-		tripRepo:    tripRepo,
-		matchingSvc: matchingSvc,
-		walletSvc:   walletSvc,
-		configSvc:   configSvc,
-		fcm:         fcm,
-		notifSvc:    notifSvc,
-		redis:       redis,
-		db:          db,
-		auditSvc:    auditSvc,
-		storage:     storage,
+		repo:         repo,
+		userSvc:      userSvc,
+		tripRepo:     tripRepo,
+		matchingSvc:  matchingSvc,
+		walletSvc:    walletSvc,
+		configSvc:    configSvc,
+		fcm:          fcm,
+		notifSvc:     notifSvc,
+		redis:        redis,
+		db:           db,
+		auditSvc:     auditSvc,
+		storage:      storage,
+		paymentQueue: make(chan PaymentJob, 500),
 	}
 }
 
@@ -242,6 +254,11 @@ func (s *service) Create(ctx context.Context, requesterID uuid.UUID, req CreateO
 		return nil, fmt.Errorf("gagal membuat kode konfirmasi: %w", err)
 	}
 
+	paymentSource := req.PaymentSource
+	if paymentSource == "" {
+		paymentSource = "wallet"
+	}
+
 	order := &Order{
 		ID:              uuid.New(),
 		RequesterID:     requesterID,
@@ -259,6 +276,7 @@ func (s *service) Create(ctx context.Context, requesterID uuid.UUID, req CreateO
 		EstimatedCost:   req.EstimatedCost,
 		DeliveryFee:     deliveryFee,
 		PaymentMethod:   req.PaymentMethod,
+		PaymentSource:   paymentSource,
 		PaymentStatus:   PaymentUnpaid,
 		Status:          StatusPending,
 		WeightKg:        req.WeightKg,
@@ -289,8 +307,8 @@ func (s *service) Create(ctx context.Context, requesterID uuid.UUID, req CreateO
 			return err
 		}
 
-		// B. Balance Check & Hold for Escrow
-		if order.PaymentMethod == "escrow" {
+		// B. Balance Check & Hold for Escrow (Wallet only)
+		if order.PaymentMethod == "escrow" && order.PaymentSource == "wallet" {
 			w, err := s.walletSvc.GetBalance(ctx, requesterID)
 			if err != nil {
 				return fmt.Errorf("gagal mengecek saldo dompet: %v", err)
@@ -318,11 +336,18 @@ func (s *service) Create(ctx context.Context, requesterID uuid.UUID, req CreateO
 		return nil, err
 	}
 
+	// Generate QRIS URL if unpaid QRIS order
+	if order.PaymentMethod == "escrow" && order.PaymentSource == "qris" && order.PaymentStatus == PaymentUnpaid {
+		order.QRISData = fmt.Sprintf("https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=nitip-order-%s", order.ID.String())
+	}
+
 	// Audit Log
 	s.auditSvc.Log(ctx, &requesterID, audit.ActionOrderCreate, "order", order.ID.String(), nil, order, "", "")
 
-	// Trigger Smart Matching via controlled Worker Pool
-	s.matchingSvc.EnqueueMatching(order.ID)
+	// Trigger Smart Matching via controlled Worker Pool (only if paid or COD)
+	if order.PaymentStatus == PaymentEscrow || order.PaymentMethod == MethodCOD {
+		s.matchingSvc.EnqueueMatching(order.ID)
+	}
 
 	return order, nil
 }
@@ -360,6 +385,8 @@ func (s *service) GetByID(ctx context.Context, id uuid.UUID, requestingUserID uu
 	}
 
 	s.populateRunnerInfo(ctx, order)
+	s.populateReviewInfo(ctx, order)
+	s.populatePaymentInfo(ctx, order)
 	s.signURLs(ctx, order)
 
 	// Authorization Logic:
@@ -386,6 +413,8 @@ func (s *service) GetByRequester(ctx context.Context, requesterID uuid.UUID) ([]
 	if err == nil {
 		for i := range orders {
 			s.populateRunnerInfo(ctx, &orders[i])
+			s.populateReviewInfo(ctx, &orders[i])
+			s.populatePaymentInfo(ctx, &orders[i])
 			s.signURLs(ctx, &orders[i])
 		}
 	}
@@ -397,6 +426,8 @@ func (s *service) GetByRunner(ctx context.Context, runnerID uuid.UUID) ([]Order,
 	if err == nil {
 		for i := range orders {
 			s.populateRunnerInfo(ctx, &orders[i])
+			s.populateReviewInfo(ctx, &orders[i])
+			s.populatePaymentInfo(ctx, &orders[i])
 			s.signURLs(ctx, &orders[i])
 		}
 	}
@@ -408,6 +439,8 @@ func (s *service) GetByUser(ctx context.Context, userID uuid.UUID) ([]Order, err
 	if err == nil {
 		for i := range orders {
 			s.populateRunnerInfo(ctx, &orders[i])
+			s.populateReviewInfo(ctx, &orders[i])
+			s.populatePaymentInfo(ctx, &orders[i])
 			s.signURLs(ctx, &orders[i])
 		}
 	}
@@ -781,6 +814,69 @@ func (s *service) CompleteOrder(ctx context.Context, orderID, runnerID uuid.UUID
 }
 
 func (s *service) UpdatePaymentStatus(ctx context.Context, orderID uuid.UUID, paymentStatus string) error {
+	job := PaymentJob{
+		OrderID: orderID,
+		Status:  paymentStatus,
+		ErrChan: make(chan error, 1),
+	}
+
+	select {
+	case s.paymentQueue <- job:
+		// Enqueued successfully, wait for the worker to process it
+	default:
+		return errors.New("antrean proses pembayaran penuh, silakan coba lagi beberapa saat")
+	}
+
+	select {
+	case err := <-job.ErrChan:
+		return err
+	case <-time.After(5 * time.Second):
+		return errors.New("timeout memproses pembayaran, silakan coba lagi")
+	}
+}
+
+func (s *service) processPayment(ctx context.Context, orderID uuid.UUID, paymentStatus string) error {
+	// If updating to paid (escrow), execute check-and-set to prevent double payments / race conditions
+	if paymentStatus == PaymentEscrow {
+		var rowsAffected int64
+		err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+			res, err := tx.NewUpdate().
+				Model((*Order)(nil)).
+				Set("payment_status = ?", PaymentEscrow).
+				Set("updated_at = ?", time.Now()).
+				Where("id = ?", orderID).
+				Where("payment_status = ?", PaymentUnpaid).
+				Exec(ctx)
+			if err != nil {
+				return err
+			}
+			rowsAffected, _ = res.RowsAffected()
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+
+		if rowsAffected == 0 {
+			// Idempotency: check if already paid
+			order, err := s.repo.FindByID(ctx, orderID)
+			if err == nil && order.PaymentStatus == PaymentEscrow {
+				return nil // Already processed, return success to gateway
+			}
+			return fmt.Errorf("pesanan tidak ditemukan atau tidak berada dalam status belum dibayar")
+		}
+
+		// Success update: Trigger matching & audit log
+		s.matchingSvc.EnqueueMatching(orderID)
+		runnerID := uuid.Nil // Webhook / system action
+		s.auditSvc.Log(ctx, &runnerID, audit.ActionOrderUpdate, "order", orderID.String(),
+			map[string]interface{}{"payment_status": PaymentUnpaid},
+			map[string]interface{}{"payment_status": PaymentEscrow}, "", "")
+
+		return nil
+	}
+
+	// Fallback for other status updates
 	order, err := s.repo.FindByID(ctx, orderID)
 	if err != nil {
 		return err
@@ -1381,5 +1477,55 @@ func (s *service) populateRunnerInfo(ctx context.Context, o *Order) {
 	if err == nil && r != nil {
 		o.RunnerName = r.Name
 		o.RunnerPhone = r.WhatsappNumber
+	}
+}
+
+func (s *service) populateReviewInfo(ctx context.Context, o *Order) {
+	if o == nil {
+		return
+	}
+	type dbReview struct {
+		Rating  int    `bun:"rating"`
+		Comment string `bun:"comment"`
+	}
+	var rv dbReview
+	err := s.db.NewSelect().
+		Table("reviews").
+		Column("rating", "comment").
+		Where("order_id = ?", o.ID).
+		Scan(ctx, &rv)
+	if err == nil {
+		o.FeedbackRating = &rv.Rating
+		o.FeedbackComment = rv.Comment
+	}
+}
+
+func (s *service) populatePaymentInfo(ctx context.Context, o *Order) {
+	if o == nil {
+		return
+	}
+	if o.PaymentMethod == "escrow" && o.PaymentSource == "qris" && o.PaymentStatus == PaymentUnpaid {
+		o.QRISData = fmt.Sprintf("https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=nitip-order-%s", o.ID.String())
+	}
+}
+
+func (s *service) StartPaymentWorkerPool(ctx context.Context, numWorkers int) {
+	s.paymentOnce.Do(func() {
+		for i := 0; i < numWorkers; i++ {
+			go s.paymentWorker(ctx, i)
+		}
+		log.Printf("Started %d payment workers", numWorkers)
+	})
+}
+
+func (s *service) paymentWorker(ctx context.Context, id int) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case job := <-s.paymentQueue:
+			err := s.processPayment(ctx, job.OrderID, job.Status)
+			job.ErrChan <- err
+		}
 	}
 }
