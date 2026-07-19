@@ -29,6 +29,7 @@ import (
 	"github.com/codecoffy/nitip-core/internal/storage"
 	applogger "github.com/codecoffy/nitip-core/internal/logger"
 	"github.com/codecoffy/nitip-core/internal/notification"
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
 
@@ -206,6 +207,13 @@ func main() {
 
 	// Order Service
 	orderSvc := order.NewService(orderRepo, userSvc, tripRepo, matchingSvc, walletSvc, cfgSvc, fcmClient, notifSvc, redisCache, db, auditSvc, storageSvc)
+	wallet.OnPaymentSuccess = func(ctx context.Context, reference string) error {
+		id, err := uuid.Parse(reference)
+		if err != nil {
+			return err
+		}
+		return orderSvc.UpdatePaymentStatus(ctx, id, order.PaymentEscrow)
+	}
 	orderHandler := order.NewHandler(orderSvc, db, redisCache)
 	fiberApp.RegisterRoutes(orderHandler.RegisterRoutes)
 

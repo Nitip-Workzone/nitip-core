@@ -87,11 +87,10 @@ func New(logger *zap.Logger) *App {
 
 		status := c.Response().StatusCode()
 		if len(reqStr) > 0 {
-			log.Printf("[HTTP-REQ] %s %s | Payload: %s", method, path, reqStr)
+			log.Printf("[API] %s %s -> %d | Req: %s | Resp: %s", method, path, status, reqStr, respStr)
 		} else {
-			log.Printf("[HTTP-REQ] %s %s", method, path)
+			log.Printf("[API] %s %s -> %d | Resp: %s", method, path, status, respStr)
 		}
-		log.Printf("[HTTP-RESP] %s %s | Status: %d | Body: %s", method, path, status, respStr)
 
 		return err
 	})

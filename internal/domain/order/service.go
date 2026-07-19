@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log"
 	"math"
 	"math/big"
+	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -28,6 +31,8 @@ import (
 	"github.com/codecoffy/nitip-core/pkg/fileutil"
 	"github.com/codecoffy/nitip-core/pkg/geo"
 	"github.com/google/uuid"
+	"github.com/midtrans/midtrans-go"
+	"github.com/midtrans/midtrans-go/coreapi"
 	"github.com/uptrace/bun"
 )
 
@@ -338,9 +343,7 @@ func (s *service) Create(ctx context.Context, requesterID uuid.UUID, req CreateO
 	}
 
 	// Generate QRIS URL if unpaid QRIS order
-	if order.PaymentMethod == "escrow" && order.PaymentSource == "qris" && order.PaymentStatus == PaymentUnpaid {
-		order.QRISData = fmt.Sprintf("https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=nitip-order-%s", order.ID.String())
-	}
+	s.populatePaymentInfo(ctx, order)
 
 	// Audit Log
 	s.auditSvc.Log(ctx, &requesterID, audit.ActionOrderCreate, "order", order.ID.String(), nil, order, "", "")
@@ -1505,9 +1508,121 @@ func (s *service) populatePaymentInfo(ctx context.Context, o *Order) {
 	if o == nil {
 		return
 	}
-	if o.PaymentMethod == "escrow" && o.PaymentSource == "qris" && o.PaymentStatus == PaymentUnpaid {
-		o.QRISData = fmt.Sprintf("https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=nitip-order-%s", o.ID.String())
+	if o.PaymentMethod == "escrow" && o.PaymentSource == "qris" && o.PaymentStatus == PaymentUnpaid && o.Status != "cancelled" {
+		cacheKey := fmt.Sprintf("order:qris:%s", o.ID.String())
+		qrisStr, err := s.redis.Get(ctx, cacheKey)
+		if err == nil && qrisStr != "" {
+			o.QRISData = qrisStr
+			return
+		}
+
+		qrString, err := s.generateOrderQRIS(ctx, o)
+		if err == nil && qrString != "" {
+			o.QRISData = qrString
+			_ = s.redis.Set(ctx, cacheKey, qrString, 15*time.Minute)
+		}
 	}
+}
+
+func (s *service) generateOrderQRIS(ctx context.Context, order *Order) (string, error) {
+	var qrString string
+	var reference = order.ID.String()
+
+	if config.App.MidtransServerKey != "" && !config.App.UseMockPayment {
+		userObj, err := s.userSvc.GetByID(ctx, order.RequesterID, order.RequesterID)
+		var userEmail string
+		var userName string
+		if err == nil && userObj != nil {
+			userEmail = userObj.Email
+			userName = userObj.Name
+		}
+
+		midtransEnv := midtrans.Sandbox
+		if config.App.MidtransIsProduction {
+			midtransEnv = midtrans.Production
+		}
+
+		var client coreapi.Client
+		client.New(config.App.MidtransServerKey, midtransEnv)
+
+		req := &coreapi.ChargeReq{
+			PaymentType: coreapi.PaymentTypeQris,
+			TransactionDetails: midtrans.TransactionDetails{
+				OrderID:  reference,
+				GrossAmt: int64(order.TotalPayment),
+			},
+			CustomerDetails: &midtrans.CustomerDetails{
+				FName: userName,
+				Email: userEmail,
+			},
+			Qris: &coreapi.QrisDetails{
+				Acquirer: "gopay",
+			},
+		}
+
+		reqJSON, _ := json.Marshal(req)
+		log.Printf("[MIDTRANS-ORDER-CHARGE] Order: %s | Payload: %s", order.ID.String(), string(reqJSON))
+		chargeResp, midtransErr := client.ChargeTransaction(req)
+		if chargeResp != nil {
+			log.Printf("[MIDTRANS-ORDER-RESPONSE] Order: %s, Status: %s", order.ID.String(), chargeResp.TransactionStatus)
+		}
+		if midtransErr != nil {
+			log.Printf("[MIDTRANS-ORDER-ERROR] Order: %s, StatusCode: %d, Message: %s", order.ID.String(), midtransErr.StatusCode, midtransErr.Message)
+			return "", errors.New("gagal membuat kode pembayaran GoPay/QRIS dari Midtrans")
+		}
+
+		qrString = chargeResp.QRString
+		for _, action := range chargeResp.Actions {
+			switch action.Name {
+			case "generate-qr-code":
+				if qrString == "" {
+					qrString = action.URL
+				}
+			}
+		}
+		if qrString == "" && len(chargeResp.Actions) > 0 {
+			qrString = chargeResp.Actions[0].URL
+		}
+	} else {
+		// Fallback to mock-qris
+		payload := map[string]interface{}{
+			"reference_id": reference,
+			"amount":       int64(order.TotalPayment),
+		}
+		body, _ := json.Marshal(payload)
+
+		pgUrl := os.Getenv("PAYMENT_GATEWAY_URL")
+		if pgUrl == "" {
+			pgUrl = "http://localhost:4000"
+		}
+
+		log.Printf("[MOCK-QRIS-ORDER] Order: %s, GrossAmt: %d", order.ID.String(), int64(order.TotalPayment))
+		resp, err := http.Post(fmt.Sprintf("%s/api/qris/generate", pgUrl), "application/json", bytes.NewBuffer(body))
+		if err != nil {
+			log.Printf("[MOCK-QRIS-ORDER-ERROR] Connection error: %v", err)
+			return "", fmt.Errorf("gagal menghubungi payment gateway: %v", err)
+		}
+		defer func() {
+			_ = resp.Body.Close()
+		}()
+
+		respBytes, _ := io.ReadAll(resp.Body)
+		log.Printf("[MOCK-QRIS-ORDER-RESPONSE] Order: %s, Status: %s", order.ID.String(), resp.Status)
+
+		var qrisResp struct {
+			Status     string `json:"status"`
+			TrxID      string `json:"trx_id"`
+			QrisString string `json:"qris_string"`
+		}
+		if err := json.Unmarshal(respBytes, &qrisResp); err != nil {
+			log.Printf("[MOCK-QRIS-ORDER-ERROR] Parse error: %v", err)
+			return "", fmt.Errorf("gagal membaca respon payment gateway")
+		}
+
+		qrString = qrisResp.QrisString
+	}
+
+	return qrString, nil
 }
 
 func (s *service) StartPaymentWorkerPool(ctx context.Context, numWorkers int) {
@@ -1553,6 +1668,10 @@ func (s *service) RefreshQRIS(ctx context.Context, orderID, requesterID uuid.UUI
 		return nil, errors.New("pesanan tidak memerlukan pembayaran QRIS")
 	}
 
+	// Invalidate cache
+	cacheKey := fmt.Sprintf("order:qris:%s", order.ID.String())
+	_ = s.redis.Del(ctx, cacheKey)
+
 	// Update created_at to now
 	order.CreatedAt = time.Now()
 	order.UpdatedAt = time.Now()
@@ -1563,8 +1682,8 @@ func (s *service) RefreshQRIS(ctx context.Context, orderID, requesterID uuid.UUI
 		return nil, err
 	}
 
-	// Populate QRIS Data
-	order.QRISData = fmt.Sprintf("https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=nitip-order-%s", order.ID.String())
+	// Populate QRIS Data (forces fresh call)
+	s.populatePaymentInfo(ctx, order)
 
 	log.Printf("[QRIS-REFRESH] Successfully refreshed QRIS payment countdown for Order %s (New CreatedAt: %v)", orderID, order.CreatedAt)
 	return order, nil

@@ -427,6 +427,12 @@ func (h *Handler) WebhookQris(c *fiber.Ctx) error {
 	}
 
 	if payload.Status == "PAID" || payload.Status == "SUCCESS" {
+		if OnPaymentSuccess != nil {
+			err := OnPaymentSuccess(c.Context(), payload.TrxID)
+			if err == nil {
+				return response.Success(c, "webhook order diproses", nil)
+			}
+		}
 		_, err := h.service.FinalizeTopUp(c.Context(), payload.TrxID)
 		if err != nil {
 			// Bisa di-ignore jika trx sudah success sebelumnya
@@ -531,8 +537,14 @@ func (h *Handler) WebhookMidtrans(c *fiber.Ctx) error {
 		return response.Forbidden(c, "kunci tanda tangan tidak valid")
 	}
 
-	// If paid, finalize the top up
+	// If paid, finalize the payment
 	if payload.TransactionStatus == "settlement" || payload.TransactionStatus == "capture" {
+		if OnPaymentSuccess != nil {
+			err := OnPaymentSuccess(c.Context(), payload.OrderID)
+			if err == nil {
+				return response.Success(c, "webhook order diproses", nil)
+			}
+		}
 		_, err := h.service.FinalizeTopUp(c.Context(), payload.OrderID)
 		if err != nil {
 			// Transaction might be processed already or not found

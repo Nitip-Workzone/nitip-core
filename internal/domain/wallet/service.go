@@ -27,6 +27,8 @@ import (
 	"github.com/uptrace/bun"
 )
 
+var OnPaymentSuccess func(ctx context.Context, reference string) error
+
 type InquiryAccountRequest struct {
 	ChannelCode string `json:"channel_code" validate:"required"`
 	AccountNo   string `json:"account_no" validate:"required"`
