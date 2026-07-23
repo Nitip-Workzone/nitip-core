@@ -2,8 +2,10 @@ package banner
 
 import (
 	"context"
+	"io"
 	"time"
 
+	"github.com/codecoffy/nitip-core/internal/storage"
 	"github.com/google/uuid"
 )
 
@@ -14,14 +16,16 @@ type Service interface {
 	CreateBanner(ctx context.Context, title, imageURL string, redirectURL *string, isActive bool) (*Banner, error)
 	UpdateBanner(ctx context.Context, id uuid.UUID, title, imageURL string, redirectURL *string, isActive bool) (*Banner, error)
 	DeleteBanner(ctx context.Context, id uuid.UUID) error
+	UploadImage(ctx context.Context, filename string, content io.Reader, size int64, contentType string) (string, error)
 }
 
 type service struct {
-	repo Repository
+	repo    Repository
+	storage storage.Storage
 }
 
-func NewService(repo Repository) Service {
-	return &service{repo: repo}
+func NewService(repo Repository, storage storage.Storage) Service {
+	return &service{repo: repo, storage: storage}
 }
 
 func (s *service) GetAllBanners(ctx context.Context) ([]Banner, error) {
@@ -74,4 +78,9 @@ func (s *service) UpdateBanner(ctx context.Context, id uuid.UUID, title, imageUR
 
 func (s *service) DeleteBanner(ctx context.Context, id uuid.UUID) error {
 	return s.repo.Delete(ctx, id)
+}
+
+func (s *service) UploadImage(ctx context.Context, filename string, content io.Reader, size int64, contentType string) (string, error) {
+	objectKey := "banners/" + uuid.New().String() + "_" + filename
+	return s.storage.Upload(ctx, objectKey, content, size, contentType)
 }
