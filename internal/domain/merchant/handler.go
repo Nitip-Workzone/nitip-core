@@ -145,6 +145,9 @@ func (h *Handler) CreateProfile(c *fiber.Ctx) error {
 		5,
 	)
 	if err != nil {
+		println("=== CREATE MERCHANT ERROR ===")
+		println(err.Error())
+		println("=============================")
 		return response.InternalError(c, err.Error())
 	}
 
