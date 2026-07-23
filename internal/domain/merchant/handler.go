@@ -33,6 +33,7 @@ func (h *Handler) RegisterRoutes(router fiber.Router) {
 	// Merchant Owner routes
 	owner := router.Group("/merchant", middleware.Protected(h.db, h.redis), middleware.Role(user.RoleMerchant))
 	owner.Get("/profile", h.GetProfile)
+	owner.Post("/profile", h.CreateProfile)
 	owner.Put("/status", h.UpdateStatus)
 	owner.Get("/menu", h.ListMenuMerchant)
 	owner.Post("/menu", h.CreateMenu)
@@ -102,6 +103,52 @@ func (h *Handler) GetProfile(c *fiber.Ctx) error {
 		return response.NotFound(c, "profil merchant tidak ditemukan untuk pengguna ini")
 	}
 	return response.Success(c, "profil merchant berhasil diambil", m)
+}
+
+type createProfileRequest struct {
+	Name        string  `json:"name" validate:"required"`
+	Description string  `json:"description"`
+	Address     string  `json:"address" validate:"required"`
+	Latitude    float64 `json:"latitude" validate:"required"`
+	Longitude   float64 `json:"longitude" validate:"required"`
+	Category    string  `json:"category" validate:"required"`
+}
+
+func (h *Handler) CreateProfile(c *fiber.Ctx) error {
+	claims := c.Locals("user").(*jwt.CustomClaims)
+
+	// Check if profile already exists to prevent duplicate profiles
+	_, err := h.service.GetMerchantByOwnerID(c.Context(), claims.UserID)
+	if err == nil {
+		return response.BadRequest(c, "profil merchant sudah terdaftar")
+	}
+
+	var req createProfileRequest
+	if err := c.BodyParser(&req); err != nil {
+		return response.BadRequest(c, "format permintaan tidak valid")
+	}
+	if errs := validator.Validate(req); errs != nil {
+		return response.ValidationFailed(c, errs)
+	}
+
+	// Create merchant with default autoConfirm=false, maxActiveOrders=5
+	m, err := h.service.CreateMerchant(
+		c.Context(),
+		claims.UserID,
+		req.Name,
+		req.Description,
+		req.Address,
+		req.Latitude,
+		req.Longitude,
+		req.Category,
+		false,
+		5,
+	)
+	if err != nil {
+		return response.InternalError(c, err.Error())
+	}
+
+	return response.Success(c, "profil merchant berhasil dilengkapi", m)
 }
 
 type merchantUpdateStatusRequest struct {
