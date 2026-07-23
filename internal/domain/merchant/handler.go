@@ -100,7 +100,7 @@ func (h *Handler) GetProfile(c *fiber.Ctx) error {
 	claims := c.Locals("user").(*jwt.CustomClaims)
 	m, err := h.service.GetMerchantByOwnerID(c.Context(), claims.UserID)
 	if err != nil {
-		return response.NotFound(c, "profil merchant tidak ditemukan untuk pengguna ini")
+		return response.Success(c, "profil merchant tidak ditemukan untuk pengguna ini", nil)
 	}
 	return response.Success(c, "profil merchant berhasil diambil", m)
 }
