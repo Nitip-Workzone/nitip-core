@@ -35,7 +35,7 @@ type AdminCreateUserRequest struct {
 	Name           string `json:"name"            validate:"required,min=2,max=100"`
 	Email          string `json:"email"           validate:"required,email"`
 	Password       string `json:"password"        validate:"required,min=8,max=72"`
-	Role           string `json:"role"            validate:"required,oneof=requester runner admin"`
+	Role           string `json:"role"            validate:"required,oneof=requester runner admin merchant"`
 	WhatsappNumber string `json:"whatsapp_number" validate:"required,min=9,max=15,numeric"`
 	IsVerified     bool   `json:"is_verified"`
 	AdminPassword  string `json:"admin_password"  validate:"required"`
