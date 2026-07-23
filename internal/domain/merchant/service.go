@@ -186,6 +186,7 @@ func (s *service) CreateMenu(ctx context.Context, merchantID uuid.UUID, name, de
 	if err := s.repo.CreateMenu(ctx, menu); err != nil {
 		return nil, err
 	}
+	s.signMenuImage(ctx, menu)
 	return menu, nil
 }
 
@@ -205,15 +206,28 @@ func (s *service) UpdateMenu(ctx context.Context, id uuid.UUID, name, descriptio
 	if err := s.repo.UpdateMenu(ctx, menu); err != nil {
 		return nil, err
 	}
+	s.signMenuImage(ctx, menu)
 	return menu, nil
 }
 
 func (s *service) GetMenuByID(ctx context.Context, id uuid.UUID) (*Menu, error) {
-	return s.repo.GetMenuByID(ctx, id)
+	menu, err := s.repo.GetMenuByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	s.signMenuImage(ctx, menu)
+	return menu, nil
 }
 
 func (s *service) ListMenusByMerchantID(ctx context.Context, merchantID uuid.UUID, onlyAvailable bool) ([]Menu, error) {
-	return s.repo.ListMenusByMerchantID(ctx, merchantID, onlyAvailable)
+	menus, err := s.repo.ListMenusByMerchantID(ctx, merchantID, onlyAvailable)
+	if err != nil {
+		return nil, err
+	}
+	for i := range menus {
+		s.signMenuImage(ctx, &menus[i])
+	}
+	return menus, nil
 }
 
 func (s *service) DeleteMenu(ctx context.Context, id uuid.UUID) error {
@@ -232,7 +246,20 @@ func (s *service) ToggleMenuAvailability(ctx context.Context, id uuid.UUID, isAv
 	if err := s.repo.UpdateMenu(ctx, menu); err != nil {
 		return nil, err
 	}
+	s.signMenuImage(ctx, menu)
 	return menu, nil
+}
+
+func (s *service) signMenuImage(ctx context.Context, m *Menu) {
+	if m == nil || m.ImageURL == "" {
+		return
+	}
+	if len(m.ImageURL) > 4 && m.ImageURL[:4] == "http" {
+		return
+	}
+	if signed, err := s.storage.SignedURL(ctx, m.ImageURL, 1*time.Hour); err == nil {
+		m.ImageURL = signed
+	}
 }
 
 func (s *service) UploadMenuImage(ctx context.Context, filename string, content io.Reader, size int64, contentType string) (string, error) {
