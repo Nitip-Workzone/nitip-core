@@ -232,7 +232,7 @@ func main() {
 
 	// Banner Domain
 	bannerRepo := banner.NewRepository(db)
-	bannerSvc := banner.NewService(bannerRepo)
+	bannerSvc := banner.NewService(bannerRepo, storageSvc)
 	bannerHandler := banner.NewHandler(bannerSvc, db, redisCache)
 	fiberApp.RegisterRoutes(bannerHandler.RegisterRoutes)
 

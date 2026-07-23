@@ -61,7 +61,7 @@ func (s *CosStorage) Upload(ctx context.Context, objectKey string, file io.Reade
 		},
 	}
 	if size > 0 {
-		opt.ObjectPutHeaderOptions.ContentLength = size
+		opt.ContentLength = size
 	}
 
 	_, err := s.client.Object.Put(ctx, key, file, opt)

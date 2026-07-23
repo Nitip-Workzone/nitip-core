@@ -37,7 +37,7 @@ func (s *LocalStorage) Upload(ctx context.Context, objectKey string, file io.Rea
 	if err != nil {
 		return "", fmt.Errorf("local storage upload: failed to create file: %w", err)
 	}
-	defer out.Close()
+	defer func() { _ = out.Close() }()
 
 	if _, err := io.Copy(out, file); err != nil {
 		return "", fmt.Errorf("local storage upload: failed to write file content: %w", err)
