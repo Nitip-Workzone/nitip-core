@@ -15,6 +15,7 @@ import (
 	"github.com/codecoffy/nitip-core/internal/database"
 	"github.com/codecoffy/nitip-core/internal/domain/audit"
 	"github.com/codecoffy/nitip-core/internal/domain/auth"
+	"github.com/codecoffy/nitip-core/internal/domain/banner"
 	"github.com/codecoffy/nitip-core/internal/domain/chat"
 	systemconfig "github.com/codecoffy/nitip-core/internal/domain/config"
 	"github.com/codecoffy/nitip-core/internal/domain/kyc"
@@ -228,6 +229,12 @@ func main() {
 	kycSvc := kyc.NewService(kycRepo, userSvc, storageSvc, fcmClient, notifSvc, auditSvc)
 	kycHandler := kyc.NewHandler(kycSvc, db, redisCache)
 	fiberApp.RegisterRoutes(kycHandler.RegisterRoutes)
+
+	// Banner Domain
+	bannerRepo := banner.NewRepository(db)
+	bannerSvc := banner.NewService(bannerRepo)
+	bannerHandler := banner.NewHandler(bannerSvc, db, redisCache)
+	fiberApp.RegisterRoutes(bannerHandler.RegisterRoutes)
 
 	// 7. Graceful shutdown listener
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
