@@ -1,6 +1,7 @@
 package merchant
 
 import (
+	"log"
 	"strconv"
 
 	"github.com/codecoffy/nitip-core/internal/cache"
@@ -145,10 +146,8 @@ func (h *Handler) CreateProfile(c *fiber.Ctx) error {
 		5,
 	)
 	if err != nil {
-		println("=== CREATE MERCHANT ERROR ===")
-		println(err.Error())
-		println("=============================")
-		return response.InternalError(c, err.Error())
+		log.Printf("[ERROR] CreateProfile: %v", err)
+		return response.InternalError(c, "gagal melengkapi profil merchant")
 	}
 
 	return response.Success(c, "profil merchant berhasil dilengkapi", m)
@@ -203,7 +202,8 @@ func (h *Handler) ListMenuMerchant(c *fiber.Ctx) error {
 
 	menus, err := h.service.ListMenusByMerchantID(c.Context(), m.ID, false)
 	if err != nil {
-		return response.InternalError(c, err.Error())
+		log.Printf("[ERROR] ListMenuMerchant: %v", err)
+		return response.InternalError(c, "gagal mengambil daftar menu merchant")
 	}
 
 	return response.Success(c, "daftar menu merchant berhasil diambil", menus)
