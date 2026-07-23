@@ -43,6 +43,7 @@ type Order struct {
 	VolumeLiters     float64    `bun:"volume_liters,notnull,default:0" json:"volume_liters"`
 	ServiceFee       float64    `bun:"service_fee,notnull,default:0" json:"service_fee"`
 	TripID           *uuid.UUID `bun:"trip_id,type:uuid" json:"trip_id,omitempty"`
+	MerchantID       *uuid.UUID `bun:"merchant_id,type:uuid" json:"merchant_id,omitempty"`
 	TotalPayment     float64    `bun:"total_payment,notnull,default:0" json:"total_payment"`
 	OrderType        string     `bun:"order_type,notnull,default:'regular'" json:"order_type"`
 	CheckingFee      float64    `bun:"checking_fee,notnull,default:0" json:"checking_fee"`
@@ -75,6 +76,8 @@ var (
 
 	// Order Status Enum equivalents
 	StatusPending    = "pending"
+	StatusCooking    = "cooking"
+	StatusReady      = "ready"
 	StatusAccepted   = "accepted"
 	StatusPurchasing = "purchasing"
 	StatusDelivering = "delivering"

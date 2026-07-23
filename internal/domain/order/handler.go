@@ -44,6 +44,11 @@ func (h *Handler) RegisterRoutes(router fiber.Router) {
 	orders.Post("/:id/dispute", middleware.Role(user.RoleRequester), h.Dispute)
 	orders.Post("/:id/refresh-qris", middleware.Role(user.RoleRequester), h.RefreshQRIS)
 
+	// Merchant routes
+	orders.Get("/merchant/orders", middleware.Role(user.RoleMerchant), h.GetMerchantOrders)
+	orders.Post("/:id/merchant-accept", middleware.Role(user.RoleMerchant), h.MerchantAccept)
+	orders.Post("/:id/merchant-ready", middleware.Role(user.RoleMerchant), h.MerchantReady)
+
 	// Runner endpoints
 	orders.Get("/available", middleware.Role(user.RoleRunner), h.GetAvailableOrders)
 	orders.Post("/:id/accept", middleware.Role(user.RoleRunner), h.Accept)
@@ -816,4 +821,41 @@ func (h *Handler) RefreshQRIS(c *fiber.Ctx) error {
 	}
 
 	return response.Success(c, "QRIS berhasil diperbarui", order)
+}
+
+func (h *Handler) GetMerchantOrders(c *fiber.Ctx) error {
+	claims := c.Locals("user").(*jwt.CustomClaims)
+	orders, err := h.service.GetMerchantOrders(c.Context(), claims.UserID)
+	if err != nil {
+		return response.InternalError(c, err.Error())
+	}
+	return response.Success(c, "daftar pesanan merchant berhasil diambil", orders)
+}
+
+func (h *Handler) MerchantAccept(c *fiber.Ctx) error {
+	id, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return response.BadRequest(c, "ID pesanan tidak valid")
+	}
+
+	claims := c.Locals("user").(*jwt.CustomClaims)
+	if err := h.service.MerchantAcceptOrder(c.Context(), id, claims.UserID); err != nil {
+		return response.BadRequest(c, err.Error())
+	}
+
+	return response.Success(c, "pesanan berhasil diterima oleh merchant", nil)
+}
+
+func (h *Handler) MerchantReady(c *fiber.Ctx) error {
+	id, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return response.BadRequest(c, "ID pesanan tidak valid")
+	}
+
+	claims := c.Locals("user").(*jwt.CustomClaims)
+	if err := h.service.MerchantReadyOrder(c.Context(), id, claims.UserID); err != nil {
+		return response.BadRequest(c, err.Error())
+	}
+
+	return response.Success(c, "pesanan ditandai siap diambil", nil)
 }

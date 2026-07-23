@@ -57,6 +57,7 @@ type Service interface {
 	RefundEscrow(ctx context.Context, db bun.IDB, requesterID, orderID uuid.UUID, amount float64) error
 	PartialReleaseEscrow(ctx context.Context, db bun.IDB, runnerID, requesterID, orderID uuid.UUID, runnerAmount, refundAmount float64) error
 	ReleaseEscrowWithRefund(ctx context.Context, db bun.IDB, runnerID, requesterID, orderID uuid.UUID, runnerAmount, platformFee, refundAmount float64) error
+	ReleaseMerchantEscrow(ctx context.Context, db bun.IDB, runnerID, requesterID, merchantOwnerID, orderID uuid.UUID, foodAmount, runnerAmount, platformFee, refundAmount float64) error
 	DeductCODPlatformFee(ctx context.Context, db bun.IDB, runnerID, orderID uuid.UUID, platformFee float64) error
 
 	// Admin Actions
@@ -727,6 +728,96 @@ func (s *service) ReleaseEscrowWithRefund(ctx context.Context, db bun.IDB, runne
 	}
 
 	// 3. Refund Deposit to Requester
+	if refundAmount > 0 {
+		if err := s.repo.UpdateWalletBalance(ctx, db, wReq.ID, refundAmount); err != nil {
+			return err
+		}
+		wtxReq := &WalletTransaction{
+			ID:       uuid.New(),
+			WalletID: wReq.ID,
+			OrderID:  &orderID,
+			Type:     TypeRefund,
+			Amount:   refundAmount,
+			Status:   StatusCompleted,
+		}
+		if err := s.repo.CreateTransaction(ctx, db, wtxReq); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (s *service) ReleaseMerchantEscrow(ctx context.Context, db bun.IDB, runnerID, requesterID, merchantOwnerID, orderID uuid.UUID, foodAmount, runnerAmount, platformFee, refundAmount float64) error {
+	wRunner, err := s.GetBalance(ctx, runnerID)
+	if err != nil {
+		return err
+	}
+	wReq, err := s.GetBalance(ctx, requesterID)
+	if err != nil {
+		return err
+	}
+	wMerchant, err := s.GetBalance(ctx, merchantOwnerID)
+	if err != nil {
+		return err
+	}
+	sysWID, _ := uuid.Parse(SystemWalletID)
+
+	// 1. Give Merchant their portion (Food price)
+	if foodAmount > 0 {
+		if err := s.repo.UpdateWalletBalance(ctx, db, wMerchant.ID, foodAmount); err != nil {
+			return err
+		}
+		wtxMerchant := &WalletTransaction{
+			ID:       uuid.New(),
+			WalletID: wMerchant.ID,
+			OrderID:  &orderID,
+			Type:     TypeEscrowRelease,
+			Amount:   foodAmount,
+			Status:   StatusCompleted,
+		}
+		if err := s.repo.CreateTransaction(ctx, db, wtxMerchant); err != nil {
+			return err
+		}
+	}
+
+	// 2. Give Runner their portion
+	if runnerAmount > 0 {
+		if err := s.repo.UpdateWalletBalance(ctx, db, wRunner.ID, runnerAmount); err != nil {
+			return err
+		}
+		wtxRunner := &WalletTransaction{
+			ID:       uuid.New(),
+			WalletID: wRunner.ID,
+			OrderID:  &orderID,
+			Type:     TypeEscrowRelease,
+			Amount:   runnerAmount,
+			Status:   StatusCompleted,
+		}
+		if err := s.repo.CreateTransaction(ctx, db, wtxRunner); err != nil {
+			return err
+		}
+	}
+
+	// 3. Transfer Platform Fee to System
+	if platformFee > 0 {
+		if err := s.repo.UpdateWalletBalance(ctx, db, sysWID, platformFee); err != nil {
+			return err
+		}
+		feeTx := &WalletTransaction{
+			ID:       uuid.New(),
+			WalletID: sysWID,
+			OrderID:  &orderID,
+			Type:     TypePlatformFee,
+			Amount:   platformFee,
+			Status:   StatusCompleted,
+		}
+		if err := s.repo.CreateTransaction(ctx, db, feeTx); err != nil {
+			return err
+		}
+	}
+
+	// 4. Refund Deposit to Requester
 	if refundAmount > 0 {
 		if err := s.repo.UpdateWalletBalance(ctx, db, wReq.ID, refundAmount); err != nil {
 			return err

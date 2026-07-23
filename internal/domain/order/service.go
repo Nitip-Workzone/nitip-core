@@ -27,6 +27,7 @@ import (
 	"github.com/codecoffy/nitip-core/internal/domain/trip"
 	"github.com/codecoffy/nitip-core/internal/domain/user"
 	"github.com/codecoffy/nitip-core/internal/domain/wallet"
+	"github.com/codecoffy/nitip-core/internal/domain/merchant"
 	"github.com/codecoffy/nitip-core/internal/notification"
 	"github.com/codecoffy/nitip-core/internal/storage"
 	"github.com/codecoffy/nitip-core/pkg/fileutil"
@@ -67,6 +68,14 @@ type CreateOrderRequest struct {
 	PaymentSource string  `json:"payment_source" validate:"omitempty,oneof=wallet qris"`
 	WeightKg      float64 `json:"weight_kg"      validate:"required,min=0"`
 	VolumeLiters  float64 `json:"volume_liters"  validate:"required,min=0"` // Frontend maps S/M/L to liters
+
+	// Merchant Fields
+	MerchantID *uuid.UUID `json:"merchant_id,omitempty"`
+	Items      []struct {
+		MenuID   uuid.UUID `json:"menu_id" validate:"required"`
+		Quantity int       `json:"quantity" validate:"required,gt=0"`
+		Notes    string    `json:"notes,omitempty"`
+	} `json:"items,omitempty"`
 
 	// Nitip Kirim Fields
 	ServiceCategory string `json:"service_category" validate:"required,oneof=beli kirim"`
@@ -115,6 +124,11 @@ type Service interface {
 	GetAvailableOrders(ctx context.Context, runnerID uuid.UUID) ([]Order, error)
 	EstimateFee(ctx context.Context, req EstimateFeeRequest) (*EstimateFeeResponse, error)
 
+	// Merchant specific order actions
+	GetMerchantOrders(ctx context.Context, ownerID uuid.UUID) ([]Order, error)
+	MerchantAcceptOrder(ctx context.Context, orderID, ownerID uuid.UUID) error
+	MerchantReadyOrder(ctx context.Context, orderID, ownerID uuid.UUID) error
+
 	// Admin specific
 	GetAllWithFilters(ctx context.Context, status string, offset, limit int) ([]Order, error)
 	ForceCancelOrder(ctx context.Context, orderID uuid.UUID) error
@@ -150,11 +164,12 @@ type service struct {
 	db           *bun.DB
 	auditSvc     audit.Service
 	storage      storage.Storage
+	merchantSvc  merchant.Service
 	paymentQueue chan PaymentJob
 	paymentOnce  sync.Once
 }
 
-func NewService(repo Repository, userSvc user.Service, tripRepo trip.Repository, matchingSvc Matcher, walletSvc wallet.Service, configSvc systemconfig.Service, fcm notification.Notifier, notifSvc notifDomain.Service, redis *cache.Redis, db *bun.DB, auditSvc audit.Service, storage storage.Storage) Service {
+func NewService(repo Repository, userSvc user.Service, tripRepo trip.Repository, matchingSvc Matcher, walletSvc wallet.Service, configSvc systemconfig.Service, fcm notification.Notifier, notifSvc notifDomain.Service, redis *cache.Redis, db *bun.DB, auditSvc audit.Service, storage storage.Storage, merchantSvc merchant.Service) Service {
 	return &service{
 		repo:         repo,
 		userSvc:      userSvc,
@@ -168,11 +183,22 @@ func NewService(repo Repository, userSvc user.Service, tripRepo trip.Repository,
 		db:           db,
 		auditSvc:     auditSvc,
 		storage:      storage,
+		merchantSvc:  merchantSvc,
 		paymentQueue: make(chan PaymentJob, 500),
 	}
 }
 
 func (s *service) Create(ctx context.Context, requesterID uuid.UUID, req CreateOrderRequest) (*Order, error) {
+	// --- Concurrency Guard: Redis Lock for Merchant ---
+	if req.MerchantID != nil {
+		lockKey := fmt.Sprintf("lock:merchant:order:%s", req.MerchantID.String())
+		ok, lockErr := s.redis.AcquireLock(ctx, lockKey, 3*time.Second)
+		if lockErr != nil || !ok {
+			return nil, errors.New("merchant sedang memproses pesanan lain, silakan coba beberapa saat lagi")
+		}
+		defer func() { _ = s.redis.ReleaseLock(ctx, lockKey) }()
+	}
+
 	u, err := s.userSvc.GetByID(ctx, requesterID, requesterID)
 	if err != nil {
 		return nil, err
@@ -183,6 +209,67 @@ func (s *service) Create(ctx context.Context, requesterID uuid.UUID, req CreateO
 
 	if u.IsSuspended {
 		return nil, errors.New("tidak dapat membuat pesanan: akun Anda sedang ditangguhkan")
+	}
+
+	// Load & Validate Merchant info if provided
+	var merch *merchant.Merchant
+	var orderItems []merchant.OrderItem
+	if req.MerchantID != nil {
+		merch, err = s.merchantSvc.GetMerchantByID(ctx, *req.MerchantID)
+		if err != nil {
+			return nil, fmt.Errorf("merchant tidak ditemukan: %w", err)
+		}
+		if !merch.IsOpen {
+			return nil, errors.New("merchant sedang tutup")
+		}
+
+		// Batas Antrean Aktif
+		var activeCount int
+		err = s.db.NewSelect().
+			Table("orders").
+			Where("merchant_id = ?", merch.ID).
+			Where("status = ? OR status = ?", StatusPending, StatusCooking).
+			Scan(ctx, &activeCount)
+		if err != nil {
+			return nil, fmt.Errorf("gagal menghitung antrean aktif: %w", err)
+		}
+		if activeCount >= merch.MaxActiveOrders {
+			return nil, errors.New("toko sedang sibuk (antrean penuh), silakan coba beberapa saat lagi")
+		}
+
+		// Overwrite pickup details to be merchant's
+		req.PickupLat = merch.Latitude
+		req.PickupLng = merch.Longitude
+		req.PickupName = merch.Name
+		req.PickupAddress = merch.Address
+
+		// Validate items
+		if len(req.Items) == 0 {
+			return nil, errors.New("pesanan merchant harus menyertakan daftar item menu")
+		}
+		var calculatedCost float64
+		for _, it := range req.Items {
+			menu, err := s.merchantSvc.GetMenuByID(ctx, it.MenuID)
+			if err != nil {
+				return nil, fmt.Errorf("menu item tidak ditemukan: %w", err)
+			}
+			if menu.MerchantID != merch.ID {
+				return nil, errors.New("menu item tidak sesuai dengan merchant pilihan")
+			}
+			if !menu.IsAvailable {
+				return nil, fmt.Errorf("menu '%s' sedang tidak tersedia", menu.Name)
+			}
+			calculatedCost += menu.Price * float64(it.Quantity)
+
+			orderItems = append(orderItems, merchant.OrderItem{
+				ID:              uuid.New(),
+				MenuID:          it.MenuID,
+				Quantity:        it.Quantity,
+				Notes:           it.Notes,
+				PriceAtPurchase: menu.Price,
+			})
+		}
+		req.EstimatedCost = calculatedCost
 	}
 
 	if req.ServiceCategory == CategoryBeli && req.EstimatedCost <= 0 {
@@ -294,6 +381,7 @@ func (s *service) Create(ctx context.Context, requesterID uuid.UUID, req CreateO
 		DistanceKm:      distance,
 		ServiceCategory: req.ServiceCategory,
 		CompletionCode:  completionCode,
+		MerchantID:      req.MerchantID,
 		CreatedAt:       now,
 		UpdatedAt:       now,
 	}
@@ -307,11 +395,28 @@ func (s *service) Create(ctx context.Context, requesterID uuid.UUID, req CreateO
 		order.TotalPayment = req.EstimatedCost + deliveryFee
 	}
 
+	// Auto confirm for COD order
+	if order.PaymentMethod == MethodCOD {
+		if merch != nil && merch.AutoConfirm {
+			order.Status = StatusCooking
+		}
+	}
+
 	// --- 4. Transactional Create & Escrow Hold ---
 	err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		// A. Create Order Record FIRST (so Foreign Key exists)
 		if err := s.repo.Create(ctx, tx, order); err != nil {
 			return err
+		}
+
+		// Insert order items if merchant order
+		if req.MerchantID != nil && len(orderItems) > 0 {
+			for i := range orderItems {
+				orderItems[i].OrderID = order.ID
+			}
+			if err := s.merchantSvc.CreateOrderItems(ctx, orderItems); err != nil {
+				return fmt.Errorf("gagal mencatat item pesanan: %w", err)
+			}
 		}
 
 		// B. Balance Check & Hold for Escrow (Wallet only)
@@ -331,6 +436,12 @@ func (s *service) Create(ctx context.Context, requesterID uuid.UUID, req CreateO
 
 			// Update payment status (we need to update the order we just inserted)
 			order.PaymentStatus = PaymentEscrow
+
+			// Auto confirm: if auto_confirm is active, status transitions immediately to cooking
+			if merch != nil && merch.AutoConfirm {
+				order.Status = StatusCooking
+			}
+
 			if err := s.repo.Update(ctx, tx, order); err != nil {
 				return err
 			}
@@ -349,9 +460,33 @@ func (s *service) Create(ctx context.Context, requesterID uuid.UUID, req CreateO
 	// Audit Log
 	s.auditSvc.Log(ctx, &requesterID, audit.ActionOrderCreate, "order", order.ID.String(), nil, order, "", "")
 
-	// Trigger Smart Matching via controlled Worker Pool (only if paid or COD)
-	if order.PaymentStatus == PaymentEscrow || order.PaymentMethod == MethodCOD {
+	// Trigger Smart Matching via controlled Worker Pool (only if paid or COD AND auto-confirmed/not merchant)
+	if order.MerchantID == nil {
+		if order.PaymentStatus == PaymentEscrow || order.PaymentMethod == MethodCOD {
+			s.matchingSvc.EnqueueMatching(order.ID)
+		}
+	} else if order.Status == StatusCooking {
 		s.matchingSvc.EnqueueMatching(order.ID)
+
+		// Send FCM notification to Merchant owner that a new auto-confirmed order is placed
+		if s.fcm != nil && config.App.FcmEnabled {
+			ownerUser, _ := s.userSvc.GetByID(ctx, merch.OwnerID, merch.OwnerID)
+			if ownerUser != nil && ownerUser.FcmToken != nil && *ownerUser.FcmToken != "" {
+				_ = s.fcm.SendToDevice(ctx, *ownerUser.FcmToken, "Pesanan Baru Masuk (Otomatis)",
+					fmt.Sprintf("Pesanan %s diterima otomatis. Silakan mulai masak!", order.ItemDetails),
+					map[string]string{"order_id": order.ID.String()})
+			}
+		}
+	} else {
+		// Send FCM notification to Merchant owner that a new order is waiting confirmation
+		if s.fcm != nil && config.App.FcmEnabled {
+			ownerUser, _ := s.userSvc.GetByID(ctx, merch.OwnerID, merch.OwnerID)
+			if ownerUser != nil && ownerUser.FcmToken != nil && *ownerUser.FcmToken != "" {
+				_ = s.fcm.SendToDevice(ctx, *ownerUser.FcmToken, "Pesanan Baru Masuk",
+					fmt.Sprintf("Pesanan %s membutuhkan konfirmasi Anda.", order.ItemDetails),
+					map[string]string{"order_id": order.ID.String()})
+			}
+		}
 	}
 
 	return order, nil
@@ -466,9 +601,19 @@ func (s *service) AcceptOrder(ctx context.Context, orderID, runnerID uuid.UUID) 
 		return err
 	}
 
-	if order.Status != StatusPending {
-		return errors.New("pesanan sudah tidak dalam status menunggu")
+	var expectedStatus string
+	if order.MerchantID != nil {
+		if order.Status != StatusCooking && order.Status != StatusReady {
+			return errors.New("pesanan merchant belum diterima oleh merchant atau sedang tidak dapat diambil")
+		}
+		expectedStatus = order.Status
+	} else {
+		if order.Status != StatusPending {
+			return errors.New("pesanan sudah tidak dalam status menunggu")
+		}
+		expectedStatus = StatusPending
 	}
+	oldStatus := order.Status
 
 	r, err := s.userSvc.GetByID(ctx, runnerID, runnerID)
 	if err != nil {
@@ -542,7 +687,7 @@ func (s *service) AcceptOrder(ctx context.Context, orderID, runnerID uuid.UUID) 
 		order.Status = StatusAccepted
 		order.UpdatedAt = time.Now()
 
-		ok, err := s.repo.UpdateWithStatusCheck(ctx, tx, order, StatusPending)
+		ok, err := s.repo.UpdateWithStatusCheck(ctx, tx, order, expectedStatus)
 		if err != nil {
 			return err
 		}
@@ -557,7 +702,7 @@ func (s *service) AcceptOrder(ctx context.Context, orderID, runnerID uuid.UUID) 
 	}
 
 	// Audit Log
-	s.auditSvc.Log(ctx, &runnerID, audit.ActionOrderAccept, "order", orderID.String(), map[string]interface{}{"status": StatusPending}, map[string]interface{}{"status": StatusPurchasing, "runner_id": runnerID}, "", "")
+	s.auditSvc.Log(ctx, &runnerID, audit.ActionOrderAccept, "order", orderID.String(), map[string]interface{}{"status": oldStatus}, map[string]interface{}{"status": StatusAccepted, "runner_id": runnerID}, "", "")
 
 	// Create In-App Notification for Requester
 	_ = s.notifSvc.CreateNotification(ctx, notifDomain.CreateNotificationRequest{
@@ -595,15 +740,21 @@ func (s *service) PickupOrder(ctx context.Context, orderID, runnerID uuid.UUID) 
 
 	switch order.ServiceCategory {
 	case CategoryBeli:
-		if order.Status != StatusPurchasing {
-			return errors.New("kategori pesanan 'beli' harus dibeli (kwitansi diunggah) sebelum dapat diambil")
+		if order.MerchantID != nil {
+			if order.Status != StatusReady && order.Status != StatusCooking && order.Status != StatusAccepted {
+				return errors.New("pesanan merchant belum siap untuk diambil")
+			}
+		} else {
+			if order.Status != StatusPurchasing {
+				return errors.New("kategori pesanan 'beli' harus dibeli (kwitansi diunggah) sebelum dapat diambil")
+			}
 		}
 	case CategoryKirim:
 		if order.Status != StatusAccepted {
 			return errors.New("kategori pesanan 'kirim' harus diterima sebelum dapat diambil")
 		}
 	default:
-		if order.Status != StatusAccepted && order.Status != StatusPurchasing {
+		if order.Status != StatusAccepted && order.Status != StatusPurchasing && order.Status != StatusReady && order.Status != StatusCooking {
 			return errors.New("pesanan tidak dalam status yang dapat diambil")
 		}
 	}
@@ -785,10 +936,23 @@ func (s *service) CompleteOrder(ctx context.Context, orderID, runnerID uuid.UUID
 		case MethodEscrow:
 			platformFee := order.ServiceFee
 			refundAmount := order.CheckingFee
-			totalRunnerPayout := order.EstimatedCost + (order.DeliveryFee - order.ServiceFee - order.CheckingFee)
 
-			if err := s.walletSvc.ReleaseEscrowWithRefund(ctx, tx, runnerID, order.RequesterID, order.ID, totalRunnerPayout, platformFee, refundAmount); err != nil {
-				return errors.New("gagal melepaskan dana escrow: " + err.Error())
+			if order.MerchantID != nil {
+				merch, err := s.merchantSvc.GetMerchantByID(ctx, *order.MerchantID)
+				if err != nil {
+					return fmt.Errorf("gagal mengambil data merchant: %w", err)
+				}
+				foodAmount := order.EstimatedCost
+				runnerAmount := order.DeliveryFee - order.ServiceFee - order.CheckingFee
+
+				if err := s.walletSvc.ReleaseMerchantEscrow(ctx, tx, runnerID, order.RequesterID, merch.OwnerID, order.ID, foodAmount, runnerAmount, platformFee, refundAmount); err != nil {
+					return errors.New("gagal melepaskan dana escrow merchant: " + err.Error())
+				}
+			} else {
+				totalRunnerPayout := order.EstimatedCost + (order.DeliveryFee - order.ServiceFee - order.CheckingFee)
+				if err := s.walletSvc.ReleaseEscrowWithRefund(ctx, tx, runnerID, order.RequesterID, order.ID, totalRunnerPayout, platformFee, refundAmount); err != nil {
+					return errors.New("gagal melepaskan dana escrow: " + err.Error())
+				}
 			}
 			order.PaymentStatus = PaymentReleased
 		case MethodCOD:
@@ -876,7 +1040,39 @@ func (s *service) processPayment(ctx context.Context, orderID uuid.UUID, payment
 		}
 
 		// Success update: Trigger matching & audit log
-		s.matchingSvc.EnqueueMatching(orderID)
+		if orderObj != nil && orderObj.MerchantID != nil {
+			merch, err := s.merchantSvc.GetMerchantByID(ctx, *orderObj.MerchantID)
+			if err == nil {
+				if merch.AutoConfirm {
+					orderObj.Status = StatusCooking
+					_ = s.repo.Update(ctx, s.db, orderObj)
+					s.matchingSvc.EnqueueMatching(orderID)
+
+					// Notify merchant owner of auto-confirmed order
+					if s.fcm != nil && config.App.FcmEnabled {
+						ownerUser, _ := s.userSvc.GetByID(ctx, merch.OwnerID, merch.OwnerID)
+						if ownerUser != nil && ownerUser.FcmToken != nil && *ownerUser.FcmToken != "" {
+							_ = s.fcm.SendToDevice(ctx, *ownerUser.FcmToken, "Pesanan Baru Masuk (Otomatis)",
+								fmt.Sprintf("Pesanan %s diterima otomatis. Silakan mulai masak!", orderObj.ItemDetails),
+								map[string]string{"order_id": orderObj.ID.String()})
+						}
+					}
+				} else {
+					// Notify merchant owner of pending manual confirmation
+					if s.fcm != nil && config.App.FcmEnabled {
+						ownerUser, _ := s.userSvc.GetByID(ctx, merch.OwnerID, merch.OwnerID)
+						if ownerUser != nil && ownerUser.FcmToken != nil && *ownerUser.FcmToken != "" {
+							_ = s.fcm.SendToDevice(ctx, *ownerUser.FcmToken, "Pesanan Baru Masuk",
+								fmt.Sprintf("Pesanan %s membutuhkan konfirmasi Anda.", orderObj.ItemDetails),
+								map[string]string{"order_id": orderObj.ID.String()})
+						}
+					}
+				}
+			}
+		} else {
+			s.matchingSvc.EnqueueMatching(orderID)
+		}
+
 		runnerID := uuid.Nil // Webhook / system action
 		s.auditSvc.Log(ctx, &runnerID, audit.ActionOrderUpdate, "order", orderID.String(),
 			map[string]interface{}{"payment_status": PaymentUnpaid},
@@ -1726,6 +1922,128 @@ func (s *service) RefreshQRIS(ctx context.Context, orderID, requesterID uuid.UUI
 	// Populate QRIS Data (forces fresh call)
 	s.populatePaymentInfo(ctx, order)
 
-	log.Printf("[QRIS-REFRESH] Successfully refreshed QRIS payment countdown for Order %s (New CreatedAt: %v)", orderID, order.CreatedAt)
 	return order, nil
+}
+
+func (s *service) GetMerchantOrders(ctx context.Context, ownerID uuid.UUID) ([]Order, error) {
+	merch, err := s.merchantSvc.GetMerchantByOwnerID(ctx, ownerID)
+	if err != nil {
+		return nil, err
+	}
+	var orders []Order
+	err = s.db.NewSelect().
+		Model(&orders).
+		Where("merchant_id = ?", merch.ID).
+		Order("created_at DESC").
+		Scan(ctx)
+	return orders, err
+}
+
+func (s *service) MerchantAcceptOrder(ctx context.Context, orderID, ownerID uuid.UUID) error {
+	merch, err := s.merchantSvc.GetMerchantByOwnerID(ctx, ownerID)
+	if err != nil {
+		return err
+	}
+	order, err := s.repo.FindByID(ctx, orderID)
+	if err != nil {
+		return err
+	}
+	if order.MerchantID == nil || *order.MerchantID != merch.ID {
+		return errors.New("pesanan ini bukan milik merchant Anda")
+	}
+	if order.Status != StatusPending {
+		return errors.New("pesanan tidak berada dalam status menunggu konfirmasi")
+	}
+	if order.PaymentStatus != PaymentEscrow && order.PaymentMethod != MethodCOD {
+		return errors.New("pembayaran pesanan belum diselesaikan")
+	}
+
+	order.Status = StatusCooking
+	order.UpdatedAt = time.Now()
+	if err := s.repo.Update(ctx, s.db, order); err != nil {
+		return err
+	}
+
+	// Trigger runner matching now that merchant accepted
+	s.matchingSvc.EnqueueMatching(orderID)
+
+	// Send notification to Penitip
+	_ = s.notifSvc.CreateNotification(ctx, notifDomain.CreateNotificationRequest{
+		UserID:  order.RequesterID,
+		Title:   "Pesanan Sedang Dimasak",
+		Message: fmt.Sprintf("Merchant telah menerima pesanan Anda dan sedang menyiapkan makanan: %s", order.ItemDetails),
+		Type:    "order",
+		Metadata: map[string]interface{}{"order_id": order.ID},
+	})
+	if s.fcm != nil && config.App.FcmEnabled {
+		reqUser, _ := s.userSvc.GetByID(ctx, order.RequesterID, order.RequesterID)
+		if reqUser != nil && reqUser.FcmToken != nil && *reqUser.FcmToken != "" {
+			_ = s.fcm.SendToDevice(ctx, *reqUser.FcmToken, "Pesanan Mulai Dimasak",
+				fmt.Sprintf("Merchant sedang menyiapkan pesanan Anda: %s", order.ItemDetails),
+				map[string]string{"order_id": order.ID.String()})
+		}
+	}
+
+	return nil
+}
+
+func (s *service) MerchantReadyOrder(ctx context.Context, orderID, ownerID uuid.UUID) error {
+	merch, err := s.merchantSvc.GetMerchantByOwnerID(ctx, ownerID)
+	if err != nil {
+		return err
+	}
+	order, err := s.repo.FindByID(ctx, orderID)
+	if err != nil {
+		return err
+	}
+	if order.MerchantID == nil || *order.MerchantID != merch.ID {
+		return errors.New("pesanan ini bukan milik merchant Anda")
+	}
+	if order.Status != StatusCooking && order.Status != StatusAccepted {
+		return errors.New("pesanan tidak berada dalam proses memasak atau belum diterima runner")
+	}
+
+	order.Status = StatusReady
+	order.UpdatedAt = time.Now()
+	if err := s.repo.Update(ctx, s.db, order); err != nil {
+		return err
+	}
+
+	// Notify Penitip
+	_ = s.notifSvc.CreateNotification(ctx, notifDomain.CreateNotificationRequest{
+		UserID:  order.RequesterID,
+		Title:   "Makanan Siap Diambil",
+		Message: fmt.Sprintf("Pesanan Anda di %s sudah selesai disiapkan!", merch.Name),
+		Type:    "order",
+		Metadata: map[string]interface{}{"order_id": order.ID},
+	})
+	if s.fcm != nil && config.App.FcmEnabled {
+		reqUser, _ := s.userSvc.GetByID(ctx, order.RequesterID, order.RequesterID)
+		if reqUser != nil && reqUser.FcmToken != nil && *reqUser.FcmToken != "" {
+			_ = s.fcm.SendToDevice(ctx, *reqUser.FcmToken, "Makanan Siap Diambil",
+				fmt.Sprintf("Pesanan Anda di %s sudah selesai disiapkan!", merch.Name),
+				map[string]string{"order_id": order.ID.String()})
+		}
+	}
+
+	// Notify Runner if assigned
+	if order.RunnerID != nil {
+		_ = s.notifSvc.CreateNotification(ctx, notifDomain.CreateNotificationRequest{
+			UserID:  *order.RunnerID,
+			Title:   "Pesanan Siap Diambil",
+			Message: fmt.Sprintf("Makanan untuk pesanan %s siap diambil di %s.", order.ItemDetails, merch.Name),
+			Type:    "order",
+			Metadata: map[string]interface{}{"order_id": order.ID},
+		})
+		if s.fcm != nil && config.App.FcmEnabled {
+			runUser, _ := s.userSvc.GetByID(ctx, *order.RunnerID, *order.RunnerID)
+			if runUser != nil && runUser.FcmToken != nil && *runUser.FcmToken != "" {
+				_ = s.fcm.SendToDevice(ctx, *runUser.FcmToken, "Pesanan Siap Diambil",
+					fmt.Sprintf("Silakan ambil pesanan %s di %s.", order.ItemDetails, merch.Name),
+					map[string]string{"order_id": order.ID.String()})
+			}
+		}
+	}
+
+	return nil
 }

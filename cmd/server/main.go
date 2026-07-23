@@ -20,6 +20,7 @@ import (
 	systemconfig "github.com/codecoffy/nitip-core/internal/domain/config"
 	"github.com/codecoffy/nitip-core/internal/domain/kyc"
 	"github.com/codecoffy/nitip-core/internal/domain/matching"
+	"github.com/codecoffy/nitip-core/internal/domain/merchant"
 	notificationDomain "github.com/codecoffy/nitip-core/internal/domain/notification"
 	"github.com/codecoffy/nitip-core/internal/domain/order"
 	"github.com/codecoffy/nitip-core/internal/domain/review"
@@ -206,8 +207,14 @@ func main() {
 	walletHandler := wallet.NewHandler(walletSvc, db, redisCache)
 	fiberApp.RegisterRoutes(walletHandler.RegisterRoutes)
 
+	// Merchant Domain
+	merchantRepo := merchant.NewRepository(db)
+	merchantSvc := merchant.NewService(merchantRepo, userRepo, storageSvc)
+	merchantHandler := merchant.NewHandler(merchantSvc, db, redisCache)
+	fiberApp.RegisterRoutes(merchantHandler.RegisterRoutes)
+
 	// Order Service
-	orderSvc := order.NewService(orderRepo, userSvc, tripRepo, matchingSvc, walletSvc, cfgSvc, fcmClient, notifSvc, redisCache, db, auditSvc, storageSvc)
+	orderSvc := order.NewService(orderRepo, userSvc, tripRepo, matchingSvc, walletSvc, cfgSvc, fcmClient, notifSvc, redisCache, db, auditSvc, storageSvc, merchantSvc)
 	wallet.OnPaymentSuccess = func(ctx context.Context, reference string) error {
 		id, err := uuid.Parse(reference)
 		if err != nil {
