@@ -1,6 +1,9 @@
 package review
 
 import (
+	"database/sql"
+	"errors"
+	"strings"
 	"time"
 
 	"github.com/codecoffy/nitip-core/internal/cache"
@@ -74,6 +77,15 @@ func (h *Handler) SubmitReview(c *fiber.Ctx) error {
 	reviewerID := claims.UserID
 
 	if err := h.service.SubmitReview(c.Context(), orderID, reviewerID, req.RunnerRating, req.RunnerComment, req.MerchantRating, req.MerchantComment); err != nil {
+		lowMsg := strings.ToLower(err.Error())
+		if strings.Contains(lowMsg, "duplicate") || strings.Contains(lowMsg, "unique") {
+			return response.BadRequest(c, "pesanan ini sudah diulas")
+		}
+		if strings.Contains(lowMsg, "sql") ||
+			strings.Contains(lowMsg, "constraint") ||
+			strings.Contains(lowMsg, "foreign key") {
+			return response.InternalError(c, err.Error())
+		}
 		return response.BadRequest(c, err.Error())
 	}
 
@@ -98,7 +110,10 @@ func (h *Handler) GetReview(c *fiber.Ctx) error {
 
 	rv, err := h.service.GetReviewByOrder(c.Context(), orderID)
 	if err != nil {
-		return response.Success(c, "ulasan tidak ditemukan atau belum diberikan", nil)
+		if errors.Is(err, sql.ErrNoRows) {
+			return response.Success(c, "ulasan tidak ditemukan atau belum diberikan", nil)
+		}
+		return response.InternalError(c, err.Error())
 	}
 
 	return response.Success(c, "ulasan berhasil diambil", rv)
