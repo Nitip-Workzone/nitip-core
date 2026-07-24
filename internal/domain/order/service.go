@@ -436,8 +436,8 @@ func (s *service) Create(ctx context.Context, requesterID uuid.UUID, req CreateO
 			for i := range orderItems {
 				orderItems[i].OrderID = order.ID
 			}
-			if err := s.merchantSvc.CreateOrderItems(ctx, orderItems); err != nil {
-				return fmt.Errorf("gagal mencatat item pesanan: %w", err)
+			if _, err := tx.NewInsert().Model(&orderItems).Exec(ctx); err != nil {
+				return fmt.Errorf("gagal mencatat item pesanan ke database: %w", err)
 			}
 		}
 

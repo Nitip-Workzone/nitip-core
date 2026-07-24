@@ -102,6 +102,7 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 
 	order, err := h.service.Create(c.Context(), claims.UserID, req)
 	if err != nil {
+		log.Printf("[ORDER_CREATE_ERROR] Failed to create order for User %s. Error: %v", claims.UserID, err)
 		lowMsg := strings.ToLower(err.Error())
 		if strings.Contains(lowMsg, "sql") ||
 			strings.Contains(lowMsg, "constraint") ||
