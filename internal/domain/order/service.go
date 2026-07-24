@@ -1729,14 +1729,15 @@ func (s *service) populateReviewInfo(ctx context.Context, o *Order) {
 		return
 	}
 	type dbReview struct {
-		Rating  int    `bun:"rating"`
-		Comment string `bun:"comment"`
+		Rating  int    `bun:"runner_rating"`
+		Comment string `bun:"runner_comment"`
 	}
 	var rv dbReview
 	err := s.db.NewSelect().
 		Table("reviews").
-		Column("rating", "comment").
+		Column("runner_rating", "runner_comment").
 		Where("order_id = ?", o.ID).
+		Where("runner_rating IS NOT NULL").
 		Scan(ctx, &rv)
 	if err == nil {
 		o.FeedbackRating = &rv.Rating

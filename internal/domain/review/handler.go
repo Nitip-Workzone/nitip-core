@@ -31,6 +31,7 @@ func (h *Handler) RegisterRoutes(router fiber.Router) {
 	// Tied closely to the orders endpoint layout logically
 	ordersGrp := router.Group("/orders", middleware.Protected(h.db, h.redis))
 	ordersGrp.Post("/:id/review", middleware.Role(user.RoleRequester), middleware.RateLimit(h.redis, 5, 1*time.Minute), h.SubmitReview)
+	ordersGrp.Post("/:id/runner-review", middleware.Role(user.RoleRunner), middleware.RateLimit(h.redis, 5, 1*time.Minute), h.SubmitRunnerReview)
 	ordersGrp.Get("/:id/review", h.GetReview)
 }
 
@@ -39,6 +40,11 @@ type SubmitReviewRequest struct {
 	RunnerComment   string `json:"runner_comment" validate:"omitempty,max=500"`
 	MerchantRating  *int   `json:"merchant_rating" validate:"omitempty,min=1,max=5"`
 	MerchantComment string `json:"merchant_comment" validate:"omitempty,max=500"`
+}
+
+type SubmitRunnerReviewRequest struct {
+	RequesterRating  int    `json:"requester_rating" validate:"required,min=1,max=5"`
+	RequesterComment string `json:"requester_comment" validate:"omitempty,max=500"`
 }
 
 // SubmitReview godoc
@@ -76,7 +82,8 @@ func (h *Handler) SubmitReview(c *fiber.Ctx) error {
 	}
 	reviewerID := claims.UserID
 
-	if err := h.service.SubmitReview(c.Context(), orderID, reviewerID, req.RunnerRating, req.RunnerComment, req.MerchantRating, req.MerchantComment); err != nil {
+	rv, err := h.service.SubmitReview(c.Context(), orderID, reviewerID, req.RunnerRating, req.RunnerComment, req.MerchantRating, req.MerchantComment)
+	if err != nil {
 		lowMsg := strings.ToLower(err.Error())
 		if strings.Contains(lowMsg, "duplicate") || strings.Contains(lowMsg, "unique") {
 			return response.BadRequest(c, "pesanan ini sudah diulas")
@@ -89,7 +96,43 @@ func (h *Handler) SubmitReview(c *fiber.Ctx) error {
 		return response.BadRequest(c, err.Error())
 	}
 
-	return response.Success(c, "ulasan berhasil dikirim dan skor kepercayaan diperbarui", nil)
+	return response.Success(c, "ulasan berhasil dikirim dan skor kepercayaan diperbarui", rv)
+}
+
+func (h *Handler) SubmitRunnerReview(c *fiber.Ctx) error {
+	orderID, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return response.BadRequest(c, "ID pesanan tidak valid")
+	}
+
+	var req SubmitRunnerReviewRequest
+	if err := c.BodyParser(&req); err != nil {
+		return response.BadRequest(c, "format permintaan tidak valid")
+	}
+	if errs := validator.Validate(req); errs != nil {
+		return response.ValidationFailed(c, errs)
+	}
+
+	claims, ok := c.Locals("user").(*jwt.CustomClaims)
+	if !ok || claims == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
+
+	rv, err := h.service.SubmitRunnerReview(c.Context(), orderID, claims.UserID, req.RequesterRating, req.RequesterComment)
+	if err != nil {
+		lowMsg := strings.ToLower(err.Error())
+		if strings.Contains(lowMsg, "duplicate") || strings.Contains(lowMsg, "unique") {
+			return response.BadRequest(c, "pesanan ini sudah diulas")
+		}
+		if strings.Contains(lowMsg, "sql") ||
+			strings.Contains(lowMsg, "constraint") ||
+			strings.Contains(lowMsg, "foreign key") {
+			return response.InternalError(c, err.Error())
+		}
+		return response.BadRequest(c, err.Error())
+	}
+
+	return response.Success(c, "ulasan penitip berhasil dikirim dan skor kepercayaan diperbarui", rv)
 }
 
 // GetReview godoc
@@ -108,7 +151,12 @@ func (h *Handler) GetReview(c *fiber.Ctx) error {
 		return response.BadRequest(c, "ID pesanan tidak valid")
 	}
 
-	rv, err := h.service.GetReviewByOrder(c.Context(), orderID)
+	claims, ok := c.Locals("user").(*jwt.CustomClaims)
+	if !ok || claims == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
+
+	rv, err := h.service.GetReviewByOrder(c.Context(), orderID, claims.UserID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return response.Success(c, "ulasan tidak ditemukan atau belum diberikan", nil)

@@ -11,8 +11,9 @@ import (
 )
 
 type Service interface {
-	SubmitReview(ctx context.Context, orderID, reviewerID uuid.UUID, runnerRating int, runnerComment string, merchantRating *int, merchantComment string) error
-	GetReviewByOrder(ctx context.Context, orderID uuid.UUID) (*Review, error)
+	SubmitReview(ctx context.Context, orderID, reviewerID uuid.UUID, runnerRating int, runnerComment string, merchantRating *int, merchantComment string) (*Review, error)
+	SubmitRunnerReview(ctx context.Context, orderID, runnerID uuid.UUID, requesterRating int, requesterComment string) (*Review, error)
+	GetReviewByOrder(ctx context.Context, orderID, reviewerID uuid.UUID) (*Review, error)
 }
 
 type service struct {
@@ -25,50 +26,53 @@ func NewService(repo Repository, orderRepo order.Repository, db *bun.DB) Service
 	return &service{repo: repo, orderRepo: orderRepo, db: db}
 }
 
-func (s *service) SubmitReview(ctx context.Context, orderID, reviewerID uuid.UUID, runnerRating int, runnerComment string, merchantRating *int, merchantComment string) error {
+func (s *service) SubmitReview(ctx context.Context, orderID, reviewerID uuid.UUID, runnerRating int, runnerComment string, merchantRating *int, merchantComment string) (*Review, error) {
 	if runnerRating < 1 || runnerRating > 5 {
-		return errors.New("rating runner harus antara 1 sampai 5")
+		return nil, errors.New("rating runner harus antara 1 sampai 5")
 	}
 	if merchantRating != nil && (*merchantRating < 1 || *merchantRating > 5) {
-		return errors.New("rating merchant harus antara 1 sampai 5")
+		return nil, errors.New("rating merchant harus antara 1 sampai 5")
 	}
 
 	// Wait, we need to make sure the order belongs to them and is completed!
 	o, err := s.orderRepo.FindByID(ctx, orderID)
 	if err != nil {
-		return errors.New("pesanan tidak ditemukan")
+		return nil, errors.New("pesanan tidak ditemukan")
 	}
 
 	if o.RequesterID != reviewerID {
-		return errors.New("anda hanya dapat mengulas pesanan anda sendiri")
+		return nil, errors.New("anda hanya dapat mengulas pesanan anda sendiri")
 	}
 
 	if o.Status != order.StatusCompleted {
-		return errors.New("pesanan harus selesai sebelum dapat diulas")
+		return nil, errors.New("pesanan harus selesai sebelum dapat diulas")
 	}
 
 	if o.RunnerID == nil {
-		return errors.New("pesanan belum memiliki runner")
+		return nil, errors.New("pesanan belum memiliki runner")
 	}
 
 	// Check if already reviewed
-	existing, _ := s.repo.GetByOrderID(ctx, s.db, orderID)
+	existing, _ := s.repo.GetByOrderIDAndReviewerID(ctx, s.db, orderID, reviewerID)
 	if existing != nil {
-		return errors.New("pesanan ini sudah diulas")
+		return nil, errors.New("pesanan ini sudah diulas")
 	}
 
-	return s.repo.RunInTx(ctx, func(ctx context.Context, tx bun.Tx) error {
+	runnerRatingValue := runnerRating
+	var saved *Review
+	err = s.repo.RunInTx(ctx, func(ctx context.Context, tx bun.Tx) error {
 		// 1. Insert Review
 		rv := &Review{
 			ID:              uuid.New(),
 			OrderID:         orderID,
 			ReviewerID:      reviewerID,
 			RunnerID:        *o.RunnerID,
-			RunnerRating:    runnerRating,
+			RunnerRating:    &runnerRatingValue,
 			RunnerComment:   runnerComment,
 			MerchantID:      o.MerchantID,
 			MerchantRating:  merchantRating,
 			MerchantComment: merchantComment,
+			RequesterID:      &o.RequesterID,
 		}
 		if err := s.repo.Create(ctx, tx, rv); err != nil {
 			if isDuplicateReviewError(err) {
@@ -99,12 +103,67 @@ func (s *service) SubmitReview(ctx context.Context, orderID, reviewerID uuid.UUI
 			}
 		}
 
+		saved = rv
 		return nil
 	})
+	return saved, err
 }
 
-func (s *service) GetReviewByOrder(ctx context.Context, orderID uuid.UUID) (*Review, error) {
-	return s.repo.GetByOrderID(ctx, s.db, orderID)
+func (s *service) SubmitRunnerReview(ctx context.Context, orderID, runnerID uuid.UUID, requesterRating int, requesterComment string) (*Review, error) {
+	if requesterRating < 1 || requesterRating > 5 {
+		return nil, errors.New("rating penitip harus antara 1 sampai 5")
+	}
+
+	o, err := s.orderRepo.FindByID(ctx, orderID)
+	if err != nil {
+		return nil, errors.New("pesanan tidak ditemukan")
+	}
+	if o.RunnerID == nil || *o.RunnerID != runnerID {
+		return nil, errors.New("anda hanya dapat mengulas pesanan yang anda jalankan")
+	}
+	if o.Status != order.StatusCompleted {
+		return nil, errors.New("pesanan harus selesai sebelum dapat diulas")
+	}
+
+	existing, _ := s.repo.GetByOrderIDAndReviewerID(ctx, s.db, orderID, runnerID)
+	if existing != nil {
+		return nil, errors.New("pesanan ini sudah diulas")
+	}
+
+	var saved *Review
+	err = s.repo.RunInTx(ctx, func(ctx context.Context, tx bun.Tx) error {
+		rv := &Review{
+			ID:               uuid.New(),
+			OrderID:          orderID,
+			ReviewerID:       runnerID,
+			RunnerID:         runnerID,
+			RequesterID:       &o.RequesterID,
+			RequesterRating:  &requesterRating,
+			RequesterComment: requesterComment,
+		}
+		if err := s.repo.Create(ctx, tx, rv); err != nil {
+			if isDuplicateReviewError(err) {
+				return errors.New("pesanan ini sudah diulas")
+			}
+			return err
+		}
+
+		avgRequester, err := s.repo.GetAverageRatingByRequester(ctx, tx, o.RequesterID)
+		if err != nil {
+			return err
+		}
+		if err := s.repo.UpdateUserTrustScore(ctx, tx, o.RequesterID, avgRequester); err != nil {
+			return err
+		}
+
+		saved = rv
+		return nil
+	})
+	return saved, err
+}
+
+func (s *service) GetReviewByOrder(ctx context.Context, orderID, reviewerID uuid.UUID) (*Review, error) {
+	return s.repo.GetByOrderIDAndReviewerID(ctx, s.db, orderID, reviewerID)
 }
 
 func isDuplicateReviewError(err error) bool {

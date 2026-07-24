@@ -11,9 +11,10 @@ type Repository interface {
 	RunInTx(ctx context.Context, fn func(ctx context.Context, tx bun.Tx) error) error
 
 	Create(ctx context.Context, db bun.IDB, review *Review) error
-	GetByOrderID(ctx context.Context, db bun.IDB, orderID uuid.UUID) (*Review, error)
+	GetByOrderIDAndReviewerID(ctx context.Context, db bun.IDB, orderID, reviewerID uuid.UUID) (*Review, error)
 	GetAverageRatingByReviewee(ctx context.Context, db bun.IDB, revieweeID uuid.UUID) (float64, error)
 	GetAverageRatingByMerchant(ctx context.Context, db bun.IDB, merchantID uuid.UUID) (float64, error)
+	GetAverageRatingByRequester(ctx context.Context, db bun.IDB, requesterID uuid.UUID) (float64, error)
 
 	UpdateUserTrustScore(ctx context.Context, db bun.IDB, userID uuid.UUID, newScore float64) error
 	UpdateMerchantRating(ctx context.Context, db bun.IDB, merchantID uuid.UUID, newRating float64) error
@@ -36,9 +37,9 @@ func (r *repository) Create(ctx context.Context, db bun.IDB, review *Review) err
 	return err
 }
 
-func (r *repository) GetByOrderID(ctx context.Context, db bun.IDB, orderID uuid.UUID) (*Review, error) {
+func (r *repository) GetByOrderIDAndReviewerID(ctx context.Context, db bun.IDB, orderID, reviewerID uuid.UUID) (*Review, error) {
 	rv := new(Review)
-	err := db.NewSelect().Model(rv).Where("order_id = ?", orderID).Scan(ctx)
+	err := db.NewSelect().Model(rv).Where("order_id = ?", orderID).Where("reviewer_id = ?", reviewerID).Scan(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -50,6 +51,7 @@ func (r *repository) GetAverageRatingByReviewee(ctx context.Context, db bun.IDB,
 	err := db.NewSelect().Model((*Review)(nil)).
 		ColumnExpr("COALESCE(AVG(runner_rating), 0)").
 		Where("runner_id = ?", revieweeID).
+		Where("runner_rating IS NOT NULL").
 		Scan(ctx, &avg)
 	return avg, err
 }
@@ -59,6 +61,17 @@ func (r *repository) GetAverageRatingByMerchant(ctx context.Context, db bun.IDB,
 	err := db.NewSelect().Model((*Review)(nil)).
 		ColumnExpr("COALESCE(AVG(merchant_rating), 0)").
 		Where("merchant_id = ?", merchantID).
+		Where("merchant_rating IS NOT NULL").
+		Scan(ctx, &avg)
+	return avg, err
+}
+
+func (r *repository) GetAverageRatingByRequester(ctx context.Context, db bun.IDB, requesterID uuid.UUID) (float64, error) {
+	var avg float64
+	err := db.NewSelect().Model((*Review)(nil)).
+		ColumnExpr("COALESCE(AVG(requester_rating), 0)").
+		Where("requester_id = ?", requesterID).
+		Where("requester_rating IS NOT NULL").
 		Scan(ctx, &avg)
 	return avg, err
 }
