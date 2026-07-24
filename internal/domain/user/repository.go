@@ -17,6 +17,7 @@ type Repository interface {
 	Create(ctx context.Context, user *User) error
 	Update(ctx context.Context, user *User) error
 	Delete(ctx context.Context, id uuid.UUID) error
+	ClearDeviceSessions(ctx context.Context, deviceID string, excludeUserID uuid.UUID) error
 }
 
 type repository struct {
@@ -110,5 +111,17 @@ func (r *repository) Update(ctx context.Context, user *User) error {
 
 func (r *repository) Delete(ctx context.Context, id uuid.UUID) error {
 	_, err := r.db.NewDelete().Model((*User)(nil)).Where("id = ?", id).Exec(ctx)
+	return err
+}
+
+func (r *repository) ClearDeviceSessions(ctx context.Context, deviceID string, excludeUserID uuid.UUID) error {
+	_, err := r.db.NewUpdate().
+		Table("users").
+		Set("device_id = ?", nil).
+		Set("fcm_token = ?", nil).
+		Set("token_version = token_version + 1").
+		Where("device_id = ?", deviceID).
+		Where("id != ?", excludeUserID).
+		Exec(ctx)
 	return err
 }

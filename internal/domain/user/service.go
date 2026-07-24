@@ -283,14 +283,11 @@ func (s *service) Login(ctx context.Context, req LoginRequest, platform string) 
 			return nil, errors.New("akses ditolak: hanya administrator yang dapat masuk ke sini")
 		}
 	case "web-merchant":
-		if user.Role != RoleMerchant {
-			return nil, errors.New("akses ditolak: hanya akun merchant yang dapat masuk ke portal merchant")
+		if user.Role != RoleMerchant && user.Role != RoleAdmin {
+			return nil, errors.New("akses ditolak: hanya akun merchant atau administrator yang dapat masuk ke portal merchant")
 		}
 	case "web":
-		// Regular web (requester portal) — block admin and merchant
-		if user.Role == RoleAdmin {
-			return nil, errors.New("akses ditolak: administrator harus menggunakan panel admin")
-		}
+		// Regular web (requester portal) — allow admin but block regular merchants
 		if user.Role == RoleMerchant {
 			return nil, errors.New("akses ditolak: akun merchant harus menggunakan portal merchant")
 		}
@@ -298,6 +295,12 @@ func (s *service) Login(ctx context.Context, req LoginRequest, platform string) 
 		if user.Role == RoleAdmin {
 			return nil, errors.New("akses ditolak: administrator harus menggunakan panel web")
 		}
+	}
+
+	// Unique Device Session Handling:
+	// If this device ID was previously used by another account, remove it and increment their token version to log them out
+	if req.DeviceId != "" {
+		_ = s.repo.ClearDeviceSessions(ctx, req.DeviceId, user.ID)
 	}
 
 	// Increment TokenVersion & Update device_id
