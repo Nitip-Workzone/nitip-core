@@ -269,6 +269,15 @@ func (s *service) Create(ctx context.Context, requesterID uuid.UUID, req CreateO
 				PriceAtPurchase: menu.Price,
 			})
 		}
+		// Enforce maximum 10 items limit
+		totalQty := 0
+		for _, it := range req.Items {
+			totalQty += it.Quantity
+		}
+		if totalQty > 10 {
+			return nil, errors.New("jumlah total item pesanan melebihi batas maksimum 10 item")
+		}
+
 		req.EstimatedCost = calculatedCost
 	}
 
@@ -393,6 +402,19 @@ func (s *service) Create(ctx context.Context, requesterID uuid.UUID, req CreateO
 	} else {
 		// In "Beli", user pays for Item + Delivery
 		order.TotalPayment = req.EstimatedCost + deliveryFee
+	}
+
+	// Add merchant items complexity surcharge (+2000 per additional item)
+	if req.MerchantID != nil {
+		totalQty := 0
+		for _, it := range req.Items {
+			totalQty += it.Quantity
+		}
+		if totalQty > 1 {
+			surcharge := float64(totalQty-1) * 2000
+			order.DeliveryFee += surcharge
+			order.TotalPayment += surcharge
+		}
 	}
 
 	// Auto confirm for COD order

@@ -32,13 +32,15 @@ func (h *Handler) RegisterRoutes(router fiber.Router) {
 }
 
 type SubmitReviewRequest struct {
-	Rating  int    `json:"rating" validate:"required,min=1,max=5"`
-	Comment string `json:"comment" validate:"omitempty,max=500"`
+	RunnerRating    int    `json:"runner_rating" validate:"required,min=1,max=5"`
+	RunnerComment   string `json:"runner_comment" validate:"omitempty,max=500"`
+	MerchantRating  *int   `json:"merchant_rating" validate:"omitempty,min=1,max=5"`
+	MerchantComment string `json:"merchant_comment" validate:"omitempty,max=500"`
 }
 
 // SubmitReview godoc
 // @Summary      Submit a review
-// @Description  Allows the Requester to rate the Runner after order is completed
+// @Description  Allows the Requester to rate the Runner (and optionally Merchant) after order is completed
 // @Tags         [User] Order
 // @Accept       json
 // @Produce      json
@@ -71,7 +73,7 @@ func (h *Handler) SubmitReview(c *fiber.Ctx) error {
 	}
 	reviewerID := claims.UserID
 
-	if err := h.service.SubmitReview(c.Context(), orderID, reviewerID, req.Rating, req.Comment); err != nil {
+	if err := h.service.SubmitReview(c.Context(), orderID, reviewerID, req.RunnerRating, req.RunnerComment, req.MerchantRating, req.MerchantComment); err != nil {
 		return response.BadRequest(c, err.Error())
 	}
 

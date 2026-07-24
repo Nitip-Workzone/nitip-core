@@ -10,7 +10,7 @@ import (
 )
 
 type Service interface {
-	SubmitReview(ctx context.Context, orderID, reviewerID uuid.UUID, rating int, comment string) error
+	SubmitReview(ctx context.Context, orderID, reviewerID uuid.UUID, runnerRating int, runnerComment string, merchantRating *int, merchantComment string) error
 	GetReviewByOrder(ctx context.Context, orderID uuid.UUID) (*Review, error)
 }
 
@@ -24,9 +24,12 @@ func NewService(repo Repository, orderRepo order.Repository, db *bun.DB) Service
 	return &service{repo: repo, orderRepo: orderRepo, db: db}
 }
 
-func (s *service) SubmitReview(ctx context.Context, orderID, reviewerID uuid.UUID, rating int, comment string) error {
-	if rating < 1 || rating > 5 {
-		return errors.New("rating harus antara 1 sampai 5")
+func (s *service) SubmitReview(ctx context.Context, orderID, reviewerID uuid.UUID, runnerRating int, runnerComment string, merchantRating *int, merchantComment string) error {
+	if runnerRating < 1 || runnerRating > 5 {
+		return errors.New("rating runner harus antara 1 sampai 5")
+	}
+	if merchantRating != nil && (*merchantRating < 1 || *merchantRating > 5) {
+		return errors.New("rating merchant harus antara 1 sampai 5")
 	}
 
 	// Wait, we need to make sure the order belongs to them and is completed!
@@ -56,25 +59,43 @@ func (s *service) SubmitReview(ctx context.Context, orderID, reviewerID uuid.UUI
 	return s.repo.RunInTx(ctx, func(ctx context.Context, tx bun.Tx) error {
 		// 1. Insert Review
 		rv := &Review{
-			ID:         uuid.New(),
-			OrderID:    orderID,
-			ReviewerID: reviewerID,
-			RevieweeID: *o.RunnerID,
-			Rating:     rating,
-			Comment:    comment,
+			ID:              uuid.New(),
+			OrderID:         orderID,
+			ReviewerID:      reviewerID,
+			RunnerID:        *o.RunnerID,
+			RunnerRating:    runnerRating,
+			RunnerComment:   runnerComment,
+			MerchantID:      o.MerchantID,
+			MerchantRating:  merchantRating,
+			MerchantComment: merchantComment,
 		}
 		if err := s.repo.Create(ctx, tx, rv); err != nil {
 			return err
 		}
 
-		// 2. Fetch Average
-		avg, err := s.repo.GetAverageRatingByReviewee(ctx, tx, *o.RunnerID)
+		// 2. Fetch Average Runner Rating
+		avgRunner, err := s.repo.GetAverageRatingByReviewee(ctx, tx, *o.RunnerID)
 		if err != nil {
 			return err
 		}
 
 		// 3. Sync to User Profile (Trust Score)
-		return s.repo.UpdateUserTrustScore(ctx, tx, *o.RunnerID, avg)
+		if err := s.repo.UpdateUserTrustScore(ctx, tx, *o.RunnerID, avgRunner); err != nil {
+			return err
+		}
+
+		// 4. Fetch and Sync Merchant Rating if applicable
+		if o.MerchantID != nil && merchantRating != nil {
+			avgMerchant, err := s.repo.GetAverageRatingByMerchant(ctx, tx, *o.MerchantID)
+			if err != nil {
+				return err
+			}
+			if err := s.repo.UpdateMerchantRating(ctx, tx, *o.MerchantID, avgMerchant); err != nil {
+				return err
+			}
+		}
+
+		return nil
 	})
 }
 
