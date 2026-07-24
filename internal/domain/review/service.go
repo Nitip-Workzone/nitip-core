@@ -3,6 +3,7 @@ package review
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/codecoffy/nitip-core/internal/domain/order"
 	"github.com/google/uuid"
@@ -70,6 +71,9 @@ func (s *service) SubmitReview(ctx context.Context, orderID, reviewerID uuid.UUI
 			MerchantComment: merchantComment,
 		}
 		if err := s.repo.Create(ctx, tx, rv); err != nil {
+			if isDuplicateReviewError(err) {
+				return errors.New("pesanan ini sudah diulas")
+			}
 			return err
 		}
 
@@ -101,4 +105,16 @@ func (s *service) SubmitReview(ctx context.Context, orderID, reviewerID uuid.UUI
 
 func (s *service) GetReviewByOrder(ctx context.Context, orderID uuid.UUID) (*Review, error) {
 	return s.repo.GetByOrderID(ctx, s.db, orderID)
+}
+
+func isDuplicateReviewError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	low := strings.ToLower(err.Error())
+	return strings.Contains(low, "duplicate key") ||
+		strings.Contains(low, "unique constraint") ||
+		strings.Contains(low, "unique violation") ||
+		strings.Contains(low, "reviews_order_id_reviewer_id_key")
 }
