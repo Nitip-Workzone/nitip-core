@@ -39,6 +39,7 @@ func (h *Handler) RegisterRoutes(router fiber.Router) {
 	owner.Get("/menu", h.ListMenuMerchant)
 	owner.Post("/menu", h.CreateMenu)
 	owner.Put("/menu/:id", h.UpdateMenu)
+	owner.Put("/menu/:id/toggle", h.ToggleMenuAvailability)
 	owner.Delete("/menu/:id", h.DeleteMenu)
 	owner.Post("/menu/upload", h.UploadMenuImage)
 
@@ -429,4 +430,28 @@ func (h *Handler) AdminDelete(c *fiber.Ctx) error {
 	}
 
 	return response.Success(c, "merchant berhasil dihapus oleh admin", nil)
+}
+
+func (h *Handler) ToggleMenuAvailability(c *fiber.Ctx) error {
+	idStr := c.Params("id")
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		return response.BadRequest(c, "id menu tidak valid")
+	}
+
+	type toggleRequest struct {
+		IsAvailable bool `json:"is_available"`
+	}
+	var req toggleRequest
+	if err := c.BodyParser(&req); err != nil {
+		return response.BadRequest(c, "format permintaan tidak valid")
+	}
+
+	menu, err := h.service.ToggleMenuAvailability(c.Context(), id, req.IsAvailable)
+	if err != nil {
+		log.Printf("[ERROR] ToggleMenuAvailability: %v", err)
+		return response.InternalError(c, "gagal mengubah ketersediaan menu")
+	}
+
+	return response.Success(c, "status ketersediaan menu berhasil diperbarui", menu)
 }
