@@ -199,7 +199,11 @@ func (r *repository) GetSystemBalanceSummary(ctx context.Context) (*SystemBalanc
 		Where("id = ?", sysWID).
 		Scan(ctx, &summary.Balance)
 	if err != nil {
-		return nil, err
+		if err.Error() == "sql: no rows in result set" {
+			summary.Balance = 0
+		} else {
+			return nil, err
+		}
 	}
 
 	// 2. Total collected (all PLATFORM_FEE transactions that are positive = incoming)

@@ -1,6 +1,7 @@
 package response
 
 import (
+	"log"
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
@@ -115,7 +116,10 @@ func InternalError(c *fiber.Ctx, message string) error {
 		message = "terjadi kesalahan pada server"
 	}
 
-	// Security: Mask database errors in production/response
+	// Cetak log ringkas ke terminal server untuk tracing
+	log.Printf("[ERR] %s %s: %s", c.Method(), c.Path(), message)
+
+	// Keamanan: Samarkan detail error database pada respon ke klien
 	lowMsg := strings.ToLower(message)
 	if strings.Contains(lowMsg, "sql") ||
 		strings.Contains(lowMsg, "unique constraint") ||
