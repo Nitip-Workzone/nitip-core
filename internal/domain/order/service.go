@@ -623,16 +623,23 @@ func (s *service) AcceptOrder(ctx context.Context, orderID, runnerID uuid.UUID) 
 	}
 
 	var expectedStatus string
+	var newStatus string
 	if order.MerchantID != nil {
-		if order.Status != StatusCooking && order.Status != StatusReady {
-			return errors.New("pesanan merchant belum diterima oleh merchant atau sedang tidak dapat diambil")
+		if order.Status != StatusAccepted && order.Status != StatusCooking && order.Status != StatusReady {
+			return errors.New("pesanan merchant belum disetujui merchant atau sedang tidak dapat diambil")
 		}
 		expectedStatus = order.Status
+		if order.Status == StatusAccepted {
+			newStatus = StatusCooking
+		} else {
+			newStatus = order.Status
+		}
 	} else {
 		if order.Status != StatusPending {
 			return errors.New("pesanan sudah tidak dalam status menunggu")
 		}
 		expectedStatus = StatusPending
+		newStatus = StatusAccepted
 	}
 	oldStatus := order.Status
 
@@ -705,7 +712,7 @@ func (s *service) AcceptOrder(ctx context.Context, orderID, runnerID uuid.UUID) 
 		if activeTrip != nil {
 			order.TripID = &activeTrip.ID
 		}
-		order.Status = StatusAccepted
+		order.Status = newStatus
 		order.UpdatedAt = time.Now()
 
 		ok, err := s.repo.UpdateWithStatusCheck(ctx, tx, order, expectedStatus)
@@ -723,7 +730,7 @@ func (s *service) AcceptOrder(ctx context.Context, orderID, runnerID uuid.UUID) 
 	}
 
 	// Audit Log
-	s.auditSvc.Log(ctx, &runnerID, audit.ActionOrderAccept, "order", orderID.String(), map[string]interface{}{"status": oldStatus}, map[string]interface{}{"status": StatusAccepted, "runner_id": runnerID}, "", "")
+	s.auditSvc.Log(ctx, &runnerID, audit.ActionOrderAccept, "order", orderID.String(), map[string]interface{}{"status": oldStatus}, map[string]interface{}{"status": newStatus, "runner_id": runnerID}, "", "")
 
 	// Create In-App Notification for Requester
 	_ = s.notifSvc.CreateNotification(ctx, notifDomain.CreateNotificationRequest{
@@ -736,13 +743,37 @@ func (s *service) AcceptOrder(ctx context.Context, orderID, runnerID uuid.UUID) 
 		},
 	})
 
-	// Send Push Notification if token exists
+	// Send Push Notification to Requester if token exists
 	if s.fcm != nil && config.App.FcmEnabled {
 		reqUser, _ := s.userSvc.GetByID(ctx, order.RequesterID, order.RequesterID)
 		if reqUser != nil && reqUser.FcmToken != nil && *reqUser.FcmToken != "" {
 			_ = s.fcm.SendToDevice(ctx, *reqUser.FcmToken, "Pesanan Diterima",
 				fmt.Sprintf("Runner sedang memproses pesanan Anda (%s)", order.ItemDetails),
 				map[string]string{"order_id": order.ID.String()})
+		}
+	}
+
+	// Notify Merchant Owner if runner accepts confirmed order
+	if order.MerchantID != nil {
+		merch, err := s.merchantSvc.GetMerchantByID(ctx, *order.MerchantID)
+		if err == nil && merch != nil {
+			_ = s.notifSvc.CreateNotification(ctx, notifDomain.CreateNotificationRequest{
+				UserID:  merch.OwnerID,
+				Title:   "Runner Menuju Toko",
+				Message: fmt.Sprintf("Runner %s telah menerima pesanan: %s. Silakan mulai menyiapkan makanan!", r.Name, order.ItemDetails),
+				Type:    "order",
+				Metadata: map[string]interface{}{
+					"order_id": order.ID,
+				},
+			})
+			if s.fcm != nil && config.App.FcmEnabled {
+				merchOwner, _ := s.userSvc.GetByID(ctx, merch.OwnerID, merch.OwnerID)
+				if merchOwner != nil && merchOwner.FcmToken != nil && *merchOwner.FcmToken != "" {
+					_ = s.fcm.SendToDevice(ctx, *merchOwner.FcmToken, "Mulai Masak Pesanan",
+						fmt.Sprintf("Runner %s menuju toko Anda. Silakan siapkan pesanan %s!", r.Name, order.ItemDetails),
+						map[string]string{"order_id": order.ID.String()})
+				}
+			}
 		}
 	}
 
@@ -1980,7 +2011,7 @@ func (s *service) MerchantAcceptOrder(ctx context.Context, orderID, ownerID uuid
 		return errors.New("pembayaran pesanan belum diselesaikan")
 	}
 
-	order.Status = StatusCooking
+	order.Status = StatusAccepted
 	order.UpdatedAt = time.Now()
 	if err := s.repo.Update(ctx, s.db, order); err != nil {
 		return err
@@ -1992,16 +2023,16 @@ func (s *service) MerchantAcceptOrder(ctx context.Context, orderID, ownerID uuid
 	// Send notification to Penitip
 	_ = s.notifSvc.CreateNotification(ctx, notifDomain.CreateNotificationRequest{
 		UserID:  order.RequesterID,
-		Title:   "Pesanan Sedang Dimasak",
-		Message: fmt.Sprintf("Merchant telah menerima pesanan Anda dan sedang menyiapkan makanan: %s", order.ItemDetails),
+		Title:   "Pesanan Diterima Merchant",
+		Message: fmt.Sprintf("Merchant telah menyetujui pesanan Anda: %s. Sistem sedang mencari runner terdekat.", order.ItemDetails),
 		Type:    "order",
 		Metadata: map[string]interface{}{"order_id": order.ID},
 	})
 	if s.fcm != nil && config.App.FcmEnabled {
 		reqUser, _ := s.userSvc.GetByID(ctx, order.RequesterID, order.RequesterID)
 		if reqUser != nil && reqUser.FcmToken != nil && *reqUser.FcmToken != "" {
-			_ = s.fcm.SendToDevice(ctx, *reqUser.FcmToken, "Pesanan Mulai Dimasak",
-				fmt.Sprintf("Merchant sedang menyiapkan pesanan Anda: %s", order.ItemDetails),
+			_ = s.fcm.SendToDevice(ctx, *reqUser.FcmToken, "Pesanan Diterima Merchant",
+				fmt.Sprintf("Merchant menyetujui pesanan Anda: %s. Menunggu runner menjemput.", order.ItemDetails),
 				map[string]string{"order_id": order.ID.String()})
 		}
 	}
