@@ -224,12 +224,11 @@ func (s *service) Create(ctx context.Context, requesterID uuid.UUID, req CreateO
 		}
 
 		// Batas Antrean Aktif
-		var activeCount int
-		err = s.db.NewSelect().
+		activeCount, err := s.db.NewSelect().
 			Table("orders").
 			Where("merchant_id = ?", merch.ID).
 			Where("status = ? OR status = ?", StatusPending, StatusCooking).
-			Scan(ctx, &activeCount)
+			Count(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("gagal menghitung antrean aktif: %w", err)
 		}
