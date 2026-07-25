@@ -481,31 +481,31 @@ func (s *service) Create(ctx context.Context, requesterID uuid.UUID, req CreateO
 	// Audit Log
 	s.auditSvc.Log(ctx, &requesterID, audit.ActionOrderCreate, "order", order.ID.String(), nil, order, "", "")
 
-	// Trigger Smart Matching via controlled Worker Pool (only if paid or COD AND auto-confirmed/not merchant)
-	if order.MerchantID == nil {
-		if order.PaymentStatus == PaymentEscrow || order.PaymentMethod == MethodCOD {
+	// Trigger Smart Matching & Merchant Notifications only if order is PAID (escrow) or COD
+	if order.PaymentStatus == PaymentEscrow || order.PaymentMethod == MethodCOD {
+		if order.MerchantID == nil {
 			s.matchingSvc.EnqueueMatching(order.ID)
-		}
-	} else if order.Status == StatusCooking {
-		s.matchingSvc.EnqueueMatching(order.ID)
+		} else if order.Status == StatusCooking {
+			s.matchingSvc.EnqueueMatching(order.ID)
 
-		// Send FCM notification to Merchant owner that a new auto-confirmed order is placed
-		if s.fcm != nil && config.App.FcmEnabled {
-			ownerUser, _ := s.userSvc.GetByID(ctx, merch.OwnerID, merch.OwnerID)
-			if ownerUser != nil && ownerUser.FcmToken != nil && *ownerUser.FcmToken != "" {
-				_ = s.fcm.SendToDevice(ctx, *ownerUser.FcmToken, "Pesanan Baru Masuk (Otomatis)",
-					fmt.Sprintf("Pesanan %s diterima otomatis. Silakan mulai masak!", order.ItemDetails),
-					map[string]string{"order_id": order.ID.String()})
+			// Send FCM notification to Merchant owner that a new auto-confirmed order is placed
+			if s.fcm != nil && config.App.FcmEnabled {
+				ownerUser, _ := s.userSvc.GetByID(ctx, merch.OwnerID, merch.OwnerID)
+				if ownerUser != nil && ownerUser.FcmToken != nil && *ownerUser.FcmToken != "" {
+					_ = s.fcm.SendToDevice(ctx, *ownerUser.FcmToken, "Pesanan Baru Masuk (Otomatis)",
+						fmt.Sprintf("Pesanan %s diterima otomatis. Silakan mulai masak!", order.ItemDetails),
+						map[string]string{"order_id": order.ID.String()})
+				}
 			}
-		}
-	} else {
-		// Send FCM notification to Merchant owner that a new order is waiting confirmation
-		if s.fcm != nil && config.App.FcmEnabled {
-			ownerUser, _ := s.userSvc.GetByID(ctx, merch.OwnerID, merch.OwnerID)
-			if ownerUser != nil && ownerUser.FcmToken != nil && *ownerUser.FcmToken != "" {
-				_ = s.fcm.SendToDevice(ctx, *ownerUser.FcmToken, "Pesanan Baru Masuk",
-					fmt.Sprintf("Pesanan %s membutuhkan konfirmasi Anda.", order.ItemDetails),
-					map[string]string{"order_id": order.ID.String()})
+		} else {
+			// Send FCM notification to Merchant owner that a new order is waiting confirmation
+			if s.fcm != nil && config.App.FcmEnabled {
+				ownerUser, _ := s.userSvc.GetByID(ctx, merch.OwnerID, merch.OwnerID)
+				if ownerUser != nil && ownerUser.FcmToken != nil && *ownerUser.FcmToken != "" {
+					_ = s.fcm.SendToDevice(ctx, *ownerUser.FcmToken, "Pesanan Baru Masuk",
+						fmt.Sprintf("Pesanan %s membutuhkan konfirmasi Anda.", order.ItemDetails),
+						map[string]string{"order_id": order.ID.String()})
+				}
 			}
 		}
 	}
@@ -1987,6 +1987,7 @@ func (s *service) GetMerchantOrders(ctx context.Context, ownerID uuid.UUID) ([]O
 	err = s.db.NewSelect().
 		Model(&orders).
 		Where("merchant_id = ?", merch.ID).
+		Where("payment_status = ? OR payment_method = ?", PaymentEscrow, MethodCOD).
 		Order("created_at DESC").
 		Scan(ctx)
 	return orders, err
