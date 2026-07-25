@@ -67,14 +67,23 @@ func (r *repository) CreateWallet(ctx context.Context, db bun.IDB, wallet *Walle
 }
 
 func (r *repository) GetOrCreateWallet(ctx context.Context, db bun.IDB, userID uuid.UUID) (*Wallet, error) {
-	w := &Wallet{
+	var w Wallet
+	err := db.NewSelect().
+		Model(&w).
+		Where("user_id = ?", userID).
+		Scan(ctx)
+	if err == nil {
+		return &w, nil
+	}
+
+	w = Wallet{
 		ID:      uuid.New(),
 		UserID:  userID,
 		Balance: 0,
 	}
 
-	_, err := db.NewInsert().
-		Model(w).
+	_, err = db.NewInsert().
+		Model(&w).
 		On("CONFLICT (user_id) DO UPDATE").
 		Set("updated_at = EXCLUDED.updated_at").
 		Returning("*").
@@ -84,7 +93,7 @@ func (r *repository) GetOrCreateWallet(ctx context.Context, db bun.IDB, userID u
 		return nil, err
 	}
 
-	return w, nil
+	return &w, nil
 }
 
 func (r *repository) UpdateWalletBalance(ctx context.Context, db bun.IDB, walletID uuid.UUID, amount float64) error {
