@@ -589,7 +589,10 @@ func (s *service) ReleaseEscrow(ctx context.Context, db bun.IDB, runnerID, order
 
 	// 2. Transfer Platform Fee to System Wallet
 	if platformFee > 0 {
-		sysWID, _ := uuid.Parse(SystemWalletID)
+		sysWID, err := s.getSystemWalletID(ctx, db)
+		if err != nil {
+			return err
+		}
 		if err := s.repo.UpdateWalletBalance(ctx, db, sysWID, platformFee); err != nil {
 			return err
 		}
@@ -689,7 +692,10 @@ func (s *service) ReleaseEscrowWithRefund(ctx context.Context, db bun.IDB, runne
 	if err != nil {
 		return err
 	}
-	sysWID, _ := uuid.Parse(SystemWalletID)
+	sysWID, err := s.getSystemWalletID(ctx, db)
+	if err != nil {
+		return err
+	}
 
 	// 1. Give Runner their portion
 	if runnerAmount > 0 {
@@ -761,7 +767,10 @@ func (s *service) ReleaseMerchantEscrow(ctx context.Context, db bun.IDB, runnerI
 	if err != nil {
 		return err
 	}
-	sysWID, _ := uuid.Parse(SystemWalletID)
+	sysWID, err := s.getSystemWalletID(ctx, db)
+	if err != nil {
+		return err
+	}
 
 	// 1. Give Merchant their portion (Food price)
 	if foodAmount > 0 {
@@ -1032,4 +1041,56 @@ func (s *service) triggerPgDisbursement(wtx *WalletTransaction, channel *Withdra
 
 func isMidtransErrorNil(err *midtrans.Error) bool {
 	return err == nil
+}
+
+func (s *service) getSystemWalletID(ctx context.Context, db bun.IDB) (uuid.UUID, error) {
+	sysWID, _ := uuid.Parse(SystemWalletID)
+
+	// Check if wallet exists
+	var w Wallet
+	err := db.NewSelect().
+		Model(&w).
+		Where("id = ?", sysWID).
+		Scan(ctx)
+	if err == nil {
+		return sysWID, nil
+	}
+
+	// It doesn't exist! Let's ensure system user exists in users table first
+	sysUserID, _ := uuid.Parse(SystemUserID)
+
+	// Check if system user exists
+	var u user.User
+	userErr := s.db.NewSelect().
+		Model(&u).
+		Where("id = ?", sysUserID).
+		Scan(ctx)
+	if userErr != nil {
+		// Insert system user raw
+		_, insertUserErr := db.NewInsert().
+			Table("users").
+			Value("id", "?", sysUserID).
+			Value("name", "?", "System Revenue").
+			Value("email", "?", "system@nitip.internal").
+			Value("password", "?", "$2a$10$UnUsedPasswordHashForSystemUser").
+			Value("role", "?", "admin").
+			Value("is_verified", "?", true).
+			Exec(ctx)
+		if insertUserErr != nil {
+			return sysWID, insertUserErr
+		}
+	}
+
+	// Now insert the system wallet raw
+	_, insertWalletErr := db.NewInsert().
+		Table("wallets").
+		Value("id", "?", sysWID).
+		Value("user_id", "?", sysUserID).
+		Value("balance", "?", 0).
+		Exec(ctx)
+	if insertWalletErr != nil {
+		return sysWID, insertWalletErr
+	}
+
+	return sysWID, nil
 }
