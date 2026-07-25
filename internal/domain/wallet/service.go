@@ -563,7 +563,7 @@ func (s *service) HoldEscrow(ctx context.Context, db bun.IDB, userID, orderID uu
 }
 
 func (s *service) ReleaseEscrow(ctx context.Context, db bun.IDB, runnerID, orderID uuid.UUID, amount float64, platformFee float64) error {
-	w, err := s.GetBalance(ctx, runnerID)
+	w, err := s.repo.GetOrCreateWallet(ctx, db, runnerID)
 	if err != nil {
 		return err
 	}
@@ -611,7 +611,7 @@ func (s *service) ReleaseEscrow(ctx context.Context, db bun.IDB, runnerID, order
 }
 
 func (s *service) RefundEscrow(ctx context.Context, db bun.IDB, requesterID, orderID uuid.UUID, amount float64) error {
-	w, err := s.GetBalance(ctx, requesterID)
+	w, err := s.repo.GetOrCreateWallet(ctx, db, requesterID)
 	if err != nil {
 		return err
 	}
@@ -632,11 +632,11 @@ func (s *service) RefundEscrow(ctx context.Context, db bun.IDB, requesterID, ord
 }
 
 func (s *service) PartialReleaseEscrow(ctx context.Context, db bun.IDB, runnerID, requesterID, orderID uuid.UUID, runnerAmount, refundAmount float64) error {
-	wRunner, err := s.GetBalance(ctx, runnerID)
+	wRunner, err := s.repo.GetOrCreateWallet(ctx, db, runnerID)
 	if err != nil {
 		return err
 	}
-	wReq, err := s.GetBalance(ctx, requesterID)
+	wReq, err := s.repo.GetOrCreateWallet(ctx, db, requesterID)
 	if err != nil {
 		return err
 	}
@@ -681,11 +681,11 @@ func (s *service) PartialReleaseEscrow(ctx context.Context, db bun.IDB, runnerID
 }
 
 func (s *service) ReleaseEscrowWithRefund(ctx context.Context, db bun.IDB, runnerID, requesterID, orderID uuid.UUID, runnerAmount, platformFee, refundAmount float64) error {
-	wRunner, err := s.GetBalance(ctx, runnerID)
+	wRunner, err := s.repo.GetOrCreateWallet(ctx, db, runnerID)
 	if err != nil {
 		return err
 	}
-	wReq, err := s.GetBalance(ctx, requesterID)
+	wReq, err := s.repo.GetOrCreateWallet(ctx, db, requesterID)
 	if err != nil {
 		return err
 	}
@@ -749,15 +749,15 @@ func (s *service) ReleaseEscrowWithRefund(ctx context.Context, db bun.IDB, runne
 }
 
 func (s *service) ReleaseMerchantEscrow(ctx context.Context, db bun.IDB, runnerID, requesterID, merchantOwnerID, orderID uuid.UUID, foodAmount, runnerAmount, platformFee, refundAmount float64) error {
-	wRunner, err := s.GetBalance(ctx, runnerID)
+	wRunner, err := s.repo.GetOrCreateWallet(ctx, db, runnerID)
 	if err != nil {
 		return err
 	}
-	wReq, err := s.GetBalance(ctx, requesterID)
+	wReq, err := s.repo.GetOrCreateWallet(ctx, db, requesterID)
 	if err != nil {
 		return err
 	}
-	wMerchant, err := s.GetBalance(ctx, merchantOwnerID)
+	wMerchant, err := s.repo.GetOrCreateWallet(ctx, db, merchantOwnerID)
 	if err != nil {
 		return err
 	}
@@ -843,7 +843,7 @@ func (s *service) DeductCODPlatformFee(ctx context.Context, db bun.IDB, runnerID
 		return nil
 	}
 
-	w, err := s.GetBalance(ctx, runnerID)
+	w, err := s.repo.GetOrCreateWallet(ctx, db, runnerID)
 	if err != nil {
 		return err
 	}
