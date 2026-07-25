@@ -282,15 +282,18 @@ func (s *service) Login(ctx context.Context, req LoginRequest, platform string) 
 		if user.Role != RoleAdmin {
 			return nil, errors.New("akses ditolak: hanya administrator yang dapat masuk ke sini")
 		}
+		user.FcmToken = nil
 	case "web-merchant":
 		if user.Role != RoleMerchant && user.Role != RoleAdmin {
 			return nil, errors.New("akses ditolak: hanya akun merchant atau administrator yang dapat masuk ke portal merchant")
 		}
+		user.FcmToken = nil
 	case "web":
 		// Regular web (requester portal) — allow admin but block regular merchants
 		if user.Role == RoleMerchant {
 			return nil, errors.New("akses ditolak: akun merchant harus menggunakan portal merchant")
 		}
+		user.FcmToken = nil
 	case "mobile":
 		if user.Role == RoleAdmin {
 			return nil, errors.New("akses ditolak: administrator harus menggunakan panel web")
