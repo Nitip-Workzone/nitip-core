@@ -62,11 +62,13 @@ type Order struct {
 	CompletionCode  string `bun:"completion_code,nullzero" json:"completion_code,omitempty"`
 
 	// Virtual fields (populated dynamically, not stored in DB)
-	RunnerName      string `bun:"-" json:"runner_name,omitempty"`
-	RunnerPhone     string `bun:"-" json:"runner_phone,omitempty"`
-	FeedbackRating  *int   `bun:"-" json:"feedback_rating,omitempty"`
-	FeedbackComment string `bun:"-" json:"feedback_comment,omitempty"`
-	QRISData        string `bun:"qris_data,nullzero" json:"qris_data,omitempty"`
+	RunnerName      string   `bun:"-" json:"runner_name,omitempty"`
+	RunnerPhone     string   `bun:"-" json:"runner_phone,omitempty"`
+	RunnerLastLat   *float64 `bun:"-" json:"runner_last_lat,omitempty"`
+	RunnerLastLng   *float64 `bun:"-" json:"runner_last_lng,omitempty"`
+	FeedbackRating  *int     `bun:"-" json:"feedback_rating,omitempty"`
+	FeedbackComment string   `bun:"-" json:"feedback_comment,omitempty"`
+	QRISData        string   `bun:"qris_data,nullzero" json:"qris_data,omitempty"`
 }
 
 var (

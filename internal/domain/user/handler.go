@@ -44,8 +44,7 @@ func (h *Handler) RegisterRoutes(router fiber.Router) {
 	g.Put("/profile", middleware.Protected(h.db, h.redis), h.UpdateProfile)
 	g.Put("/fcm-token", middleware.Protected(h.db, h.redis), h.UpdateFcmToken)
 	g.Put("/accepting-orders", middleware.Protected(h.db, h.redis), middleware.Role(RoleRunner), h.UpdateAcceptingOrders)
-	// Removed for MVP v2 - Live GPS dynamic tracking is no longer used
-	// g.Post("/location", middleware.Protected(h.db, h.redis), middleware.Role(RoleRunner), h.UpdateLocation)
+	g.Post("/location", middleware.Protected(h.db, h.redis), middleware.Role(RoleRunner), h.UpdateLocation)
 	// g.Get("/location/stream", middleware.Protected(h.db, h.redis), websocket.New(h.StreamLocation))
 
 	// Admin-only User Management

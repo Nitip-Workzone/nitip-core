@@ -1751,6 +1751,24 @@ func (s *service) populateRunnerInfo(ctx context.Context, o *Order) {
 	if err == nil && r != nil {
 		o.RunnerName = r.Name
 		o.RunnerPhone = r.WhatsappNumber
+		
+		// Attempt to get live tracking coordinate from Redis first (to avoid hitting Postgres repeatedly)
+		if s.redis != nil {
+			val, redisErr := s.redis.Get(ctx, "runner:track:"+o.RunnerID.String())
+			if redisErr == nil && val != "" {
+				var lat, lng float64
+				var ts int64
+				if _, scanErr := fmt.Sscanf(val, "%f,%f,%d", &lat, &lng, &ts); scanErr == nil {
+					o.RunnerLastLat = &lat
+					o.RunnerLastLng = &lng
+					return
+				}
+			}
+		}
+
+		// Fallback to database last known coordinates if not found in Redis
+		o.RunnerLastLat = r.LastLat
+		o.RunnerLastLng = r.LastLng
 	}
 }
 
