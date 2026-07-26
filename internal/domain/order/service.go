@@ -664,6 +664,16 @@ func (s *service) AcceptOrder(ctx context.Context, orderID, runnerID uuid.UUID) 
 		return errors.New("tidak dapat menerima pesanan Anda sendiri")
 	}
 
+	// Check if runner already has another active order
+	activeCount, err := s.db.NewSelect().
+		Model((*Order)(nil)).
+		Where("runner_id = ?", runnerID).
+		Where("status NOT IN (?, ?, ?, ?)", StatusCompleted, StatusCancelled, StatusExpired, StatusDisputed).
+		Count(ctx)
+	if err == nil && activeCount > 0 {
+		return errors.New("tidak dapat menerima pesanan baru: Anda masih memiliki pesanan aktif yang belum diselesaikan")
+	}
+
 	// Capacity Management: Find Runner's current Trip
 	trips, err := s.tripRepo.FindByRunnerID(ctx, runnerID)
 	var activeTrip *trip.Trip
