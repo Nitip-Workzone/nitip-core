@@ -40,7 +40,7 @@ func (h *Handler) RegisterRoutes(router fiber.Router) {
 	orders.Post("/", middleware.RateLimit(h.redis, 5, 1*time.Minute), middleware.Role(user.RoleRequester), h.Create)
 	orders.Post("/estimate-fee", h.GetFeeEstimate)
 	orders.Get("/me", middleware.Role(user.RoleRequester, user.RoleRunner), h.GetMyOrders)
-	orders.Post("/:id/cancel", middleware.Role(user.RoleRequester), h.Cancel)
+	orders.Post("/:id/cancel", middleware.Role(user.RoleRequester, user.RoleRunner, user.RoleMerchant), h.Cancel)
 	orders.Post("/:id/dispute", middleware.Role(user.RoleRequester), h.Dispute)
 	orders.Post("/:id/refresh-qris", middleware.Role(user.RoleRequester), h.RefreshQRIS)
 
@@ -192,9 +192,15 @@ func (h *Handler) Cancel(c *fiber.Ctx) error {
 		return response.BadRequest(c, "ID pesanan tidak valid")
 	}
 
+	type CancelPayload struct {
+		Reason string `json:"reason"`
+	}
+	var req CancelPayload
+	_ = c.BodyParser(&req) // parse optional reason body
+
 	claims := c.Locals("user").(*jwt.CustomClaims)
 
-	if err := h.service.CancelOrder(c.Context(), id, claims.UserID); err != nil {
+	if err := h.service.CancelOrder(c.Context(), id, claims.UserID, req.Reason); err != nil {
 		return response.BadRequest(c, err.Error())
 	}
 
@@ -286,9 +292,8 @@ func (h *Handler) Complete(c *fiber.Ctx) error {
 			code = jsonReq.CompletionCode
 		}
 	}
-	if code == "" {
-		return response.BadRequest(c, "kode konfirmasi (completion_code) wajib diisi")
-	}
+	// code can be empty if it is a force-completion (>30 mins delivering)
+	// validation is deferred to the service layer.
 
 	var deliveryReader io.Reader
 	var deliveryFilename string

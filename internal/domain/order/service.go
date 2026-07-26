@@ -117,7 +117,7 @@ type Service interface {
 	GetByUser(ctx context.Context, userID uuid.UUID, limit, offset int) ([]Order, error)
 	AcceptOrder(ctx context.Context, orderID, runnerID uuid.UUID) error
 	PickupOrder(ctx context.Context, orderID, runnerID uuid.UUID) error
-	CancelOrder(ctx context.Context, orderID, requesterID uuid.UUID) error
+	CancelOrder(ctx context.Context, orderID, userID uuid.UUID, reason string) error
 	SubmitPurchaseReceipt(ctx context.Context, orderID, runnerID uuid.UUID, receiptReader io.Reader, receiptFilename string) error
 	CompleteOrder(ctx context.Context, orderID, runnerID uuid.UUID, code string, deliveryReader io.Reader, deliveryFilename string) error
 	UpdatePaymentStatus(ctx context.Context, orderID uuid.UUID, paymentStatus string) error
@@ -625,11 +625,11 @@ func (s *service) AcceptOrder(ctx context.Context, orderID, runnerID uuid.UUID) 
 	var expectedStatus string
 	var newStatus string
 	if order.MerchantID != nil {
-		if order.Status != StatusAccepted && order.Status != StatusCooking && order.Status != StatusReady {
+		if order.Status != StatusMerchantAccepted && order.Status != StatusCooking && order.Status != StatusReady {
 			return errors.New("pesanan merchant belum disetujui merchant atau sedang tidak dapat diambil")
 		}
 		expectedStatus = order.Status
-		if order.Status == StatusAccepted {
+		if order.Status == StatusMerchantAccepted {
 			newStatus = StatusCooking
 		} else {
 			newStatus = order.Status
@@ -836,18 +836,57 @@ func (s *service) PickupOrder(ctx context.Context, orderID, runnerID uuid.UUID) 
 	return nil
 }
 
-func (s *service) CancelOrder(ctx context.Context, orderID, requesterID uuid.UUID) error {
+func (s *service) CancelOrder(ctx context.Context, orderID, userID uuid.UUID, reason string) error {
 	ord, err := s.repo.FindByID(ctx, orderID)
 	if err != nil {
 		return err
 	}
 
-	if ord.RequesterID != requesterID {
-		return errors.New("hanya peminta yang dapat membatalkan pesanan ini")
+	if ord.Status == StatusCompleted || ord.Status == StatusCancelled {
+		return errors.New("pesanan sudah selesai atau dibatalkan")
 	}
 
-	if ord.Status == StatusCompleted || ord.Status == StatusCancelled || ord.Status == StatusDelivering {
-		return errors.New("pesanan tidak dapat dibatalkan pada tahap ini")
+	// 1. Determine caller role
+	isRequester := ord.RequesterID == userID
+	isRunner := ord.RunnerID != nil && *ord.RunnerID == userID
+	isMerchantOwner := false
+	if ord.MerchantID != nil {
+		merch, err := s.merchantSvc.GetMerchantByID(ctx, *ord.MerchantID)
+		if err == nil && merch != nil && merch.OwnerID == userID {
+			isMerchantOwner = true
+		}
+	}
+
+	if !isRequester && !isRunner && !isMerchantOwner {
+		return errors.New("akses ditolak: hanya pihak terkait pesanan yang dapat membatalkan")
+	}
+
+	// 2. Check if normal cancellation by requester
+	isNormalCancel := false
+	if isRequester {
+		if ord.MerchantID != nil { // Nitip Food
+			if ord.Status == StatusPending || ord.Status == StatusMerchantAccepted {
+				isNormalCancel = true
+			}
+		} else if ord.ServiceCategory == CategoryKirim { // Titip Kirim
+			if ord.Status == StatusPending || ord.Status == StatusAccepted {
+				isNormalCancel = true
+			}
+		} else { // Titip Beli
+			if ord.Status == StatusPending || ord.Status == StatusAccepted {
+				isNormalCancel = true
+			}
+		}
+	}
+
+	// 3. Conditional cancel (>30 mins stagnant status)
+	if !isNormalCancel {
+		if time.Since(ord.UpdatedAt) <= 30*time.Minute {
+			return errors.New("pembatalan tidak diizinkan kecuali status pesanan stagnan (tidak berubah) lebih dari 30 menit")
+		}
+		if strings.TrimSpace(reason) == "" {
+			return errors.New("alasan pembatalan (reason) wajib diisi")
+		}
 	}
 
 	// Logic: Charge checking fee if status is PURCHASING or if there's an adjustment
@@ -885,11 +924,15 @@ func (s *service) CancelOrder(ctx context.Context, orderID, requesterID uuid.UUI
 			}
 		}
 
+		oldStatus := ord.Status
 		ord.Status = StatusCancelled
+		if reason != "" {
+			ord.DisputeReason = reason
+		}
 		ord.UpdatedAt = time.Now()
 		_, err := tx.NewUpdate().Model(ord).WherePK().Exec(ctx)
 		if err == nil {
-			s.auditSvc.LogWithDB(ctx, tx, &requesterID, audit.ActionOrderCancel, "order", orderID.String(), map[string]interface{}{"status": StatusPending}, map[string]interface{}{"status": StatusCancelled}, "", "")
+			s.auditSvc.LogWithDB(ctx, tx, &userID, audit.ActionOrderCancel, "order", orderID.String(), map[string]interface{}{"status": oldStatus}, map[string]interface{}{"status": StatusCancelled, "reason": reason}, "", "")
 		}
 		return err
 	})
@@ -967,8 +1010,13 @@ func (s *service) CompleteOrder(ctx context.Context, orderID, runnerID uuid.UUID
 		return errors.New("pesanan tidak dapat diselesaikan dari status saat ini (harus dalam fase pengiriman)")
 	}
 
-	if order.CompletionCode != code {
+	isForceComplete := time.Since(order.UpdatedAt) > 30*time.Minute
+	if !isForceComplete && order.CompletionCode != code {
 		return errors.New("kode konfirmasi salah")
+	}
+
+	if isForceComplete && deliveryReader == nil {
+		return errors.New("foto bukti penyerahan wajib diunggah untuk menyelesaikan pesanan tanpa kode PIN/QR")
 	}
 
 	var path string
@@ -2040,7 +2088,7 @@ func (s *service) MerchantAcceptOrder(ctx context.Context, orderID, ownerID uuid
 		return errors.New("pembayaran pesanan belum diselesaikan")
 	}
 
-	order.Status = StatusAccepted
+	order.Status = StatusMerchantAccepted
 	order.UpdatedAt = time.Now()
 	if err := s.repo.Update(ctx, s.db, order); err != nil {
 		return err
@@ -2081,8 +2129,8 @@ func (s *service) MerchantReadyOrder(ctx context.Context, orderID, ownerID uuid.
 	if order.MerchantID == nil || *order.MerchantID != merch.ID {
 		return errors.New("pesanan ini bukan milik merchant Anda")
 	}
-	if order.Status != StatusCooking && order.Status != StatusAccepted {
-		return errors.New("pesanan tidak berada dalam proses memasak atau belum diterima runner")
+	if order.Status != StatusCooking {
+		return errors.New("pesanan tidak berada dalam proses memasak (menunggu runner menerima pesanan)")
 	}
 
 	order.Status = StatusReady
