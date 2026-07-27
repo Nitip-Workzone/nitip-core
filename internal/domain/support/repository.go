@@ -1,0 +1,242 @@
+package support
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/google/uuid"
+	"github.com/uptrace/bun"
+)
+
+type Repository interface {
+	CreateTicket(ctx context.Context, ticket *Ticket) error
+	FindTicketByID(ctx context.Context, id uuid.UUID) (*Ticket, error)
+	FindTicketsByUser(ctx context.Context, userID uuid.UUID, limit, offset int) ([]Ticket, error)
+	FindAllTickets(ctx context.Context, status, category, search string, assignedCSID *uuid.UUID, limit, offset int) ([]Ticket, int, error)
+	FindQueueTickets(ctx context.Context, limit, offset int) ([]Ticket, int, error)
+	UpdateTicket(ctx context.Context, ticket *Ticket) error
+	CountActiveByCS(ctx context.Context, csID uuid.UUID) (int, error)
+	AutoCloseResolved(ctx context.Context, days int) (int, error)
+
+	CreateMessage(ctx context.Context, msg *Message) error
+	FindMessagesByTicketID(ctx context.Context, ticketID uuid.UUID, afterID *uuid.UUID, afterTime *string, limit int, includeInternal bool) ([]Message, error)
+
+	CreateFAQ(ctx context.Context, faq *FAQ) error
+	UpdateFAQ(ctx context.Context, faq *FAQ) error
+	DeleteFAQ(ctx context.Context, id uuid.UUID) error
+	FindFAQByID(ctx context.Context, id uuid.UUID) (*FAQ, error)
+	FindAllFAQ(ctx context.Context, activeOnly bool) ([]FAQ, error)
+	SearchFAQ(ctx context.Context, query, category string, limit int) ([]FAQ, error)
+}
+
+type repository struct {
+	db *bun.DB
+}
+
+func NewRepository(db *bun.DB) Repository {
+	return &repository{db: db}
+}
+
+func (r *repository) CreateTicket(ctx context.Context, ticket *Ticket) error {
+	_, err := r.db.NewInsert().Model(ticket).Exec(ctx)
+	return err
+}
+
+func (r *repository) FindTicketByID(ctx context.Context, id uuid.UUID) (*Ticket, error) {
+	t := new(Ticket)
+	err := r.db.NewSelect().Model(t).Where("id = ?", id).Scan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return t, nil
+}
+
+func (r *repository) FindTicketsByUser(ctx context.Context, userID uuid.UUID, limit, offset int) ([]Ticket, error) {
+	var tickets []Ticket
+	q := r.db.NewSelect().Model(&tickets).Where("user_id = ?", userID).Order("created_at DESC")
+	if limit > 0 {
+		q = q.Limit(limit)
+	}
+	if offset > 0 {
+		q = q.Offset(offset)
+	}
+	err := q.Scan(ctx)
+	return tickets, err
+}
+
+func (r *repository) FindAllTickets(ctx context.Context, status, category, search string, assignedCSID *uuid.UUID, limit, offset int) ([]Ticket, int, error) {
+	var tickets []Ticket
+	q := r.db.NewSelect().Model(&tickets)
+	countQ := r.db.NewSelect().Model((*Ticket)(nil))
+
+	if status != "" {
+		q = q.Where("status = ?", status)
+		countQ = countQ.Where("status = ?", status)
+	}
+	if category != "" {
+		q = q.Where("category = ?", category)
+		countQ = countQ.Where("category = ?", category)
+	}
+	if assignedCSID != nil {
+		q = q.Where("assigned_cs_id = ?", *assignedCSID)
+		countQ = countQ.Where("assigned_cs_id = ?", *assignedCSID)
+	}
+	if search != "" {
+		like := fmt.Sprintf("%%%s%%", search)
+		q = q.Where("(title ILIKE ? OR description ILIKE ?)", like, like)
+		countQ = countQ.Where("(title ILIKE ? OR description ILIKE ?)", like, like)
+	}
+
+	count, err := countQ.Count(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	q = q.Order("created_at DESC")
+	if limit > 0 {
+		q = q.Limit(limit)
+	}
+	if offset > 0 {
+		q = q.Offset(offset)
+	}
+	err = q.Scan(ctx)
+	return tickets, count, err
+}
+
+func (r *repository) FindQueueTickets(ctx context.Context, limit, offset int) ([]Ticket, int, error) {
+	var tickets []Ticket
+	q := r.db.NewSelect().Model(&tickets).Where("status IN ('queued','open')").Order("created_at ASC")
+	countQ := r.db.NewSelect().Model((*Ticket)(nil)).Where("status IN ('queued','open')")
+
+	count, err := countQ.Count(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+	if limit > 0 {
+		q = q.Limit(limit)
+	}
+	if offset > 0 {
+		q = q.Offset(offset)
+	}
+	err = q.Scan(ctx)
+	return tickets, count, err
+}
+
+func (r *repository) UpdateTicket(ctx context.Context, ticket *Ticket) error {
+	_, err := r.db.NewUpdate().Model(ticket).WherePK().Exec(ctx)
+	return err
+}
+
+func (r *repository) CountActiveByCS(ctx context.Context, csID uuid.UUID) (int, error) {
+	count, err := r.db.NewSelect().Model((*Ticket)(nil)).
+		Where("assigned_cs_id = ?", csID).
+		Where("status IN ('assigned','in_progress','waiting_user')").
+		Count(ctx)
+	return count, err
+}
+
+func (r *repository) AutoCloseResolved(ctx context.Context, days int) (int, error) {
+	res, err := r.db.NewUpdate().Model((*Ticket)(nil)).
+		Set("status = 'closed'").
+		Set("closed_at = NOW()").
+		Set("updated_at = NOW()").
+		Where("status = 'resolved'").
+		Where("resolved_at < NOW() - (? * INTERVAL '1 day')", days).
+		Exec(ctx)
+	if err != nil {
+		return 0, err
+	}
+	affected, _ := res.RowsAffected()
+	return int(affected), nil
+}
+
+func (r *repository) CreateMessage(ctx context.Context, msg *Message) error {
+	_, err := r.db.NewInsert().Model(msg).Exec(ctx)
+	return err
+}
+
+func (r *repository) FindMessagesByTicketID(ctx context.Context, ticketID uuid.UUID, afterID *uuid.UUID, afterTime *string, limit int, includeInternal bool) ([]Message, error) {
+	var msgs []Message
+	q := r.db.NewSelect().Model(&msgs).Where("ticket_id = ?", ticketID)
+
+	if !includeInternal {
+		q = q.Where("is_internal = false")
+	}
+	if afterID != nil {
+		// Fetch messages after given ID's created_at
+		var afterMsg Message
+		err := r.db.NewSelect().Model(&afterMsg).Where("id = ?", *afterID).Scan(ctx)
+		if err == nil {
+			q = q.Where("created_at > ?", afterMsg.CreatedAt)
+		}
+	}
+	if afterTime != nil && *afterTime != "" {
+		q = q.Where("created_at > ?", *afterTime)
+	}
+
+	q = q.Order("created_at ASC")
+	if limit > 0 {
+		q = q.Limit(limit)
+	} else {
+		q = q.Limit(100)
+	}
+	err := q.Scan(ctx)
+	return msgs, err
+}
+
+// FAQ
+
+func (r *repository) CreateFAQ(ctx context.Context, faq *FAQ) error {
+	_, err := r.db.NewInsert().Model(faq).Exec(ctx)
+	return err
+}
+
+func (r *repository) UpdateFAQ(ctx context.Context, faq *FAQ) error {
+	_, err := r.db.NewUpdate().Model(faq).WherePK().Exec(ctx)
+	return err
+}
+
+func (r *repository) DeleteFAQ(ctx context.Context, id uuid.UUID) error {
+	_, err := r.db.NewDelete().Model((*FAQ)(nil)).Where("id = ?", id).Exec(ctx)
+	return err
+}
+
+func (r *repository) FindFAQByID(ctx context.Context, id uuid.UUID) (*FAQ, error) {
+	f := new(FAQ)
+	err := r.db.NewSelect().Model(f).Where("id = ?", id).Scan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return f, nil
+}
+
+func (r *repository) FindAllFAQ(ctx context.Context, activeOnly bool) ([]FAQ, error) {
+	var faqs []FAQ
+	q := r.db.NewSelect().Model(&faqs).Order("created_at DESC")
+	if activeOnly {
+		q = q.Where("is_active = true")
+	}
+	err := q.Scan(ctx)
+	return faqs, err
+}
+
+func (r *repository) SearchFAQ(ctx context.Context, query, category string, limit int) ([]FAQ, error) {
+	var faqs []FAQ
+	q := r.db.NewSelect().Model(&faqs).Where("is_active = true")
+
+	if query != "" {
+		like := fmt.Sprintf("%%%s%%", query)
+		q = q.Where("(question ILIKE ? OR answer ILIKE ? OR keywords ILIKE ?)", like, like, like)
+	}
+	if category != "" {
+		q = q.Where("category = ?", category)
+	}
+	q = q.Order("created_at DESC")
+	if limit > 0 {
+		q = q.Limit(limit)
+	} else {
+		q = q.Limit(20)
+	}
+	err := q.Scan(ctx)
+	return faqs, err
+}

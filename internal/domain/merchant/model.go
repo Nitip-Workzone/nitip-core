@@ -7,24 +7,43 @@ import (
 	"github.com/uptrace/bun"
 )
 
+type OpeningHours struct {
+	// Map day -> {open: "08:00", close: "22:00"} or closed: true
+	Monday    *DayHours `json:"monday,omitempty"`
+	Tuesday   *DayHours `json:"tuesday,omitempty"`
+	Wednesday *DayHours `json:"wednesday,omitempty"`
+	Thursday  *DayHours `json:"thursday,omitempty"`
+	Friday    *DayHours `json:"friday,omitempty"`
+	Saturday  *DayHours `json:"saturday,omitempty"`
+	Sunday    *DayHours `json:"sunday,omitempty"`
+}
+
+type DayHours struct {
+	Open   string `json:"open"` // e.g. "08:00"
+	Close  string `json:"close"`
+	Closed bool   `json:"closed,omitempty"`
+}
+
 type Merchant struct {
 	bun.BaseModel `bun:"table:merchants,alias:m"`
 
-	ID              uuid.UUID  `bun:"id,pk,type:uuid" json:"id"`
-	OwnerID         uuid.UUID  `bun:"owner_id,type:uuid,notnull" json:"owner_id"`
-	Name            string     `bun:"name,notnull" json:"name"`
-	Description     string     `bun:"description" json:"description,omitempty"`
-	Address         string     `bun:"address" json:"address,omitempty"`
-	Latitude        float64    `bun:"latitude,notnull" json:"latitude"`
-	Longitude       float64    `bun:"longitude,notnull" json:"longitude"`
-	Category        string     `bun:"category,notnull,default:'food'" json:"category"`
-	IsOpen          bool       `bun:"is_open,notnull,default:true" json:"is_open"`
-	AutoConfirm     bool       `bun:"auto_confirm,notnull,default:false" json:"auto_confirm"`
-	MaxActiveOrders int        `bun:"max_active_orders,notnull,default:5" json:"max_active_orders"`
-	Rating          float64    `bun:"rating,notnull,default:5.0" json:"rating"`
-	CreatedAt       time.Time  `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"created_at"`
-	UpdatedAt       time.Time  `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updated_at"`
-	DeletedAt       *time.Time `bun:"deleted_at,soft_delete,nullzero" json:"deleted_at,omitempty"`
+	ID              uuid.UUID    `bun:"id,pk,type:uuid" json:"id"`
+	OwnerID         uuid.UUID    `bun:"owner_id,type:uuid,notnull" json:"owner_id"`
+	Name            string       `bun:"name,notnull" json:"name"`
+	Description     string       `bun:"description" json:"description,omitempty"`
+	Address         string       `bun:"address" json:"address,omitempty"`
+	Latitude        float64      `bun:"latitude,notnull" json:"latitude"`
+	Longitude       float64      `bun:"longitude,notnull" json:"longitude"`
+	Category        string       `bun:"category,notnull,default:'food'" json:"category"`
+	IsOpen          bool         `bun:"is_open,notnull,default:true" json:"is_open"`
+	AutoConfirm     bool         `bun:"auto_confirm,notnull,default:false" json:"auto_confirm"`
+	MaxActiveOrders int          `bun:"max_active_orders,notnull,default:5" json:"max_active_orders"`
+	Rating          float64      `bun:"rating,notnull,default:5.0" json:"rating"`
+	OpeningHours    OpeningHours `bun:"opening_hours,type:jsonb,notnull,default:'{}'" json:"opening_hours"`
+	ImageURL        string       `bun:"image_url" json:"image_url,omitempty"`
+	CreatedAt       time.Time    `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"created_at"`
+	UpdatedAt       time.Time    `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updated_at"`
+	DeletedAt       *time.Time   `bun:"deleted_at,soft_delete,nullzero" json:"deleted_at,omitempty"`
 }
 
 type Menu struct {

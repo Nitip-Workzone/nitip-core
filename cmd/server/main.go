@@ -24,6 +24,7 @@ import (
 	notificationDomain "github.com/codecoffy/nitip-core/internal/domain/notification"
 	"github.com/codecoffy/nitip-core/internal/domain/order"
 	"github.com/codecoffy/nitip-core/internal/domain/review"
+	supportDomain "github.com/codecoffy/nitip-core/internal/domain/support"
 	"github.com/codecoffy/nitip-core/internal/domain/trip"
 	"github.com/codecoffy/nitip-core/internal/domain/user"
 	"github.com/codecoffy/nitip-core/internal/domain/wallet"
@@ -244,6 +245,12 @@ func main() {
 	bannerHandler := banner.NewHandler(bannerSvc, db, redisCache)
 	fiberApp.RegisterRoutes(bannerHandler.RegisterRoutes)
 
+	// Support Ticket + Live Chat
+	supportRepo := supportDomain.NewRepository(db)
+	supportSvc := supportDomain.NewService(supportRepo, cfgSvc, notifSvc, redisCache, auditSvc)
+	supportHandler := supportDomain.NewHandler(supportSvc, db, redisCache)
+	fiberApp.RegisterRoutes(supportHandler.RegisterRoutes)
+
 	// 7. Graceful shutdown listener
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -252,6 +259,7 @@ func main() {
 	matchingSvc.StartWorkerPool(ctx, 10)
 	orderSvc.StartBackgroundCleanup(ctx)
 	orderSvc.StartPaymentWorkerPool(ctx, 5)
+	supportSvc.StartAutoCloseWorker(ctx)
 	_ = walletSvc.RecoverPendingWithdrawals(ctx)
 
 	// 9. Start server in a goroutine

@@ -156,12 +156,14 @@ func (h *Handler) CreateProfile(c *fiber.Ctx) error {
 }
 
 type updateProfileRequest struct {
-	Name        string  `json:"name" validate:"required,min=2,max=100"`
-	Description string  `json:"description" validate:"omitempty,max=500"`
-	Address     string  `json:"address" validate:"required,max=500"`
-	Latitude    float64 `json:"latitude" validate:"required,latitude"`
-	Longitude   float64 `json:"longitude" validate:"required,longitude"`
-	Category    string  `json:"category" validate:"required,oneof=food laundry mart"`
+	Name         string        `json:"name" validate:"required,min=2,max=100"`
+	Description  string        `json:"description" validate:"omitempty,max=500"`
+	Address      string        `json:"address" validate:"required,max=500"`
+	Latitude     float64       `json:"latitude" validate:"required,latitude"`
+	Longitude    float64       `json:"longitude" validate:"required,longitude"`
+	Category     string        `json:"category" validate:"required,oneof=food laundry mart"`
+	OpeningHours *OpeningHours `json:"opening_hours,omitempty"`
+	ImageURL     *string       `json:"image_url,omitempty"`
 }
 
 func (h *Handler) UpdateProfile(c *fiber.Ctx) error {
@@ -179,8 +181,7 @@ func (h *Handler) UpdateProfile(c *fiber.Ctx) error {
 		return response.ValidationFailed(c, errs)
 	}
 
-	// Update only identity fields, keep status flags
-	updated, err := h.service.UpdateMerchant(c.Context(), m.ID, req.Name, req.Description, req.Address, req.Latitude, req.Longitude, req.Category, m.MaxActiveOrders)
+	updated, err := h.service.UpdateMerchantFull(c.Context(), m.ID, req.Name, req.Description, req.Address, req.Latitude, req.Longitude, req.Category, m.MaxActiveOrders, req.OpeningHours, req.ImageURL)
 	if err != nil {
 		return response.InternalError(c, err.Error())
 	}
