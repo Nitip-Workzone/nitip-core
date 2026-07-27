@@ -232,8 +232,15 @@ func (s *service) FindNearestRunners(ctx context.Context, lat, lng float64, radi
 		if err != nil {
 			continue
 		}
+		// Lazy cleanup: Check if runner track key still exists in Redis
+		trackKey := "runner:track:" + id.String()
+		if exists, err := s.redis.Exists(ctx, trackKey); err == nil && !exists {
+			// Track key expired, prune stale runner from GEO set
+			_ = s.redis.Client().ZRem(ctx, "runners_live", idStr)
+			continue
+		}
 		u, err := s.userRepo.FindByID(ctx, id)
-		if err == nil && !u.IsSuspended {
+		if err == nil && !u.IsSuspended && u.IsAcceptingOrders {
 			nearbyRunners = append(nearbyRunners, *u)
 		}
 	}

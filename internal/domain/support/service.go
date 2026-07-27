@@ -449,9 +449,16 @@ func (s *service) DeleteFAQ(ctx context.Context, id uuid.UUID) error {
 func (s *service) StartAutoCloseWorker(ctx context.Context) {
 	go func() {
 		// initial delay 10m
+		timer := time.NewTimer(10 * time.Minute)
 		select {
-		case <-time.After(10 * time.Minute):
+		case <-timer.C:
 		case <-ctx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
 			return
 		}
 		ticker := time.NewTicker(12 * time.Hour)

@@ -581,11 +581,8 @@ func (s *service) UpdateLocation(ctx context.Context, id uuid.UUID, lat, lng flo
 		return err
 	}
 
-	// 1. Update DB (As before, for history/legacy)
-	u.LastLat = &lat
-	u.LastLng = &lng
-	u.UpdatedAt = time.Now()
-	if err := s.repo.Update(ctx, u); err != nil {
+	// 1. Update DB location only (efficient update, avoids locking full user row)
+	if err := s.repo.UpdateLocation(ctx, id, lat, lng); err != nil {
 		return err
 	}
 
@@ -644,10 +641,7 @@ func (s *service) UpdateHeartbeat(ctx context.Context, id uuid.UUID, req Heartbe
 		return errors.New("heartbeat hanya saat status online")
 	}
 
-	u.LastLat = &req.Lat
-	u.LastLng = &req.Lng
-	u.UpdatedAt = time.Now()
-	if err := s.repo.Update(ctx, u); err != nil {
+	if err := s.repo.UpdateLocation(ctx, id, req.Lat, req.Lng); err != nil {
 		return err
 	}
 

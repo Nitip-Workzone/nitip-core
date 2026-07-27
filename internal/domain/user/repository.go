@@ -16,6 +16,7 @@ type Repository interface {
 	FindNearbyRunners(ctx context.Context, lat, lng, radiusKm float64) ([]User, error)
 	Create(ctx context.Context, user *User) error
 	Update(ctx context.Context, user *User) error
+	UpdateLocation(ctx context.Context, id uuid.UUID, lat, lng float64) error
 	Delete(ctx context.Context, id uuid.UUID) error
 	ClearDeviceSessions(ctx context.Context, deviceID string, excludeUserID uuid.UUID) error
 	FindBankAccountByUserID(ctx context.Context, userID uuid.UUID) (*UserBankAccount, error)
@@ -108,6 +109,17 @@ func (r *repository) Create(ctx context.Context, user *User) error {
 
 func (r *repository) Update(ctx context.Context, user *User) error {
 	_, err := r.db.NewUpdate().Model(user).WherePK().Exec(ctx)
+	return err
+}
+
+func (r *repository) UpdateLocation(ctx context.Context, id uuid.UUID, lat, lng float64) error {
+	_, err := r.db.NewUpdate().
+		Model((*User)(nil)).
+		Set("last_lat = ?", lat).
+		Set("last_lng = ?", lng).
+		Set("updated_at = NOW()").
+		Where("id = ?", id).
+		Exec(ctx)
 	return err
 }
 
