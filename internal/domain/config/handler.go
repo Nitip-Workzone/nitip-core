@@ -1,6 +1,8 @@
 package systemconfig
 
 import (
+	"strings"
+
 	"github.com/codecoffy/nitip-core/config"
 	"github.com/codecoffy/nitip-core/internal/cache"
 	"github.com/codecoffy/nitip-core/internal/domain/user"
@@ -95,8 +97,15 @@ func (h *Handler) AdminUpdateConfig(c *fiber.Ctx) error {
 // @Router       /configs/public [get]
 func (h *Handler) GetPublicConfig(c *fiber.Ctx) error {
 	schedule := h.service.GetValue(c.Context(), "withdrawal_schedule", "Setiap hari pukul 09:00 WITA")
+	codEnabledStr := h.service.GetValue(c.Context(), "cod_enabled", "true")
+	codEnabled := true
+	lower := strings.ToLower(strings.TrimSpace(codEnabledStr))
+	if lower == "false" || lower == "0" || lower == "off" || lower == "disabled" {
+		codEnabled = false
+	}
 	return response.Success(c, "konfigurasi publik berhasil diambil", fiber.Map{
 		"kyc_verification_required": !config.App.BypassKYCValidation,
-		"withdrawal_schedule":        schedule,
+		"withdrawal_schedule":       schedule,
+		"cod_enabled":               codEnabled,
 	})
 }

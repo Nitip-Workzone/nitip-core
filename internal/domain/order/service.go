@@ -302,8 +302,14 @@ func (s *service) Create(ctx context.Context, requesterID uuid.UUID, req CreateO
 		}
 	}
 
-	// 3. General COD Rules (Distance & Amount)
+	// 3. General COD Rules (Enabled flag + Distance & Amount)
 	if req.PaymentMethod == "cod" {
+		enabledStr := s.configSvc.GetValue(ctx, "cod_enabled", "true")
+		enabledStr = strings.ToLower(strings.TrimSpace(enabledStr))
+		if enabledStr == "false" || enabledStr == "0" || enabledStr == "off" || enabledStr == "disabled" {
+			return nil, errors.New("metode pembayaran COD sedang dinonaktifkan oleh admin")
+		}
+
 		maxAmountStr := s.configSvc.GetValue(ctx, "cod_max_amount", "50000")
 		maxAmount, _ := strconv.ParseFloat(maxAmountStr, 64)
 		if req.EstimatedCost > maxAmount {
