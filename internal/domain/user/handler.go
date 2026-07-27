@@ -37,6 +37,7 @@ func (h *Handler) RegisterRoutes(router fiber.Router) {
 	g := router.Group("/users")
 	g.Post("/register", middleware.RateLimit(h.redis, 3, 1*time.Minute), h.Create)
 	g.Get("/me", middleware.Protected(h.db, h.redis), h.GetMe)
+	g.Get("/me/bank-account", middleware.Protected(h.db, h.redis), h.GetMyBankAccount)
 	g.Post("/pin/setup", middleware.Protected(h.db, h.redis), middleware.RateLimit(h.redis, 3, 1*time.Minute), h.SetupPin)
 	g.Post("/pin/change", middleware.Protected(h.db, h.redis), middleware.RateLimit(h.redis, 5, 1*time.Minute), h.ChangePin)
 	g.Post("/pin/verify", middleware.Protected(h.db, h.redis), middleware.RateLimit(h.redis, 5, 1*time.Minute), h.VerifyPin)
@@ -60,6 +61,7 @@ func (h *Handler) RegisterRoutes(router fiber.Router) {
 	adminUser.Put("/:id/suspend", h.AdminSuspendUser)
 	adminUser.Post("/:id/unlock-pin", h.AdminUnlockPin)
 	adminUser.Post("/:id/totp-disable", h.AdminDisableTOTP)
+	adminUser.Post("/:id/bank-account", h.AdminRegisterBankAccount)
 
 	// TOTP Management
 	g.Post("/totp/setup", middleware.Protected(h.db, h.redis), middleware.RateLimit(h.redis, 3, 1*time.Minute), h.SetupTOTP)
@@ -924,5 +926,73 @@ func (h *Handler) UpdateFcmToken(c *fiber.Ctx) error {
 	}
 
 	return response.Success(c, "FCM token berhasil diperbarui", nil)
+}
+
+// GetMyBankAccount godoc
+// @Summary      Get registered bank account
+// @Description  Get the registered bank account for the current authenticated user
+// @Tags         [User] Finance
+// @Produce      json
+// @Security     BearerAuth
+// @Success      200  {object}  response.envelope{data=UserBankAccount}
+// @Router       /users/me/bank-account [get]
+func (h *Handler) GetMyBankAccount(c *fiber.Ctx) error {
+	claims, ok := c.Locals("user").(*jwt.CustomClaims)
+	if !ok {
+		return response.Unauthorized(c, "tidak memiliki akses")
+	}
+
+	uba, err := h.service.GetBankAccount(c.Context(), claims.UserID)
+	if err != nil {
+		return response.NotFound(c, "rekening belum didaftarkan")
+	}
+
+	return response.Success(c, "rekening berhasil diambil", uba)
+}
+
+type AdminRegisterBankAccountRequest struct {
+	BankName      string `json:"bank_name" validate:"required"`
+	AccountNo     string `json:"account_no" validate:"required"`
+	AccountName   string `json:"account_name" validate:"required"`
+	AdminPassword string `json:"admin_password" validate:"required"`
+	TotpCode      string `json:"totp_code" validate:"required,len=6,numeric"`
+}
+
+// AdminRegisterBankAccount godoc
+// @Summary      [ADMIN] Register user bank account
+// @Description  Register or update a user's registered bank account. Highly restricted. Requires password and TOTP code.
+// @Tags         [Admin] User Management
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id    path      string                          true  "User ID"
+// @Param        body  body      AdminRegisterBankAccountRequest true  "Registration details"
+// @Success      200   {object}  response.envelope
+// @Router       /admin/users/{id}/bank-account [post]
+func (h *Handler) AdminRegisterBankAccount(c *fiber.Ctx) error {
+	adminClaims, ok := c.Locals("user").(*jwt.CustomClaims)
+	if !ok {
+		return response.Unauthorized(c, "tidak memiliki akses")
+	}
+
+	targetID, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return response.BadRequest(c, "ID user tidak valid")
+	}
+
+	var req AdminRegisterBankAccountRequest
+	if err := c.BodyParser(&req); err != nil {
+		return response.BadRequest(c, "format permintaan tidak valid")
+	}
+
+	if errs := validator.Validate(req); errs != nil {
+		return response.ValidationFailed(c, errs)
+	}
+
+	if err := h.service.AdminRegisterBankAccount(c.Context(), targetID, req.BankName, req.AccountNo, req.AccountName, req.AdminPassword, req.TotpCode, adminClaims.UserID); err != nil {
+		return response.BadRequest(c, err.Error())
+	}
+
+	return response.Success(c, "rekening pengguna berhasil didaftarkan oleh admin", nil)
 }
 

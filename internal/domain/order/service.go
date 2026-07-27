@@ -1880,7 +1880,7 @@ func (s *service) populatePaymentInfo(ctx context.Context, o *Order) {
 			// Save the generated QRIS back to orders table in database so it persists!
 			_, dbErr := s.db.NewUpdate().
 				Model(o).
-				Column("qris_data").
+				Column("qris_data", "pg_fee", "total_payment").
 				WherePK().
 				Exec(ctx)
 			if dbErr != nil {
@@ -1893,6 +1893,11 @@ func (s *service) populatePaymentInfo(ctx context.Context, o *Order) {
 func (s *service) generateOrderQRIS(ctx context.Context, order *Order) (string, error) {
 	var qrString string
 	var reference = order.ID.String()
+
+	grossAmt := math.Ceil(order.TotalPayment / 0.993)
+	pgFee := grossAmt - order.TotalPayment
+	order.PGFee = pgFee
+	order.TotalPayment = grossAmt
 
 	if config.App.MidtransServerKey != "" && !config.App.UseMockPayment {
 		userObj, err := s.userSvc.GetByID(ctx, order.RequesterID, order.RequesterID)
@@ -1915,7 +1920,7 @@ func (s *service) generateOrderQRIS(ctx context.Context, order *Order) (string, 
 			PaymentType: coreapi.PaymentTypeQris,
 			TransactionDetails: midtrans.TransactionDetails{
 				OrderID:  reference,
-				GrossAmt: int64(order.TotalPayment),
+				GrossAmt: int64(grossAmt),
 			},
 			CustomerDetails: &midtrans.CustomerDetails{
 				FName: userName,
@@ -1953,7 +1958,7 @@ func (s *service) generateOrderQRIS(ctx context.Context, order *Order) (string, 
 		// Fallback to mock-qris
 		payload := map[string]interface{}{
 			"reference_id": reference,
-			"amount":       int64(order.TotalPayment),
+			"amount":       int64(grossAmt),
 		}
 		body, _ := json.Marshal(payload)
 
@@ -1962,7 +1967,7 @@ func (s *service) generateOrderQRIS(ctx context.Context, order *Order) (string, 
 			pgUrl = "http://localhost:4000"
 		}
 
-		log.Printf("[MOCK-QRIS-ORDER] Order: %s, GrossAmt: %d", order.ID.String(), int64(order.TotalPayment))
+		log.Printf("[MOCK-QRIS-ORDER] Order: %s, GrossAmt: %d", order.ID.String(), int64(grossAmt))
 		resp, err := http.Post(fmt.Sprintf("%s/api/qris/generate", pgUrl), "application/json", bytes.NewBuffer(body))
 		if err != nil {
 			log.Printf("[MOCK-QRIS-ORDER-ERROR] Connection error: %v", err)

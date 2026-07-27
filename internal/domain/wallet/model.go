@@ -68,6 +68,7 @@ type WalletTransaction struct {
 	CreatedAt           time.Time              `bun:"created_at,notnull,default:current_timestamp" json:"created_at"`
 	ChannelID           *uuid.UUID             `bun:"channel_id,type:uuid,nullzero" json:"channel_id,omitempty"`
 	DestinationMetadata map[string]interface{} `bun:"destination_metadata,type:jsonb,nullzero" json:"destination_metadata,omitempty"`
+	PGFee               float64                `bun:"pg_fee,notnull,default:0" json:"pg_fee"`
 	QrisString          string                 `bun:"-" json:"qris_string,omitempty"`
 	DeeplinkURL         string                 `bun:"-" json:"deeplink_url,omitempty"`
 }

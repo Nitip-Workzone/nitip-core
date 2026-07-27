@@ -67,3 +67,15 @@ func (u *User) MaskSensitiveData() {
 		}
 	}
 }
+
+type UserBankAccount struct {
+	bun.BaseModel `bun:"table:user_bank_accounts,alias:uba"`
+
+	ID          uuid.UUID `bun:"id,pk,type:uuid" json:"id"`
+	UserID      uuid.UUID `bun:"user_id,notnull,type:uuid" json:"user_id"`
+	BankName    string    `bun:"bank_name,notnull" json:"bank_name"`
+	AccountNo   string    `bun:"account_no,notnull" json:"account_no"`
+	AccountName string    `bun:"account_name,notnull" json:"account_name"`
+	CreatedAt   time.Time `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"created_at"`
+	UpdatedAt   time.Time `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updated_at"`
+}

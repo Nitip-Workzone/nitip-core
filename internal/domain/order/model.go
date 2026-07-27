@@ -47,6 +47,7 @@ type Order struct {
 	TotalPayment     float64    `bun:"total_payment,notnull,default:0" json:"total_payment"`
 	OrderType        string     `bun:"order_type,notnull,default:'regular'" json:"order_type"`
 	CheckingFee      float64    `bun:"checking_fee,notnull,default:0" json:"checking_fee"`
+	PGFee            float64    `bun:"pg_fee,notnull,default:0" json:"pg_fee"`
 
 	// Recent Pickup & Proximity Matching
 	PickupName    string  `bun:"pickup_name" json:"pickup_name,omitempty"`

@@ -121,6 +121,10 @@ type Service interface {
 	UpdateProfile(ctx context.Context, id uuid.UUID, req UpdateProfileRequest, avatarFile io.Reader, avatarFilename string) error
 	UpdateAcceptingOrders(ctx context.Context, id uuid.UUID, isAccepting bool) error
 	GetRedis() *cache.Redis
+
+	// Bank Account Management
+	GetBankAccount(ctx context.Context, userID uuid.UUID) (*UserBankAccount, error)
+	AdminRegisterBankAccount(ctx context.Context, userID uuid.UUID, bankName, accountNo, accountName, adminPassword, totpCode string, adminID uuid.UUID) error
 }
 
 type service struct {
@@ -685,4 +689,47 @@ func (s *service) signAvatar(ctx context.Context, u *User) {
 	if signed, err := s.storage.SignedURL(ctx, *u.AvatarUrl, 1*time.Hour); err == nil {
 		u.AvatarUrl = &signed
 	}
+}
+
+func (s *service) GetBankAccount(ctx context.Context, userID uuid.UUID) (*UserBankAccount, error) {
+	return s.repo.FindBankAccountByUserID(ctx, userID)
+}
+
+func (s *service) AdminRegisterBankAccount(ctx context.Context, userID uuid.UUID, bankName, accountNo, accountName, adminPassword, totpCode string, adminID uuid.UUID) error {
+	admin, err := s.repo.FindByID(ctx, adminID)
+	if err != nil {
+		return errors.New("gagal menemukan akun admin")
+	}
+
+	if err := bcrypt.CompareHashAndPassword([]byte(admin.Password), []byte(adminPassword)); err != nil {
+		return errors.New("konfirmasi password admin salah")
+	}
+
+	if admin.TotpEnabled {
+		if admin.TotpSecret == nil || *admin.TotpSecret == "" {
+			return errors.New("TOTP terkonfigurasi tidak valid")
+		}
+		if !totp.Validate(totpCode, *admin.TotpSecret) {
+			return errors.New("kode TOTP admin tidak valid")
+		}
+	} else {
+		return errors.New("tindakan ini memerlukan autentikasi dua faktor (TOTP) diaktifkan pada akun admin Anda")
+	}
+
+	bankAccount := &UserBankAccount{
+		ID:          uuid.New(),
+		UserID:      userID,
+		BankName:    bankName,
+		AccountNo:   accountNo,
+		AccountName: accountName,
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
+	}
+
+	if err := s.repo.UpsertBankAccount(ctx, bankAccount); err != nil {
+		return fmt.Errorf("gagal mendaftarkan rekening: %w", err)
+	}
+
+	s.auditSvc.Log(ctx, &adminID, "REGISTER_USER_BANK", "user_bank_accounts", userID.String(), nil, bankAccount, "", "")
+	return nil
 }

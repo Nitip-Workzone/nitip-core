@@ -18,6 +18,8 @@ type Repository interface {
 	Update(ctx context.Context, user *User) error
 	Delete(ctx context.Context, id uuid.UUID) error
 	ClearDeviceSessions(ctx context.Context, deviceID string, excludeUserID uuid.UUID) error
+	FindBankAccountByUserID(ctx context.Context, userID uuid.UUID) (*UserBankAccount, error)
+	UpsertBankAccount(ctx context.Context, bankAccount *UserBankAccount) error
 }
 
 type repository struct {
@@ -122,6 +124,27 @@ func (r *repository) ClearDeviceSessions(ctx context.Context, deviceID string, e
 		Set("token_version = token_version + 1").
 		Where("device_id = ?", deviceID).
 		Where("id != ?", excludeUserID).
+		Exec(ctx)
+	return err
+}
+
+func (r *repository) FindBankAccountByUserID(ctx context.Context, userID uuid.UUID) (*UserBankAccount, error) {
+	uba := new(UserBankAccount)
+	err := r.db.NewSelect().Model(uba).Where("user_id = ?", userID).Scan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return uba, nil
+}
+
+func (r *repository) UpsertBankAccount(ctx context.Context, bankAccount *UserBankAccount) error {
+	_, err := r.db.NewInsert().
+		Model(bankAccount).
+		On("CONFLICT (user_id) DO UPDATE").
+		Set("bank_name = EXCLUDED.bank_name").
+		Set("account_no = EXCLUDED.account_no").
+		Set("account_name = EXCLUDED.account_name").
+		Set("updated_at = EXCLUDED.updated_at").
 		Exec(ctx)
 	return err
 }

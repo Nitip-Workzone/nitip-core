@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"math"
 	"strings"
 	"time"
 
@@ -156,6 +157,9 @@ func (s *service) InitiateTopUp(ctx context.Context, userID uuid.UUID, amount fl
 	var qrString string
 	var deeplinkString string
 
+	grossAmt := math.Ceil(amount / 0.993)
+	pgFee := grossAmt - amount
+
 	if config.App.MidtransServerKey != "" && !config.App.UseMockPayment {
 		reference = "TOPUP-" + uuid.New().String()[:8]
 
@@ -180,7 +184,7 @@ func (s *service) InitiateTopUp(ctx context.Context, userID uuid.UUID, amount fl
 			PaymentType: coreapi.PaymentTypeQris,
 			TransactionDetails: midtrans.TransactionDetails{
 				OrderID:  reference,
-				GrossAmt: int64(amount),
+				GrossAmt: int64(grossAmt),
 			},
 			CustomerDetails: &midtrans.CustomerDetails{
 				FName: userName,
@@ -226,7 +230,7 @@ func (s *service) InitiateTopUp(ctx context.Context, userID uuid.UUID, amount fl
 
 		payload := map[string]interface{}{
 			"reference_id": reference,
-			"amount":       int64(amount),
+			"amount":       int64(grossAmt),
 		}
 		body, _ := json.Marshal(payload)
 
@@ -267,6 +271,7 @@ func (s *service) InitiateTopUp(ctx context.Context, userID uuid.UUID, amount fl
 		WalletID:    w.ID,
 		Type:        TypeTopUp,
 		Amount:      amount,
+		PGFee:       pgFee,
 		Reference:   reference,
 		Status:      StatusPending,
 		QrisString:  qrString,
@@ -429,6 +434,19 @@ func (s *service) RequestWithdrawal(ctx context.Context, userID uuid.UUID, amoun
 	// 0. Verify PIN
 	if err := s.userSvc.VerifyPin(ctx, userID, pin); err != nil {
 		return nil, err
+	}
+
+	// Verify user has registered bank account
+	registeredBank, err := s.userSvc.GetBankAccount(ctx, userID)
+	if err != nil || registeredBank == nil {
+		return nil, errors.New("rekening penarikan belum didaftarkan oleh admin, silakan hubungi admin")
+	}
+
+	// Override destMetadata with the registered bank details
+	destMetadata = map[string]interface{}{
+		"bank_name":    registeredBank.BankName,
+		"account_no":   registeredBank.AccountNo,
+		"account_name": registeredBank.AccountName,
 	}
 
 	if amount <= 0 {

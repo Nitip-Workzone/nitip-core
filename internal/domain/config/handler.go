@@ -94,7 +94,9 @@ func (h *Handler) AdminUpdateConfig(c *fiber.Ctx) error {
 // @Success      200  {object}  response.envelope
 // @Router       /configs/public [get]
 func (h *Handler) GetPublicConfig(c *fiber.Ctx) error {
+	schedule := h.service.GetValue(c.Context(), "withdrawal_schedule", "Setiap hari pukul 09:00 WITA")
 	return response.Success(c, "konfigurasi publik berhasil diambil", fiber.Map{
 		"kyc_verification_required": !config.App.BypassKYCValidation,
+		"withdrawal_schedule":        schedule,
 	})
 }
