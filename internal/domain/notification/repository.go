@@ -70,7 +70,7 @@ func (r *repository) MarkAllAsRead(ctx context.Context, userID uuid.UUID) error 
 func (r *repository) DeleteOld(ctx context.Context, cutoffDays int) (int64, error) {
 	res, err := r.db.NewDelete().
 		Model((*Notification)(nil)).
-		Where("created_at < NOW() - INTERVAL '? days'", cutoffDays).
+		Where("created_at < NOW() - (? * INTERVAL '1 day')", cutoffDays).
 		Exec(ctx)
 	if err != nil {
 		return 0, err
