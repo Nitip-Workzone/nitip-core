@@ -46,6 +46,7 @@ func (h *Handler) RegisterRoutes(router fiber.Router) {
 	g.Put("/fcm-token", middleware.Protected(h.db, h.redis), h.UpdateFcmToken)
 	g.Put("/accepting-orders", middleware.Protected(h.db, h.redis), middleware.Role(RoleRunner), h.UpdateAcceptingOrders)
 	g.Post("/location", middleware.Protected(h.db, h.redis), middleware.Role(RoleRunner), h.UpdateLocation)
+	g.Post("/heartbeat", middleware.Protected(h.db, h.redis), middleware.Role(RoleRunner), h.Heartbeat)
 	// g.Get("/location/stream", middleware.Protected(h.db, h.redis), websocket.New(h.StreamLocation))
 
 	// Admin-only User Management
@@ -416,27 +417,16 @@ func (h *Handler) AdminSuspendUser(c *fiber.Ctx) error {
 // @Failure      404  {object}  response.envelope
 // @Router       /users/me [get]
 func (h *Handler) GetMe(c *fiber.Ctx) error {
-	// 1. Get claims from context (set by Protected middleware)
 	userClaims, ok := c.Locals("user").(*jwt.CustomClaims)
 	if !ok {
 		return response.Unauthorized(c, "tidak memiliki akses: token tidak valid")
 	}
 
-	// 2. Fetch user from DB to get latest non-sensitive info
 	user, err := h.service.GetByID(c.Context(), userClaims.UserID, userClaims.UserID)
 	if err != nil {
 		return response.NotFound(c, "profil pengguna tidak ditemukan")
 	}
 
-	// 3. Optional: Passive location update if X-Location header is present
-	if loc := c.Get("X-Location"); loc != "" {
-		var lat, lng float64
-		if n, _ := fmt.Sscanf(loc, "%f,%f", &lat, &lng); n == 2 {
-			_ = h.service.UpdateLocation(c.Context(), userClaims.UserID, lat, lng)
-		}
-	}
-
-	// Note: Password field is already excluded via json:"-" tags in User model.
 	return response.Success(c, "profil berhasil diambil", user)
 }
 
@@ -620,6 +610,63 @@ func (h *Handler) UpdateLocation(c *fiber.Ctx) error {
 type LocationUpdate struct {
 	Lat float64 `json:"lat"`
 	Lng float64 `json:"lng"`
+}
+
+// Heartbeat godoc
+// @Summary      Runner Heartbeat for Live Tracking
+// @Description  Dedicated lightweight endpoint for runner location heartbeat. Only active when online, has active trip, active orders, and app foreground.
+// @Tags         [Runner] Tracking
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        body  body      HeartbeatRequest  true  "Heartbeat payload"
+// @Success      200  {object}  response.envelope{data=map[string]interface{}}
+// @Failure      400  {object}  response.envelope
+// @Failure      403  {object}  response.envelope
+// @Router       /users/heartbeat [post]
+func (h *Handler) Heartbeat(c *fiber.Ctx) error {
+	claims := c.Locals("user").(*jwt.CustomClaims)
+
+	var req HeartbeatRequest
+	if err := c.BodyParser(&req); err != nil {
+		return response.BadRequest(c, "format permintaan tidak valid")
+	}
+
+	if errs := validator.Validate(req); errs != nil {
+		return response.ValidationFailed(c, errs)
+	}
+
+	// Validate heartbeat conditions server-side
+	user, err := h.service.GetByID(c.Context(), claims.UserID, claims.UserID)
+	if err != nil {
+		return response.NotFound(c, "pengguna tidak ditemukan")
+	}
+
+	if !user.IsAcceptingOrders {
+		return response.Forbidden(c, "heartbeat hanya diperbolehkan saat status online")
+	}
+
+	if !req.IsForeground {
+		return response.Success(c, "heartbeat diabaikan karena aplikasi background", fiber.Map{
+			"status": "ignored_background",
+		})
+	}
+
+	if req.ActiveOrders == 0 && (req.TripID == nil || *req.TripID == "") {
+		return response.Success(c, "heartbeat diabaikan karena tidak ada trip/order aktif", fiber.Map{
+			"status": "ignored_no_task",
+		})
+	}
+
+	if err := h.service.UpdateHeartbeat(c.Context(), claims.UserID, req); err != nil {
+		return response.InternalError(c, err.Error())
+	}
+
+	return response.Success(c, "heartbeat berhasil", fiber.Map{
+		"status": "ok",
+		"lat":    req.Lat,
+		"lng":    req.Lng,
+	})
 }
 
 // StreamLocation godoc
@@ -995,4 +1042,3 @@ func (h *Handler) AdminRegisterBankAccount(c *fiber.Ctx) error {
 
 	return response.Success(c, "rekening pengguna berhasil didaftarkan oleh admin", nil)
 }
-

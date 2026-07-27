@@ -17,9 +17,9 @@ import (
 	"github.com/codecoffy/nitip-core/internal/storage"
 	"github.com/codecoffy/nitip-core/pkg/jwt"
 	"github.com/google/uuid"
+	"github.com/pquerna/otp/totp"
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/crypto/bcrypt"
-	"github.com/pquerna/otp/totp"
 )
 
 type CreateUserRequest struct {
@@ -40,7 +40,6 @@ type AdminCreateUserRequest struct {
 	IsVerified     bool   `json:"is_verified"`
 	AdminPassword  string `json:"admin_password"  validate:"required"`
 }
-
 
 type LoginRequest struct {
 	Email    string `json:"email"    validate:"required,email"`
@@ -117,6 +116,7 @@ type Service interface {
 	UpdateTrustScore(ctx context.Context, id, actorID uuid.UUID, score int) error
 	UpdateSuspendStatus(ctx context.Context, id, actorID uuid.UUID, isSuspended bool, reason string) error
 	UpdateLocation(ctx context.Context, id uuid.UUID, lat, lng float64) error
+	UpdateHeartbeat(ctx context.Context, id uuid.UUID, req HeartbeatRequest) error
 	UpdateHome(ctx context.Context, id uuid.UUID, req UpdateHomeRequest) error
 	UpdateProfile(ctx context.Context, id uuid.UUID, req UpdateProfileRequest, avatarFile io.Reader, avatarFilename string) error
 	UpdateAcceptingOrders(ctx context.Context, id uuid.UUID, isAccepting bool) error
@@ -248,7 +248,6 @@ func (s *service) AdminCreate(ctx context.Context, req AdminCreateUserRequest) (
 	user.ComputeHasPin()
 	return user, nil
 }
-
 
 func (s *service) Login(ctx context.Context, req LoginRequest, platform string) (*LoginResponse, error) {
 	isDev := os.Getenv("APP_ENV") != "production"
@@ -603,8 +602,75 @@ func (s *service) UpdateLocation(ctx context.Context, id uuid.UUID, lat, lng flo
 				Longitude: lng,
 				Latitude:  lat,
 			})
-			// Optional: Set expiration for members in GEO set is not possible directly,
-			// but we can cleanup stale members in a background task if needed.
+		}
+	}
+
+	return nil
+}
+
+func (s *service) UpdateHeartbeat(ctx context.Context, id uuid.UUID, req HeartbeatRequest) error {
+	// Dedup by distance: if moved < 15m in last heartbeat, skip DB write, only refresh Redis TTL
+	lastKey := fmt.Sprintf("runner:heartbeat:last:%s", id.String())
+	if s.redis != nil {
+		if lastVal, err := s.redis.Get(ctx, lastKey); err == nil && lastVal != "" {
+			var lastLat, lastLng float64
+			if _, err := fmt.Sscanf(lastVal, "%f,%f", &lastLat, &lastLng); err == nil {
+				// Rough distance ~111km per degree; 0.000135 deg ~15m
+				distLat := (req.Lat - lastLat) * 111000
+				distLng := (req.Lng - lastLng) * 111000
+				dist := distLat*distLat + distLng*distLng
+				if dist < 225 { // 15*15 = 225m^2
+					// Only refresh TTL, no DB write
+					trackKey := "runner:track:" + id.String()
+					_ = s.redis.Client().Expire(ctx, trackKey, 10*time.Minute)
+					_ = s.redis.Set(ctx, lastKey, fmt.Sprintf("%f,%f", req.Lat, req.Lng), 10*time.Minute)
+					return nil
+				}
+			}
+		}
+	}
+
+	u, err := s.repo.FindByID(ctx, id)
+	if err != nil {
+		return err
+	}
+
+	if u.Role != RoleRunner {
+		return errors.New("hanya runner yang dapat mengirim heartbeat")
+	}
+
+	if !u.IsAcceptingOrders {
+		return errors.New("heartbeat hanya saat status online")
+	}
+
+	u.LastLat = &req.Lat
+	u.LastLng = &req.Lng
+	u.UpdatedAt = time.Now()
+	if err := s.repo.Update(ctx, u); err != nil {
+		return err
+	}
+
+	if s.redis != nil {
+		// Store last known for distance dedup
+		_ = s.redis.Set(ctx, lastKey, fmt.Sprintf("%f,%f", req.Lat, req.Lng), 10*time.Minute)
+
+		// Live track key
+		trackKey := "runner:track:" + id.String()
+		val := fmt.Sprintf("%f,%f,%d", req.Lat, req.Lng, time.Now().Unix())
+		_ = s.redis.Set(ctx, trackKey, val, 10*time.Minute)
+
+		// GEO set
+		_ = s.redis.Client().GeoAdd(ctx, "runners_live", &redis.GeoLocation{
+			Name:      id.String(),
+			Longitude: req.Lng,
+			Latitude:  req.Lat,
+		})
+
+		// Optional: store trip context for observability
+		if req.TripID != nil && *req.TripID != "" {
+			hbMetaKey := fmt.Sprintf("runner:heartbeat:meta:%s", id.String())
+			metaVal := fmt.Sprintf("trip=%s|orders=%d|fg=%v", *req.TripID, req.ActiveOrders, req.IsForeground)
+			_ = s.redis.Set(ctx, hbMetaKey, metaVal, 10*time.Minute)
 		}
 	}
 

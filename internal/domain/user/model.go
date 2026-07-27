@@ -68,6 +68,14 @@ func (u *User) MaskSensitiveData() {
 	}
 }
 
+type HeartbeatRequest struct {
+	Lat          float64 `json:"lat" validate:"required,latitude"`
+	Lng          float64 `json:"lng" validate:"required,longitude"`
+	TripID       *string `json:"trip_id,omitempty" validate:"omitempty,uuid4"`
+	ActiveOrders int     `json:"active_orders" validate:"omitempty,gte=0"`
+	IsForeground bool    `json:"is_foreground" validate:"omitempty"`
+}
+
 type UserBankAccount struct {
 	bun.BaseModel `bun:"table:user_bank_accounts,alias:uba"`
 
