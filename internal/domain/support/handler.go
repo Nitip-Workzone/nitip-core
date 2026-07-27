@@ -423,25 +423,20 @@ func (h *Handler) CloseTicketCS(c *fiber.Ctx) error {
 }
 
 func (h *Handler) GetStats(c *fiber.Ctx) error {
-	// Simple stats
-	queue, queueTotal, _ := h.service.ListQueueTickets(c.Context(), 1, 0)
-	_, totalAll, _ := h.service.ListAllTickets(c.Context(), "", "", "", nil, 1, 0)
-	assigned, assignedTotal, _ := h.service.ListAllTickets(c.Context(), StatusAssigned, "", "", nil, 1, 0)
-	inProg, inProgTotal, _ := h.service.ListAllTickets(c.Context(), StatusInProgress, "", "", nil, 1, 0)
-	resolved, resolvedTotal, _ := h.service.ListAllTickets(c.Context(), StatusResolved, "", "", nil, 1, 0)
-
-	_ = queue // avoid unused
-
+	stats, err := h.service.GetStats(c.Context())
+	if err != nil {
+		return response.InternalError(c, err.Error())
+	}
 	return response.Success(c, "statistik berhasil diambil", fiber.Map{
-		"queue_count":         queueTotal,
-		"total_count":         totalAll,
-		"assigned_count":      assignedTotal,
-		"in_progress_count":   inProgTotal,
-		"resolved_count":      resolvedTotal,
-		"_debug_queue_sample": queue,
-		"_debug_assigned":     assigned,
-		"_debug_inprog":       inProg,
-		"_debug_resolved":     resolved,
+		"queue_count":        stats["queue"],
+		"open_count":         stats["open"],
+		"queued_count":       stats["queued"],
+		"total_count":        stats["total"],
+		"assigned_count":     stats["assigned"],
+		"in_progress_count":  stats["in_progress"],
+		"waiting_user_count": stats["waiting_user"],
+		"resolved_count":     stats["resolved"],
+		"closed_count":       stats["closed"],
 	})
 }
 

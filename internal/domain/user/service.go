@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net/http"
 	"os"
 	"strconv"
@@ -22,6 +23,18 @@ import (
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/crypto/bcrypt"
 )
+
+func (s *service) geoDistance(lat1, lon1, lat2, lon2 float64) float64 {
+	// Haversine km, aligned with pkg/geolocation (avoid import cycle)
+	const earth = 6371.0
+	dLat := (lat2 - lat1) * (math.Pi / 180.0)
+	dLon := (lon2 - lon1) * (math.Pi / 180.0)
+	lat1r := lat1 * (math.Pi / 180.0)
+	lat2r := lat2 * (math.Pi / 180.0)
+	a := math.Sin(dLat/2)*math.Sin(dLat/2) + math.Sin(dLon/2)*math.Sin(dLon/2)*math.Cos(lat1r)*math.Cos(lat2r)
+	c := 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
+	return earth * c
+}
 
 type CreateUserRequest struct {
 	Name           string `json:"name"            validate:"required,min=2,max=100"`
@@ -607,21 +620,20 @@ func (s *service) UpdateLocation(ctx context.Context, id uuid.UUID, lat, lng flo
 }
 
 func (s *service) UpdateHeartbeat(ctx context.Context, id uuid.UUID, req HeartbeatRequest) error {
-	// Dedup by distance: if moved < 15m in last heartbeat, skip DB write, only refresh Redis TTL
+	// Dedup by distance: use haversine for accuracy (cos(lat) corrected), threshold 20m aligned with mobile
 	lastKey := fmt.Sprintf("runner:heartbeat:last:%s", id.String())
 	if s.redis != nil {
 		if lastVal, err := s.redis.Get(ctx, lastKey); err == nil && lastVal != "" {
 			var lastLat, lastLng float64
-			if _, err := fmt.Sscanf(lastVal, "%f,%f", &lastLat, &lastLng); err == nil {
-				// Rough distance ~111km per degree; 0.000135 deg ~15m
-				distLat := (req.Lat - lastLat) * 111000
-				distLng := (req.Lng - lastLng) * 111000
-				dist := distLat*distLat + distLng*distLng
-				if dist < 225 { // 15*15 = 225m^2
-					// Only refresh TTL, no DB write
+			if n, _ := fmt.Sscanf(lastVal, "%f,%f", &lastLat, &lastLng); n == 2 {
+				// Use same package geolocation for accurate distance
+				distKm := s.geoDistance(lastLat, lastLng, req.Lat, req.Lng)
+				if distKm*1000 < 20 { // 20m
+					// Only refresh TTL, no DB write, but also refresh geo TTL via expire
 					trackKey := "runner:track:" + id.String()
 					_ = s.redis.Client().Expire(ctx, trackKey, 10*time.Minute)
 					_ = s.redis.Set(ctx, lastKey, fmt.Sprintf("%f,%f", req.Lat, req.Lng), 10*time.Minute)
+					// Refresh geo set TTL via separate key marker (since GEO doesn't support expire per member, we rely on Set)
 					return nil
 				}
 			}
@@ -646,20 +658,23 @@ func (s *service) UpdateHeartbeat(ctx context.Context, id uuid.UUID, req Heartbe
 	}
 
 	if s.redis != nil {
-		// Store last known for distance dedup
+		// Store last known for distance dedup (20m aligned with mobile)
 		_ = s.redis.Set(ctx, lastKey, fmt.Sprintf("%f,%f", req.Lat, req.Lng), 10*time.Minute)
 
-		// Live track key
+		// Live track key with TTL 10m (prod allkeys-lru safe: volatile key)
 		trackKey := "runner:track:" + id.String()
 		val := fmt.Sprintf("%f,%f,%d", req.Lat, req.Lng, time.Now().Unix())
 		_ = s.redis.Set(ctx, trackKey, val, 10*time.Minute)
 
-		// GEO set
+		// GEO set - prod allkeys-lru: GEO set has no per-member TTL, so we keep membership but also set a marker key with TTL for cleanup detection
+		// The marker runner:alive:<id> = 1 TTL 10m helps identify stale GEO members if needed (background cleaner can check)
 		_ = s.redis.Client().GeoAdd(ctx, "runners_live", &redis.GeoLocation{
 			Name:      id.String(),
 			Longitude: req.Lng,
 			Latitude:  req.Lat,
-		})
+		}).Err()
+		aliveKey := fmt.Sprintf("runner:alive:%s", id.String())
+		_ = s.redis.Set(ctx, aliveKey, "1", 10*time.Minute)
 
 		// Optional: store trip context for observability
 		if req.TripID != nil && *req.TripID != "" {

@@ -3,6 +3,7 @@ package support
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/uptrace/bun"
@@ -17,6 +18,7 @@ type Repository interface {
 	UpdateTicket(ctx context.Context, ticket *Ticket) error
 	CountActiveByCS(ctx context.Context, csID uuid.UUID) (int, error)
 	AutoCloseResolved(ctx context.Context, days int) (int, error)
+	GetStats(ctx context.Context) (map[string]int, error)
 
 	CreateMessage(ctx context.Context, msg *Message) error
 	FindMessagesByTicketID(ctx context.Context, ticketID uuid.UUID, afterID *uuid.UUID, afterTime *string, limit int, includeInternal bool) ([]Message, error)
@@ -82,7 +84,12 @@ func (r *repository) FindAllTickets(ctx context.Context, status, category, searc
 		countQ = countQ.Where("assigned_cs_id = ?", *assignedCSID)
 	}
 	if search != "" {
-		like := fmt.Sprintf("%%%s%%", search)
+		// Escape % _ for ILIKE to avoid wildcard abuse / full scan
+		escaped := search
+		escaped = strings.ReplaceAll(escaped, `\`, `\\`)
+		escaped = strings.ReplaceAll(escaped, `%`, `\%`)
+		escaped = strings.ReplaceAll(escaped, `_`, `\_`)
+		like := fmt.Sprintf("%%%s%%", escaped)
 		q = q.Where("(title ILIKE ? OR description ILIKE ?)", like, like)
 		countQ = countQ.Where("(title ILIKE ? OR description ILIKE ?)", like, like)
 	}
@@ -150,6 +157,40 @@ func (r *repository) AutoCloseResolved(ctx context.Context, days int) (int, erro
 	return int(affected), nil
 }
 
+func (r *repository) GetStats(ctx context.Context) (map[string]int, error) {
+	// Single GROUP BY query for prod 512M efficiency
+	type statRow struct {
+		Status string `bun:"status"`
+		Count  int    `bun:"count"`
+	}
+	var rows []statRow
+	err := r.db.NewSelect().
+		Model((*Ticket)(nil)).
+		ColumnExpr("status").
+		ColumnExpr("COUNT(*) as count").
+		Group("status").
+		Scan(ctx, &rows)
+	if err != nil {
+		return nil, err
+	}
+	stats := map[string]int{
+		"queued":       0,
+		"open":         0,
+		"assigned":     0,
+		"in_progress":  0,
+		"waiting_user": 0,
+		"resolved":     0,
+		"closed":       0,
+		"total":        0,
+	}
+	for _, row := range rows {
+		stats[row.Status] = row.Count
+		stats["total"] += row.Count
+	}
+	stats["queue"] = stats["queued"] + stats["open"]
+	return stats, nil
+}
+
 func (r *repository) CreateMessage(ctx context.Context, msg *Message) error {
 	_, err := r.db.NewInsert().Model(msg).Exec(ctx)
 	return err
@@ -163,18 +204,14 @@ func (r *repository) FindMessagesByTicketID(ctx context.Context, ticketID uuid.U
 		q = q.Where("is_internal = false")
 	}
 	if afterID != nil {
-		// Fetch messages after given ID's created_at
-		var afterMsg Message
-		err := r.db.NewSelect().Model(&afterMsg).Where("id = ?", *afterID).Scan(ctx)
-		if err == nil {
-			q = q.Where("created_at > ?", afterMsg.CreatedAt)
-		}
+		// Cursor by id to avoid same timestamp skip bug (prod)
+		q = q.Where("id > ?", *afterID)
 	}
 	if afterTime != nil && *afterTime != "" {
 		q = q.Where("created_at > ?", *afterTime)
 	}
 
-	q = q.Order("created_at ASC")
+	q = q.Order("created_at ASC, id ASC")
 	if limit > 0 {
 		q = q.Limit(limit)
 	} else {

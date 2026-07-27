@@ -18,6 +18,7 @@ type Service interface {
 	ListMyTickets(ctx context.Context, userID uuid.UUID, limit, offset int) ([]Ticket, error)
 	ListAllTickets(ctx context.Context, status, category, search string, assignedCSID *uuid.UUID, limit, offset int) ([]Ticket, int, error)
 	ListQueueTickets(ctx context.Context, limit, offset int) ([]Ticket, int, error)
+	GetStats(ctx context.Context) (map[string]int, error)
 	ClaimTicket(ctx context.Context, ticketID, csID uuid.UUID) (*Ticket, error)
 	ReleaseTicket(ctx context.Context, ticketID, csID uuid.UUID) (*Ticket, error)
 	ResolveTicket(ctx context.Context, ticketID, csID uuid.UUID) (*Ticket, error)
@@ -173,20 +174,16 @@ func (s *service) ClaimTicket(ctx context.Context, ticketID, csID uuid.UUID) (*T
 	}
 
 	now := time.Now()
+	// Single atomic transition: queued/open -> in_progress (skip intermediate assigned to avoid double-write race on prod 512M OOM)
 	t.AssignedCSID = &csID
-	t.Status = StatusAssigned
+	t.Status = StatusInProgress
 	t.UpdatedAt = now
 
 	if err := s.repo.UpdateTicket(ctx, t); err != nil {
 		return nil, err
 	}
 
-	// Auto transition to in_progress after claim
-	t.Status = StatusInProgress
-	t.UpdatedAt = now
-	_ = s.repo.UpdateTicket(ctx, t)
-
-	s.auditSvc.Log(ctx, &csID, "CLAIM_SUPPORT_TICKET", "support_ticket", ticketID.String(), nil, map[string]interface{}{"cs_id": csID}, "", "")
+	s.auditSvc.Log(ctx, &csID, "CLAIM_SUPPORT_TICKET", "support_ticket", ticketID.String(), nil, map[string]interface{}{"cs_id": csID, "new_status": StatusInProgress}, "", "")
 
 	// Notify user
 	_ = s.notifSvc.CreateNotification(ctx, notifDomain.CreateNotificationRequest{
@@ -444,6 +441,10 @@ func (s *service) UpdateFAQ(ctx context.Context, id uuid.UUID, req UpdateFAQRequ
 
 func (s *service) DeleteFAQ(ctx context.Context, id uuid.UUID) error {
 	return s.repo.DeleteFAQ(ctx, id)
+}
+
+func (s *service) GetStats(ctx context.Context) (map[string]int, error) {
+	return s.repo.GetStats(ctx)
 }
 
 func (s *service) StartAutoCloseWorker(ctx context.Context) {

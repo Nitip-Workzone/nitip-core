@@ -5,6 +5,7 @@ import (
 	"log"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/codecoffy/nitip-core/config"
 	"github.com/codecoffy/nitip-core/internal/cache"
@@ -53,11 +54,28 @@ func NewService(userRepo user.Repository, tripRepo trip.Repository, orderRepo or
 }
 
 func (s *service) EnqueueMatching(orderID uuid.UUID) {
-	select {
-	case s.jobQueue <- orderID:
-		// Enqueued successfully
-	default:
-		log.Printf("Matching queue full, dropping order %s", orderID)
+	// P0 fix: retry 3x with backoff instead of silent drop (prod 512M burst safety)
+	for attempt := 0; attempt < 3; attempt++ {
+		select {
+		case s.jobQueue <- orderID:
+			return
+		default:
+			if attempt < 2 {
+				// brief backoff
+				log.Printf("[matching] queue full, retry %d for order %s", attempt+1, orderID)
+				// non-blocking sleep to allow workers to drain
+				time.Sleep(time.Duration(100*(attempt+1)) * time.Millisecond)
+				continue
+			}
+			// Last attempt: try spill to redis stream if available
+			if s.redis != nil {
+				if err := s.redis.Client().LPush(context.Background(), "matching:overflow", orderID.String()).Err(); err == nil {
+					log.Printf("[matching] order %s spilled to redis overflow list", orderID)
+					return
+				}
+			}
+			log.Printf("[matching] CRITICAL queue full after retries, dropping order %s", orderID)
+		}
 	}
 }
 

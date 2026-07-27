@@ -906,8 +906,14 @@ func (s *service) CancelOrder(ctx context.Context, orderID, userID uuid.UUID, re
 		}
 	}
 
-	// 3. Conditional cancel (>30 mins stagnant status)
+	// 3. Conditional cancel with strict guard for runner/merchant (prod fraud protection)
 	if !isNormalCancel {
+		// Runner/Merchant only allowed to cancel before goods purchased / delivering
+		if isRunner || isMerchantOwner {
+			if ord.Status == StatusPurchasing || ord.Status == StatusDelivering || ord.Status == StatusCompleted || ord.Status == StatusCancelled {
+				return errors.New("pesanan dalam tahap pembelian/pengiriman tidak dapat dibatalkan oleh runner/merchant, hubungi admin")
+			}
+		}
 		if time.Since(ord.UpdatedAt) <= 30*time.Minute {
 			return errors.New("pembatalan tidak diizinkan kecuali status pesanan stagnan (tidak berubah) lebih dari 30 menit")
 		}
@@ -982,17 +988,38 @@ func (s *service) CancelOrder(ctx context.Context, orderID, userID uuid.UUID, re
 				Title:    "Pesanan Dibatalkan Runner",
 				Message:  fmt.Sprintf("Runner membatalkan pesanan %s. Alasan: %s", ord.ItemDetails, reason),
 				Type:     "order",
-				Metadata: map[string]interface{}{"order_id": ord.ID.String(), "status": StatusCancelled},
+				Metadata: map[string]interface{}{"order_id": ord.ID.String(), "status": StatusCancelled, "reason": reason},
 			})
+			if ord.MerchantID != nil {
+				merch, _ := s.merchantSvc.GetMerchantByID(ctx, *ord.MerchantID)
+				if merch != nil {
+					_ = s.notifSvc.CreateNotification(ctx, notifDomain.CreateNotificationRequest{
+						UserID:   merch.OwnerID,
+						Title:    "Pesanan Dibatalkan Runner",
+						Message:  fmt.Sprintf("Runner membatalkan pesanan merchant %s. Alasan: %s", ord.ItemDetails, reason),
+						Type:     "order",
+						Metadata: map[string]interface{}{"order_id": ord.ID.String(), "status": StatusCancelled, "reason": reason},
+					})
+				}
+			}
 		}
-		if isMerchantOwner && ord.RunnerID != nil {
+		if isMerchantOwner {
 			_ = s.notifSvc.CreateNotification(ctx, notifDomain.CreateNotificationRequest{
-				UserID:   *ord.RunnerID,
-				Title:    "Pesanan Merchant Dibatalkan",
-				Message:  fmt.Sprintf("Merchant membatalkan pesanan %s: %s", ord.ItemDetails, reason),
+				UserID:   ord.RequesterID,
+				Title:    "Pesanan Dibatalkan Merchant",
+				Message:  fmt.Sprintf("Merchant membatalkan pesanan %s. Alasan: %s", ord.ItemDetails, reason),
 				Type:     "order",
-				Metadata: map[string]interface{}{"order_id": ord.ID.String()},
+				Metadata: map[string]interface{}{"order_id": ord.ID.String(), "status": StatusCancelled, "reason": reason},
 			})
+			if ord.RunnerID != nil {
+				_ = s.notifSvc.CreateNotification(ctx, notifDomain.CreateNotificationRequest{
+					UserID:   *ord.RunnerID,
+					Title:    "Pesanan Merchant Dibatalkan",
+					Message:  fmt.Sprintf("Merchant membatalkan pesanan %s: %s", ord.ItemDetails, reason),
+					Type:     "order",
+					Metadata: map[string]interface{}{"order_id": ord.ID.String(), "status": StatusCancelled, "reason": reason},
+				})
+			}
 		}
 	}
 
@@ -1070,12 +1097,20 @@ func (s *service) CompleteOrder(ctx context.Context, orderID, runnerID uuid.UUID
 	}
 
 	isForceComplete := time.Since(order.UpdatedAt) > 30*time.Minute
-	if !isForceComplete && order.CompletionCode != code {
-		return errors.New("kode konfirmasi salah")
-	}
-
-	if isForceComplete && deliveryReader == nil {
-		return errors.New("foto bukti penyerahan wajib diunggah untuk menyelesaikan pesanan tanpa kode PIN/QR")
+	if !isForceComplete {
+		if order.CompletionCode != code {
+			return errors.New("kode konfirmasi salah")
+		}
+	} else {
+		// Prod hardening: force complete (>30m) must still have delivery proof + still check code if provided
+		// If code provided, it must be correct; if not provided, require delivery proof and mark as force
+		if code != "" && order.CompletionCode != code {
+			return errors.New("kode konfirmasi salah (mode force)")
+		}
+		if deliveryReader == nil {
+			return errors.New("foto bukti penyerahan wajib diunggah untuk menyelesaikan pesanan tanpa kode PIN/QR (mode force)")
+		}
+		// Force flag will be audited in transaction
 	}
 
 	var path string
@@ -1142,8 +1177,8 @@ func (s *service) CompleteOrder(ctx context.Context, orderID, runnerID uuid.UUID
 			return err
 		}
 
-		// Audit Log (Transactional)
-		s.auditSvc.LogWithDB(ctx, tx, &runnerID, audit.ActionOrderComplete, "order", orderID.String(), nil, map[string]interface{}{"status": StatusCompleted, "delivery_image_url": path}, "", "")
+		// Audit Log (Transactional) with force flag for prod fraud detection
+		s.auditSvc.LogWithDB(ctx, tx, &runnerID, audit.ActionOrderComplete, "order", orderID.String(), nil, map[string]interface{}{"status": StatusCompleted, "delivery_image_url": path, "is_force": isForceComplete, "has_code": code != ""}, "", "")
 
 		return nil
 	})
