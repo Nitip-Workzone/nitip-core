@@ -35,6 +35,7 @@ func (h *Handler) RegisterRoutes(router fiber.Router) {
 	owner := router.Group("/merchant", middleware.Protected(h.db, h.redis), middleware.Role(user.RoleMerchant))
 	owner.Get("/profile", h.GetProfile)
 	owner.Post("/profile", h.CreateProfile)
+	owner.Put("/profile", h.UpdateProfile)
 	owner.Put("/status", h.UpdateStatus)
 	owner.Get("/menu", h.ListMenuMerchant)
 	owner.Post("/menu", h.CreateMenu)
@@ -152,6 +153,39 @@ func (h *Handler) CreateProfile(c *fiber.Ctx) error {
 	}
 
 	return response.Success(c, "profil merchant berhasil dilengkapi", m)
+}
+
+type updateProfileRequest struct {
+	Name        string  `json:"name" validate:"required,min=2,max=100"`
+	Description string  `json:"description" validate:"omitempty,max=500"`
+	Address     string  `json:"address" validate:"required,max=500"`
+	Latitude    float64 `json:"latitude" validate:"required,latitude"`
+	Longitude   float64 `json:"longitude" validate:"required,longitude"`
+	Category    string  `json:"category" validate:"required,oneof=food laundry mart"`
+}
+
+func (h *Handler) UpdateProfile(c *fiber.Ctx) error {
+	claims := c.Locals("user").(*jwt.CustomClaims)
+	m, err := h.service.GetMerchantByOwnerID(c.Context(), claims.UserID)
+	if err != nil {
+		return response.NotFound(c, "profil merchant tidak ditemukan")
+	}
+
+	var req updateProfileRequest
+	if err := c.BodyParser(&req); err != nil {
+		return response.BadRequest(c, "format permintaan tidak valid")
+	}
+	if errs := validator.Validate(req); errs != nil {
+		return response.ValidationFailed(c, errs)
+	}
+
+	// Update only identity fields, keep status flags
+	updated, err := h.service.UpdateMerchant(c.Context(), m.ID, req.Name, req.Description, req.Address, req.Latitude, req.Longitude, req.Category, m.MaxActiveOrders)
+	if err != nil {
+		return response.InternalError(c, err.Error())
+	}
+
+	return response.Success(c, "profil merchant berhasil diperbarui", updated)
 }
 
 type merchantUpdateStatusRequest struct {

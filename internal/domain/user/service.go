@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/codecoffy/nitip-core/internal/cache"
@@ -60,15 +61,15 @@ type RefreshRequest struct {
 }
 
 type UpdateHomeRequest struct {
-	Lat     float64 `json:"lat"     validate:"required"`
-	Lng     float64 `json:"lng"     validate:"required"`
-	Address string  `json:"address" validate:"required"`
+	Lat     float64 `json:"lat"     validate:"required,latitude"`
+	Lng     float64 `json:"lng"     validate:"required,longitude"`
+	Address string  `json:"address" validate:"required,max=500"`
 }
 
 type UpdateProfileRequest struct {
 	Name           string `json:"name"            form:"name"            validate:"required,min=2,max=100"`
-	WhatsappNumber string `json:"whatsapp_number" form:"whatsapp_number" validate:"required,min=9,max=15,numeric"`
-	HomeAddress    string `json:"home_address"    form:"home_address"    validate:"omitempty"`
+	WhatsappNumber string `json:"whatsapp_number" form:"whatsapp_number" validate:"required,min=9,max=20"`
+	HomeAddress    string `json:"home_address"    form:"home_address"    validate:"omitempty,max=500"`
 }
 
 type SetupPinRequest struct {
@@ -710,9 +711,15 @@ func (s *service) UpdateProfile(ctx context.Context, id uuid.UUID, req UpdatePro
 		return err
 	}
 
+	// Sanitize whatsapp: strip non-digit, 0->62
+	sanitizedWa := sanitizeWhatsappNumber(req.WhatsappNumber)
+
 	u.Name = req.Name
-	u.WhatsappNumber = req.WhatsappNumber
-	if req.HomeAddress != "" {
+	u.WhatsappNumber = sanitizedWa
+	// Allow clearing home_address: if empty string set to nil, else set pointer
+	if req.HomeAddress == "" {
+		u.HomeAddress = nil
+	} else {
 		u.HomeAddress = &req.HomeAddress
 	}
 
@@ -721,6 +728,11 @@ func (s *service) UpdateProfile(ctx context.Context, id uuid.UUID, req UpdatePro
 		size, err := io.Copy(&buf, avatarFile)
 		if err != nil {
 			return fmt.Errorf("failed to read avatar file: %w", err)
+		}
+
+		// Defense: size check also in service (in case called without handler check)
+		if size > 5*1024*1024 {
+			return errors.New("ukuran gambar avatar terlalu besar (maksimal 5MB)")
 		}
 
 		limit := 512
@@ -732,7 +744,22 @@ func (s *service) UpdateProfile(ctx context.Context, id uuid.UUID, req UpdatePro
 			contentType = "image/jpeg"
 		}
 
-		objectKey := fmt.Sprintf("avatars/%s.jpg", id.String())
+		ext := ".jpg"
+		if avatarFilename != "" {
+			// Use original extension if image
+			lower := strings.ToLower(avatarFilename)
+			if strings.HasSuffix(lower, ".png") {
+				ext = ".png"
+			} else if strings.HasSuffix(lower, ".jpeg") || strings.HasSuffix(lower, ".jpg") {
+				ext = ".jpg"
+			} else if strings.HasSuffix(lower, ".webp") {
+				ext = ".webp"
+			} else if strings.HasSuffix(lower, ".gif") {
+				ext = ".gif"
+			}
+		}
+
+		objectKey := fmt.Sprintf("avatars/%s%s", id.String(), ext)
 		path, err := s.storage.Upload(ctx, objectKey, &buf, size, contentType)
 		if err != nil {
 			return fmt.Errorf("failed to upload avatar: %w", err)
@@ -742,6 +769,36 @@ func (s *service) UpdateProfile(ctx context.Context, id uuid.UUID, req UpdatePro
 
 	u.UpdatedAt = time.Now()
 	return s.repo.Update(ctx, u)
+}
+
+func sanitizeWhatsappNumber(phone string) string {
+	if phone == "" {
+		return phone
+	}
+	// Keep digits only first
+	sanitized := phone
+	sanitized = strings.ReplaceAll(sanitized, "+", "")
+	sanitized = strings.ReplaceAll(sanitized, " ", "")
+	sanitized = strings.ReplaceAll(sanitized, "-", "")
+	sanitized = strings.ReplaceAll(sanitized, "(", "")
+	sanitized = strings.ReplaceAll(sanitized, ")", "")
+
+	// If still contains non-digit, strip
+	var digits strings.Builder
+	for _, r := range sanitized {
+		if r >= '0' && r <= '9' {
+			digits.WriteRune(r)
+		}
+	}
+	sanitized = digits.String()
+
+	if strings.HasPrefix(sanitized, "0") {
+		sanitized = "62" + sanitized[1:]
+	}
+	if strings.HasPrefix(sanitized, "8") {
+		sanitized = "62" + sanitized
+	}
+	return sanitized
 }
 
 func (s *service) GetRedis() *cache.Redis {
