@@ -28,9 +28,9 @@ import (
 	"github.com/codecoffy/nitip-core/internal/domain/user"
 	"github.com/codecoffy/nitip-core/internal/domain/wallet"
 	infraFirebase "github.com/codecoffy/nitip-core/internal/infrastructure/firebase"
-	"github.com/codecoffy/nitip-core/internal/storage"
 	applogger "github.com/codecoffy/nitip-core/internal/logger"
 	"github.com/codecoffy/nitip-core/internal/notification"
+	"github.com/codecoffy/nitip-core/internal/storage"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
@@ -178,6 +178,7 @@ func main() {
 	notifSvc := notificationDomain.NewService(notifRepo)
 	notifHandler := notificationDomain.NewHandler(notifSvc, db, redisCache)
 	fiberApp.RegisterRoutes(notifHandler.RegisterRoutes)
+	notifSvc.StartCleanupWorker(context.Background())
 
 	// Init Hub & Chat Domain (PostgreSQL as backend)
 	chatHub = chat.NewHub()

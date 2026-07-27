@@ -23,11 +23,11 @@ import (
 	"github.com/codecoffy/nitip-core/internal/cache"
 	"github.com/codecoffy/nitip-core/internal/domain/audit"
 	systemconfig "github.com/codecoffy/nitip-core/internal/domain/config"
+	"github.com/codecoffy/nitip-core/internal/domain/merchant"
 	notifDomain "github.com/codecoffy/nitip-core/internal/domain/notification"
 	"github.com/codecoffy/nitip-core/internal/domain/trip"
 	"github.com/codecoffy/nitip-core/internal/domain/user"
 	"github.com/codecoffy/nitip-core/internal/domain/wallet"
-	"github.com/codecoffy/nitip-core/internal/domain/merchant"
 	"github.com/codecoffy/nitip-core/internal/notification"
 	"github.com/codecoffy/nitip-core/internal/storage"
 	"github.com/codecoffy/nitip-core/pkg/fileutil"
@@ -833,6 +833,27 @@ func (s *service) PickupOrder(ctx context.Context, orderID, runnerID uuid.UUID) 
 		map[string]interface{}{"status": oldStatus},
 		map[string]interface{}{"status": StatusDelivering}, "", "")
 
+	// In-app notification - runner menuju penitip
+	_ = s.notifSvc.CreateNotification(ctx, notifDomain.CreateNotificationRequest{
+		UserID:  order.RequesterID,
+		Title:   "Pesanan Dalam Perjalanan",
+		Message: fmt.Sprintf("Runner sedang mengantarkan pesanan Anda: %s", order.ItemDetails),
+		Type:    "order",
+		Metadata: map[string]interface{}{
+			"order_id": order.ID.String(),
+			"status":   StatusDelivering,
+		},
+	})
+
+	if s.fcm != nil && config.App.FcmEnabled {
+		reqUser, _ := s.userSvc.GetByID(ctx, order.RequesterID, order.RequesterID)
+		if reqUser != nil && reqUser.FcmToken != nil && *reqUser.FcmToken != "" {
+			_ = s.fcm.SendToDevice(ctx, *reqUser.FcmToken, "Pesanan Dalam Perjalanan",
+				fmt.Sprintf("Runner sedang menuju lokasi Anda untuk pesanan %s", order.ItemDetails),
+				map[string]string{"order_id": order.ID.String(), "type": "order_delivering"})
+		}
+	}
+
 	return nil
 }
 
@@ -936,6 +957,38 @@ func (s *service) CancelOrder(ctx context.Context, orderID, userID uuid.UUID, re
 		}
 		return err
 	})
+
+	if err == nil {
+		// Notify other parties about cancellation
+		if isRequester && ord.RunnerID != nil {
+			// Requester cancels -> notify runner
+			_ = s.notifSvc.CreateNotification(ctx, notifDomain.CreateNotificationRequest{
+				UserID:   *ord.RunnerID,
+				Title:    "Pesanan Dibatalkan",
+				Message:  fmt.Sprintf("Pesanan %s dibatalkan oleh penitip. Alasan: %s", ord.ItemDetails, reason),
+				Type:     "order",
+				Metadata: map[string]interface{}{"order_id": ord.ID.String(), "status": StatusCancelled, "reason": reason},
+			})
+		}
+		if isRunner {
+			_ = s.notifSvc.CreateNotification(ctx, notifDomain.CreateNotificationRequest{
+				UserID:   ord.RequesterID,
+				Title:    "Pesanan Dibatalkan Runner",
+				Message:  fmt.Sprintf("Runner membatalkan pesanan %s. Alasan: %s", ord.ItemDetails, reason),
+				Type:     "order",
+				Metadata: map[string]interface{}{"order_id": ord.ID.String(), "status": StatusCancelled},
+			})
+		}
+		if isMerchantOwner && ord.RunnerID != nil {
+			_ = s.notifSvc.CreateNotification(ctx, notifDomain.CreateNotificationRequest{
+				UserID:   *ord.RunnerID,
+				Title:    "Pesanan Merchant Dibatalkan",
+				Message:  fmt.Sprintf("Merchant membatalkan pesanan %s: %s", ord.ItemDetails, reason),
+				Type:     "order",
+				Metadata: map[string]interface{}{"order_id": ord.ID.String()},
+			})
+		}
+	}
 
 	return err
 }
@@ -1088,6 +1141,44 @@ func (s *service) CompleteOrder(ctx context.Context, orderID, runnerID uuid.UUID
 
 		return nil
 	})
+
+	if err == nil {
+		// In-app notifications untuk penyelesaian
+		_ = s.notifSvc.CreateNotification(ctx, notifDomain.CreateNotificationRequest{
+			UserID:  order.RequesterID,
+			Title:   "Pesanan Selesai",
+			Message: fmt.Sprintf("Pesanan Anda telah selesai: %s. Beri ulasan untuk Runner!", order.ItemDetails),
+			Type:    "order",
+			Metadata: map[string]interface{}{
+				"order_id": order.ID.String(),
+				"status":   StatusCompleted,
+			},
+		})
+		if order.MerchantID != nil {
+			merch, err := s.merchantSvc.GetMerchantByID(ctx, *order.MerchantID)
+			if err == nil && merch != nil {
+				_ = s.notifSvc.CreateNotification(ctx, notifDomain.CreateNotificationRequest{
+					UserID:  merch.OwnerID,
+					Title:   "Pesanan Selesai",
+					Message: fmt.Sprintf("Pesanan %s telah selesai dan dana telah masuk ke saldo Anda.", order.ItemDetails),
+					Type:    "order",
+					Metadata: map[string]interface{}{
+						"order_id": order.ID.String(),
+						"status":   StatusCompleted,
+					},
+				})
+			}
+		}
+
+		if s.fcm != nil && config.App.FcmEnabled {
+			reqUser, _ := s.userSvc.GetByID(ctx, order.RequesterID, order.RequesterID)
+			if reqUser != nil && reqUser.FcmToken != nil && *reqUser.FcmToken != "" {
+				_ = s.fcm.SendToDevice(ctx, *reqUser.FcmToken, "Pesanan Selesai",
+					fmt.Sprintf("Pesanan %s selesai! Beri ulasan sekarang.", order.ItemDetails),
+					map[string]string{"order_id": order.ID.String(), "type": "order_completed"})
+			}
+		}
+	}
 
 	return err
 }
@@ -1298,14 +1389,25 @@ func (s *service) DisputeOrder(ctx context.Context, orderID, requesterID uuid.UU
 	order.UpdatedAt = now
 
 	err = s.repo.Update(ctx, s.db, order)
-	if err == nil && s.fcm != nil && config.App.FcmEnabled && order.RunnerID != nil {
-		runner, _ := s.userSvc.GetByID(ctx, *order.RunnerID, *order.RunnerID)
-		if runner != nil && runner.FcmToken != nil && *runner.FcmToken != "" {
-			_ = s.fcm.SendToDevice(ctx, *runner.FcmToken, "Pesanan Disengketakan",
-				"Penitip membuka sengketa untuk pesanan Anda. Admin akan segera meninjau.", map[string]string{
-					"type":     "order_disputed",
-					"order_id": order.ID.String(),
-				})
+	if err == nil {
+		if order.RunnerID != nil {
+			_ = s.notifSvc.CreateNotification(ctx, notifDomain.CreateNotificationRequest{
+				UserID:   *order.RunnerID,
+				Title:    "Pesanan Disengketakan",
+				Message:  fmt.Sprintf("Penitip membuka sengketa untuk pesanan %s. Alasan: %s", order.ItemDetails, reason),
+				Type:     "order",
+				Metadata: map[string]interface{}{"order_id": order.ID.String(), "type": "order_disputed"},
+			})
+		}
+		if s.fcm != nil && config.App.FcmEnabled && order.RunnerID != nil {
+			runner, _ := s.userSvc.GetByID(ctx, *order.RunnerID, *order.RunnerID)
+			if runner != nil && runner.FcmToken != nil && *runner.FcmToken != "" {
+				_ = s.fcm.SendToDevice(ctx, *runner.FcmToken, "Pesanan Disengketakan",
+					"Penitip membuka sengketa untuk pesanan Anda. Admin akan segera meninjau.", map[string]string{
+						"type":     "order_disputed",
+						"order_id": order.ID.String(),
+					})
+			}
 		}
 	}
 	return err
@@ -1363,8 +1465,8 @@ func (s *service) ResolveDispute(ctx context.Context, orderID uuid.UUID, side st
 
 		return s.repo.Update(ctx, tx, order)
 	})
-	if err == nil && s.fcm != nil && config.App.FcmEnabled {
-		// Notify both parties about resolution
+	if err == nil {
+		// In-app notification
 		msg := "Sengketa pesanan telah diselesaikan oleh Admin."
 		if side == user.RoleRequester {
 			msg += " Dana dikembalikan ke Penitip."
@@ -1372,16 +1474,33 @@ func (s *service) ResolveDispute(ctx context.Context, orderID uuid.UUID, side st
 			msg += " Dana dilepaskan ke Runner."
 		}
 
-		// Notify Requester
-		reqUser, _ := s.userSvc.GetByID(ctx, order.RequesterID, order.RequesterID)
-		if reqUser != nil && reqUser.FcmToken != nil && *reqUser.FcmToken != "" {
-			_ = s.fcm.SendToDevice(ctx, *reqUser.FcmToken, "Sengketa Selesai", msg, map[string]string{"order_id": order.ID.String()})
-		}
-		// Notify Runner
+		_ = s.notifSvc.CreateNotification(ctx, notifDomain.CreateNotificationRequest{
+			UserID:   order.RequesterID,
+			Title:    "Sengketa Selesai",
+			Message:  msg + fmt.Sprintf(" Pesanan: %s", order.ItemDetails),
+			Type:     "order",
+			Metadata: map[string]interface{}{"order_id": order.ID.String(), "type": "dispute_resolved", "winner": side},
+		})
 		if order.RunnerID != nil {
-			runUser, _ := s.userSvc.GetByID(ctx, *order.RunnerID, *order.RunnerID)
-			if runUser != nil && runUser.FcmToken != nil && *runUser.FcmToken != "" {
-				_ = s.fcm.SendToDevice(ctx, *runUser.FcmToken, "Sengketa Selesai", msg, map[string]string{"order_id": order.ID.String()})
+			_ = s.notifSvc.CreateNotification(ctx, notifDomain.CreateNotificationRequest{
+				UserID:   *order.RunnerID,
+				Title:    "Sengketa Selesai",
+				Message:  msg + fmt.Sprintf(" Pesanan: %s", order.ItemDetails),
+				Type:     "order",
+				Metadata: map[string]interface{}{"order_id": order.ID.String(), "type": "dispute_resolved", "winner": side},
+			})
+		}
+
+		if s.fcm != nil && config.App.FcmEnabled {
+			reqUser, _ := s.userSvc.GetByID(ctx, order.RequesterID, order.RequesterID)
+			if reqUser != nil && reqUser.FcmToken != nil && *reqUser.FcmToken != "" {
+				_ = s.fcm.SendToDevice(ctx, *reqUser.FcmToken, "Sengketa Selesai", msg, map[string]string{"order_id": order.ID.String()})
+			}
+			if order.RunnerID != nil {
+				runUser, _ := s.userSvc.GetByID(ctx, *order.RunnerID, *order.RunnerID)
+				if runUser != nil && runUser.FcmToken != nil && *runUser.FcmToken != "" {
+					_ = s.fcm.SendToDevice(ctx, *runUser.FcmToken, "Sengketa Selesai", msg, map[string]string{"order_id": order.ID.String()})
+				}
 			}
 		}
 	}
@@ -1591,14 +1710,25 @@ func (s *service) RequestPriceAdjustment(ctx context.Context, orderID, runnerID 
 	order.UpdatedAt = time.Now()
 
 	err = s.repo.Update(ctx, s.db, order)
-	if err == nil && s.fcm != nil && config.App.FcmEnabled {
-		// Notify Requester
-		requester, errReq := s.userSvc.GetByID(ctx, order.RequesterID, order.RequesterID)
-		if errReq == nil && requester.FcmToken != nil && *requester.FcmToken != "" {
-			_ = s.fcm.SendToDevice(ctx, *requester.FcmToken, "Penyesuaian Harga", "Runner meminta penyesuaian harga untuk pesanan Anda.", map[string]string{
-				"type":     "price_adjustment",
+	if err == nil {
+		_ = s.notifSvc.CreateNotification(ctx, notifDomain.CreateNotificationRequest{
+			UserID:  order.RequesterID,
+			Title:   "Penyesuaian Harga",
+			Message: fmt.Sprintf("Runner meminta penyesuaian harga dari Rp %.0f menjadi Rp %.0f. Alasan: %s", order.EstimatedCost, adjustedCost, reason),
+			Type:    "order",
+			Metadata: map[string]interface{}{
 				"order_id": order.ID.String(),
-			})
+				"type":     "price_adjustment",
+			},
+		})
+		if s.fcm != nil && config.App.FcmEnabled {
+			requester, errReq := s.userSvc.GetByID(ctx, order.RequesterID, order.RequesterID)
+			if errReq == nil && requester.FcmToken != nil && *requester.FcmToken != "" {
+				_ = s.fcm.SendToDevice(ctx, *requester.FcmToken, "Penyesuaian Harga", "Runner meminta penyesuaian harga untuk pesanan Anda.", map[string]string{
+					"type":     "price_adjustment",
+					"order_id": order.ID.String(),
+				})
+			}
 		}
 	}
 	return err
@@ -1648,8 +1778,16 @@ func (s *service) ApprovePriceAdjustment(ctx context.Context, orderID, requester
 	if err != nil {
 		return err
 	}
+	if ord.RunnerID != nil {
+		_ = s.notifSvc.CreateNotification(ctx, notifDomain.CreateNotificationRequest{
+			UserID:   *ord.RunnerID,
+			Title:    "Penyesuaian Disetujui",
+			Message:  fmt.Sprintf("Penitip menyetujui penyesuaian harga pesanan %s menjadi Rp %.0f", ord.ItemDetails, ord.EstimatedCost),
+			Type:     "order",
+			Metadata: map[string]interface{}{"order_id": orderID.String(), "type": "price_adjustment_approved"},
+		})
+	}
 	if s.fcm != nil && config.App.FcmEnabled && ord.RunnerID != nil {
-		// Notify Runner
 		runner, errRun := s.userSvc.GetByID(ctx, *ord.RunnerID, *ord.RunnerID)
 		if errRun == nil && runner.FcmToken != nil && *runner.FcmToken != "" {
 			_ = s.fcm.SendToDevice(ctx, *runner.FcmToken, "Penyesuaian Disetujui", "Penitip telah menyetujui penyesuaian harga Anda.", map[string]string{
@@ -1716,6 +1854,25 @@ func (s *service) RejectPriceAdjustment(ctx context.Context, orderID, requesterI
 		return s.repo.Update(ctx, tx, ord)
 	})
 
+	if err == nil && ord.RunnerID != nil {
+		title := "Penyesuaian Ditolak"
+		msg := fmt.Sprintf("Penitip menolak penyesuaian harga pesanan %s", ord.ItemDetails)
+		if cancelOrder {
+			title = "Pesanan Dibatalkan Setelah Penyesuaian Ditolak"
+			msg = fmt.Sprintf("Penitip menolak penyesuaian harga dan membatalkan pesanan %s", ord.ItemDetails)
+		}
+		_ = s.notifSvc.CreateNotification(ctx, notifDomain.CreateNotificationRequest{
+			UserID:  *ord.RunnerID,
+			Title:   title,
+			Message: msg,
+			Type:    "order",
+			Metadata: map[string]interface{}{
+				"order_id": ord.ID.String(),
+				"type":     "price_adjustment_rejected",
+			},
+		})
+	}
+
 	return err
 }
 
@@ -1766,7 +1923,7 @@ func sanitizeStorageKey(urlStr string) string {
 		} else {
 			temp = strings.TrimPrefix(temp, "http://")
 		}
-		
+
 		slashIdx := strings.Index(temp, "/")
 		if slashIdx != -1 {
 			path := temp[slashIdx+1:]
@@ -1809,7 +1966,7 @@ func (s *service) populateRunnerInfo(ctx context.Context, o *Order) {
 	if err == nil && r != nil {
 		o.RunnerName = r.Name
 		o.RunnerPhone = r.WhatsappNumber
-		
+
 		// Attempt to get live tracking coordinate from Redis first (to avoid hitting Postgres repeatedly)
 		if s.redis != nil {
 			val, redisErr := s.redis.Get(ctx, "runner:track:"+o.RunnerID.String())
@@ -2104,10 +2261,10 @@ func (s *service) MerchantAcceptOrder(ctx context.Context, orderID, ownerID uuid
 
 	// Send notification to Penitip
 	_ = s.notifSvc.CreateNotification(ctx, notifDomain.CreateNotificationRequest{
-		UserID:  order.RequesterID,
-		Title:   "Pesanan Diterima Merchant",
-		Message: fmt.Sprintf("Merchant telah menyetujui pesanan Anda: %s. Sistem sedang mencari runner terdekat.", order.ItemDetails),
-		Type:    "order",
+		UserID:   order.RequesterID,
+		Title:    "Pesanan Diterima Merchant",
+		Message:  fmt.Sprintf("Merchant telah menyetujui pesanan Anda: %s. Sistem sedang mencari runner terdekat.", order.ItemDetails),
+		Type:     "order",
 		Metadata: map[string]interface{}{"order_id": order.ID},
 	})
 	if s.fcm != nil && config.App.FcmEnabled {
@@ -2146,10 +2303,10 @@ func (s *service) MerchantReadyOrder(ctx context.Context, orderID, ownerID uuid.
 
 	// Notify Penitip
 	_ = s.notifSvc.CreateNotification(ctx, notifDomain.CreateNotificationRequest{
-		UserID:  order.RequesterID,
-		Title:   "Makanan Siap Diambil",
-		Message: fmt.Sprintf("Pesanan Anda di %s sudah selesai disiapkan!", merch.Name),
-		Type:    "order",
+		UserID:   order.RequesterID,
+		Title:    "Makanan Siap Diambil",
+		Message:  fmt.Sprintf("Pesanan Anda di %s sudah selesai disiapkan!", merch.Name),
+		Type:     "order",
 		Metadata: map[string]interface{}{"order_id": order.ID},
 	})
 	if s.fcm != nil && config.App.FcmEnabled {
@@ -2164,10 +2321,10 @@ func (s *service) MerchantReadyOrder(ctx context.Context, orderID, ownerID uuid.
 	// Notify Runner if assigned
 	if order.RunnerID != nil {
 		_ = s.notifSvc.CreateNotification(ctx, notifDomain.CreateNotificationRequest{
-			UserID:  *order.RunnerID,
-			Title:   "Pesanan Siap Diambil",
-			Message: fmt.Sprintf("Makanan untuk pesanan %s siap diambil di %s.", order.ItemDetails, merch.Name),
-			Type:    "order",
+			UserID:   *order.RunnerID,
+			Title:    "Pesanan Siap Diambil",
+			Message:  fmt.Sprintf("Makanan untuk pesanan %s siap diambil di %s.", order.ItemDetails, merch.Name),
+			Type:     "order",
 			Metadata: map[string]interface{}{"order_id": order.ID},
 		})
 		if s.fcm != nil && config.App.FcmEnabled {

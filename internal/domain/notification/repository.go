@@ -13,6 +13,7 @@ type Repository interface {
 	Create(ctx context.Context, notification *Notification) error
 	MarkAsRead(ctx context.Context, id uuid.UUID, userID uuid.UUID) error
 	MarkAllAsRead(ctx context.Context, userID uuid.UUID) error
+	DeleteOld(ctx context.Context, cutoffDays int) (int64, error)
 }
 
 type repository struct {
@@ -64,4 +65,16 @@ func (r *repository) MarkAllAsRead(ctx context.Context, userID uuid.UUID) error 
 		Where("user_id = ?", userID).
 		Exec(ctx)
 	return err
+}
+
+func (r *repository) DeleteOld(ctx context.Context, cutoffDays int) (int64, error) {
+	res, err := r.db.NewDelete().
+		Model((*Notification)(nil)).
+		Where("created_at < NOW() - INTERVAL '? days'", cutoffDays).
+		Exec(ctx)
+	if err != nil {
+		return 0, err
+	}
+	count, _ := res.RowsAffected()
+	return count, nil
 }
