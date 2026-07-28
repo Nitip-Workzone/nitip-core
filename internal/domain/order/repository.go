@@ -88,10 +88,12 @@ func (r *repository) FindAllWithFilters(ctx context.Context, status string, offs
 }
 
 func (r *repository) FindAvailable(ctx context.Context, params FindAvailableParams) ([]Order, error) {
+	// CRITICAL: Only allow statuses that are actually actionable for runner pool
+	// COMPLETED, CANCELLED, EXPIRED, etc must never be returned
 	orders := []Order{}
-	query := r.db.NewSelect().
+	baseQuery := r.db.NewSelect().
 		Model(&orders).
-		Where("(merchant_id IS NULL AND status = ?) OR (merchant_id IS NOT NULL AND (status = ? OR status = ? OR status = ? OR status = ?))", StatusPending, StatusMerchantAccepted, StatusAccepted, StatusCooking, StatusReady).
+		Where("status IN (?)", bun.List([]string{StatusPending, StatusMerchantAccepted, StatusAccepted, StatusCooking, StatusReady})).
 		Where("created_at > ?", params.Cutoff).
 		WhereGroup(" AND ", func(q *bun.SelectQuery) *bun.SelectQuery {
 			return q.Where("payment_status = ?", PaymentEscrow).
@@ -100,96 +102,50 @@ func (r *repository) FindAvailable(ctx context.Context, params FindAvailablePara
 		Order("created_at DESC")
 
 	if len(params.AllowedTypes) > 0 {
-		query = query.Where("order_type IN (?)", bun.List(params.AllowedTypes))
+		baseQuery = baseQuery.Where("order_type IN (?)", bun.List(params.AllowedTypes))
 	}
 
-	// Geolocation Matching - Performance optimized with PostGIS ST_DWithin + parameterized queries
-	// Hybrid Logic:
-	// 1. Path-based (Trip) if HasActiveTrip
-	// 2. Proximity-based (<10km) if IsAcceptingOrders
+	// Build geo condition as single AND group containing OR branches
+	// This prevents OR from escaping status filter (previous bug: OR at top-level leaked completed orders)
+	hasTrip := params.HasActiveTrip && params.RadiusKm > 0
+	hasProximity := params.IsAcceptingOrders && params.RunnerLat != 0 && params.RunnerLng != 0
 
-	hasCondition := false
-
-	if params.HasActiveTrip && params.RadiusKm > 0 {
-		radiusM := params.RadiusKm * 1000
-		// PostGIS: ST_DWithin(geography, geography, meters) uses GIST index idx_orders_pickup_geom_gist
-		// Safe parameterized - no fmt.Sprintf injection
-		query = query.WhereGroup(" AND ", func(q *bun.SelectQuery) *bun.SelectQuery {
-			// forward leg: pickup near origin AND delivery near destination
-			forward := q.Where("ST_DWithin(pickup_geom, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?)", params.OriginLng, params.OriginLat, radiusM).
-				Where("ST_DWithin(delivery_geom, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?)", params.DestLng, params.DestLat, radiusM)
-
-			if params.IsRoundTrip {
-				// round trip: also allow reverse leg
-				// Use WhereGroup OR: (forward) OR (reverse)
-				// bun doesn't support direct OR group easily, so we build raw with params via Where? Use bun. WhereOr attempt
-				// Fallback: combined OR using WhereGroup OR at top level? Do separate path for simplicity: keep forward, then OR reverse via WhereOrGroup
-				// To keep SQL correct, we do: (forward) OR (reverse) wrapped in AND for overall query - we achieve via second Where building OR
-				// We'll use a raw OR clause with placeholders
-				_ = forward
-				// Combined condition: (pickup near origin AND delivery near dest) OR (pickup near dest AND delivery near origin)
-				return q.WhereGroup(" AND ", func(q2 *bun.SelectQuery) *bun.SelectQuery {
-					return q2.Where("(ST_DWithin(pickup_geom, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?) AND ST_DWithin(delivery_geom, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?))",
-						params.OriginLng, params.OriginLat, radiusM, params.DestLng, params.DestLat, radiusM).
-						WhereOr("(ST_DWithin(pickup_geom, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?) AND ST_DWithin(delivery_geom, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?))",
-							params.DestLng, params.DestLat, radiusM, params.OriginLng, params.OriginLat, radiusM)
-				})
-			}
-			return forward
-		})
-		hasCondition = true
-	}
-
-	if params.IsAcceptingOrders && params.RunnerLat != 0 {
-		localRadiusM := 15000.0 // 15km radius
-		// For orders <10km distance (distance_km column) AND pickup within 15km of runner - uses GIST index
-		query = query.WhereGroup(" OR ", func(q *bun.SelectQuery) *bun.SelectQuery {
-			return q.Where("distance_km < 10 AND ST_DWithin(pickup_geom, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?)", params.RunnerLng, params.RunnerLat, localRadiusM)
-		})
-		if !hasCondition {
-			hasCondition = true
-		}
-	}
-
-	// Edge: if both trip and proximity present, ensure OR logic wins
-	// Rebuild if both present for correct semantics: (tripCondition) OR (proximityCondition)
-	if params.HasActiveTrip && params.IsAcceptingOrders && params.RunnerLat != 0 && params.RadiusKm > 0 {
-		// Reset query to use OR between two geo branches (keep other filters)
-		radiusM := params.RadiusKm * 1000
-		localRadiusM := 15000.0
-		// Re-create base query with OR geo filter
-		orders = []Order{}
-		query = r.db.NewSelect().
-			Model(&orders).
-			Where("(merchant_id IS NULL AND status = ?) OR (merchant_id IS NOT NULL AND (status = ? OR status = ? OR status = ? OR status = ?))", StatusPending, StatusMerchantAccepted, StatusAccepted, StatusCooking, StatusReady).
-			Where("created_at > ?", params.Cutoff).
-			WhereGroup(" AND ", func(q *bun.SelectQuery) *bun.SelectQuery {
-				return q.Where("payment_status = ?", PaymentEscrow).
-					WhereOr("payment_method = ?", MethodCOD)
-			}).
-			Order("created_at DESC")
-
-		if len(params.AllowedTypes) > 0 {
-			query = query.Where("order_type IN (?)", bun.List(params.AllowedTypes))
-		}
-
-		if params.IsRoundTrip {
-			query = query.Where("( (ST_DWithin(pickup_geom, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?) AND ST_DWithin(delivery_geom, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?)) OR (ST_DWithin(pickup_geom, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?) AND ST_DWithin(delivery_geom, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?)) OR (distance_km < 10 AND ST_DWithin(pickup_geom, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?)) )",
-				params.OriginLng, params.OriginLat, radiusM, params.DestLng, params.DestLat, radiusM,
-				params.DestLng, params.DestLat, radiusM, params.OriginLng, params.OriginLat, radiusM,
-				params.RunnerLng, params.RunnerLat, localRadiusM)
-		} else {
-			query = query.Where("( (ST_DWithin(pickup_geom, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?) AND ST_DWithin(delivery_geom, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?)) OR (distance_km < 10 AND ST_DWithin(pickup_geom, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?)) )",
-				params.OriginLng, params.OriginLat, radiusM, params.DestLng, params.DestLat, radiusM,
-				params.RunnerLng, params.RunnerLat, localRadiusM)
-		}
-		hasCondition = true
-	}
-
-	if !hasCondition {
+	if !hasTrip && !hasProximity {
 		// If no matching logic (no trip, no online status, or no location), return empty list
 		return []Order{}, nil
 	}
+
+	// Now add geo condition as AND (status filter stays enforced)
+	query := baseQuery.WhereGroup(" AND ", func(q *bun.SelectQuery) *bun.SelectQuery {
+		// Inside this, we have OR between trip and proximity
+		return q.WhereGroup(" OR ", func(q2 *bun.SelectQuery) *bun.SelectQuery {
+			// Trip branch
+			if hasTrip {
+				radiusM := params.RadiusKm * 1000
+				if params.IsRoundTrip {
+					// (pickup near origin AND delivery near dest) OR (pickup near dest AND delivery near origin)
+					// WhereOrGroup not available in bun version, use WhereOr with raw combined condition
+					q2 = q2.WhereGroup(" OR ", func(q3 *bun.SelectQuery) *bun.SelectQuery {
+						return q3.Where("(ST_DWithin(pickup_geom, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?) AND ST_DWithin(delivery_geom, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?))",
+							params.OriginLng, params.OriginLat, radiusM, params.DestLng, params.DestLat, radiusM).
+							WhereOr("(ST_DWithin(pickup_geom, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?) AND ST_DWithin(delivery_geom, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?))",
+								params.DestLng, params.DestLat, radiusM, params.OriginLng, params.OriginLat, radiusM)
+					})
+				} else {
+					q2 = q2.WhereGroup(" AND ", func(q3 *bun.SelectQuery) *bun.SelectQuery {
+						return q3.Where("ST_DWithin(pickup_geom, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?)", params.OriginLng, params.OriginLat, radiusM).
+							Where("ST_DWithin(delivery_geom, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?)", params.DestLng, params.DestLat, radiusM)
+					})
+				}
+			}
+			// Proximity branch
+			if hasProximity {
+				localRadiusM := 15000.0
+				q2 = q2.WhereOr("distance_km < 10 AND ST_DWithin(pickup_geom, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?)", params.RunnerLng, params.RunnerLat, localRadiusM)
+			}
+			return q2
+		})
+	})
 
 	if params.Limit > 0 {
 		query = query.Limit(params.Limit).Offset(params.Offset)
