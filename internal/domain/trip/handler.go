@@ -30,7 +30,8 @@ func (h *Handler) RegisterRoutes(router fiber.Router) {
 
 	// Runner specific routes
 	trips.Post("/", middleware.Role(user.RoleRunner), h.Create)
-	trips.Get("/me", middleware.Role(user.RoleRunner), h.GetMyTrips)
+	// Allow merchant/requester to call /me without 403 - return empty for non-runner to avoid Flutter log spam
+	trips.Get("/me", middleware.Role(user.RoleRunner, user.RoleMerchant, user.RoleRequester), h.GetMyTrips)
 	trips.Post("/:id/start", middleware.Role(user.RoleRunner), h.Start)
 	trips.Post("/:id/cancel", middleware.Role(user.RoleRunner), h.Cancel)
 	trips.Post("/:id/complete", middleware.Role(user.RoleRunner), h.Complete)
@@ -78,6 +79,11 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 // @Router       /trips/me [get]
 func (h *Handler) GetMyTrips(c *fiber.Ctx) error {
 	claims := c.Locals("user").(*jwt.CustomClaims)
+
+	// Merchant/requester calling this should get empty list, not 403, to avoid Flutter log spam
+	if claims.Role == user.RoleMerchant || claims.Role == user.RoleRequester {
+		return response.Success(c, "daftar perjalanan berhasil diambil", []interface{}{})
+	}
 
 	trips, err := h.service.GetByRunner(c.Context(), claims.UserID)
 	if err != nil {

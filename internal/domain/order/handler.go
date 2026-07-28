@@ -44,7 +44,8 @@ func (h *Handler) RegisterRoutes(router fiber.Router) {
 	// Requester routes
 	orders.Post("/", middleware.RateLimit(h.redis, 5, 1*time.Minute), middleware.Role(user.RoleRequester), h.Create)
 	orders.Post("/estimate-fee", h.GetFeeEstimate)
-	orders.Get("/me", middleware.Role(user.RoleRequester, user.RoleRunner), h.GetMyOrders)
+	// Merchant should not get 403 on /me - return empty list in service instead (avoid Flutter log spam)
+	orders.Get("/me", middleware.Role(user.RoleRequester, user.RoleRunner, user.RoleMerchant), h.GetMyOrders)
 	orders.Post("/:id/cancel", middleware.Role(user.RoleRequester, user.RoleRunner, user.RoleMerchant), h.Cancel)
 	orders.Post("/:id/dispute", middleware.Role(user.RoleRequester), h.Dispute)
 	orders.Post("/:id/refresh-qris", middleware.Role(user.RoleRequester), h.RefreshQRIS)
@@ -132,6 +133,7 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 // GetMyOrders godoc
 // @Summary      Get user orders
 // @Description  Get a list of orders related to the logged-in user (as requester or runner)
+// For merchant, returns empty list to avoid 403 spam - merchant should use /merchant/orders
 // @Tags         [Shared] Order View
 // @Produce      json
 // @Security     BearerAuth
@@ -140,6 +142,11 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 // @Router       /orders/me [get]
 func (h *Handler) GetMyOrders(c *fiber.Ctx) error {
 	claims := c.Locals("user").(*jwt.CustomClaims)
+
+	// Merchant calling /orders/me should get empty, not 403 or unrelated data
+	if claims.Role == user.RoleMerchant {
+		return response.Success(c, "daftar pesanan berhasil diambil", []interface{}{})
+	}
 
 	page, _ := strconv.Atoi(c.Query("page", "1"))
 	if page < 1 {
