@@ -162,24 +162,14 @@ func (s *service) ClaimTicket(ctx context.Context, ticketID, csID uuid.UUID) (*T
 		return nil, errors.New("anda sudah menangani 1 sesi aktif, selesaikan dulu sebelum mengambil tiket baru")
 	}
 
-	t, err := s.repo.FindTicketByID(ctx, ticketID)
+	// P2 max perf: use atomic claim to prevent concurrent double claim race (2 CS at same ms)
+	// Count check still useful for UI fast-fail, but atomic DB guard is source of truth
+	t, err := s.repo.ClaimTicketAtomic(ctx, ticketID, csID)
 	if err != nil {
-		return nil, err
-	}
-	if t.Status != StatusQueued && t.Status != StatusOpen {
-		return nil, errors.New("tiket tidak dalam antrian")
-	}
-	if t.AssignedCSID != nil {
-		return nil, errors.New("tiket sudah diambil CS lain")
-	}
-
-	now := time.Now()
-	// Single atomic transition: queued/open -> in_progress (skip intermediate assigned to avoid double-write race on prod 512M OOM)
-	t.AssignedCSID = &csID
-	t.Status = StatusInProgress
-	t.UpdatedAt = now
-
-	if err := s.repo.UpdateTicket(ctx, t); err != nil {
+		// Normalize error messages for client
+		if err.Error() == "tiket tidak dalam antrian" || err.Error() == "tiket sudah diambil CS lain" || err.Error() == "tiket sudah diambil CS lain (race lost)" {
+			return nil, err
+		}
 		return nil, err
 	}
 

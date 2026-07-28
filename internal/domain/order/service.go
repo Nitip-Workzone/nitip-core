@@ -925,8 +925,18 @@ func (s *service) CancelOrder(ctx context.Context, orderID, userID uuid.UUID, re
 	// Logic: Charge checking fee if status is PURCHASING or if there's an adjustment
 	shouldChargeFee := ord.Status == StatusPurchasing || ord.AdjustmentStatus != ""
 
-	// --- Unified Cancellation Transaction ---
+	// --- Unified Cancellation Transaction with FOR UPDATE to prevent double refund race ---
 	err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		// Re-fetch with lock inside TX to prevent concurrent cancel/complete race
+		lockedOrd, err := s.repo.FindByIDForUpdate(ctx, tx, orderID)
+		if err != nil {
+			return err
+		}
+		if lockedOrd.Status == StatusCompleted || lockedOrd.Status == StatusCancelled || lockedOrd.Status == StatusExpired {
+			return errors.New("pesanan sudah selesai atau dibatalkan (race)")
+		}
+		// Use locked version for status checks
+		ord = lockedOrd
 		if ord.PaymentMethod == MethodEscrow && ord.PaymentStatus == PaymentEscrow {
 			totalEscrow := ord.EstimatedCost + ord.DeliveryFee
 
@@ -963,11 +973,11 @@ func (s *service) CancelOrder(ctx context.Context, orderID, userID uuid.UUID, re
 			ord.DisputeReason = reason
 		}
 		ord.UpdatedAt = time.Now()
-		_, err := tx.NewUpdate().Model(ord).WherePK().Exec(ctx)
-		if err == nil {
+		_, updErr := tx.NewUpdate().Model(ord).WherePK().Exec(ctx)
+		if updErr == nil {
 			s.auditSvc.LogWithDB(ctx, tx, &userID, audit.ActionOrderCancel, "order", orderID.String(), map[string]interface{}{"status": oldStatus}, map[string]interface{}{"status": StatusCancelled, "reason": reason}, "", "")
 		}
-		return err
+		return updErr
 	})
 
 	if err == nil {
@@ -1134,8 +1144,19 @@ func (s *service) CompleteOrder(ctx context.Context, orderID, runnerID uuid.UUID
 		}
 	}
 
-	// --- Unified Completion Transaction ---
+	// --- Unified Completion Transaction with FOR UPDATE anti double release ---
 	err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		locked, err := s.repo.FindByIDForUpdate(ctx, tx, orderID)
+		if err != nil {
+			return err
+		}
+		if locked.Status != StatusDelivering {
+			return errors.New("pesanan tidak dapat diselesaikan dari status saat ini (race), harus delivering")
+		}
+		if locked.RunnerID == nil || *locked.RunnerID != runnerID {
+			return errors.New("anda bukan runner untuk pesanan ini (race)")
+		}
+		order = locked
 		switch order.PaymentMethod {
 		case MethodEscrow:
 			platformFee := order.ServiceFee

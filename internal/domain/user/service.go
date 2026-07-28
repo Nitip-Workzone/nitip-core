@@ -704,14 +704,11 @@ func (s *service) UpdateAcceptingOrders(ctx context.Context, id uuid.UUID, isAcc
 	if err != nil {
 		return err
 	}
-
 	if u.Role != RoleRunner {
 		return errors.New("hanya runner yang dapat mengubah status penerimaan order")
 	}
-
-	u.IsAcceptingOrders = isAccepting
-	u.UpdatedAt = time.Now()
-	return s.repo.Update(ctx, u)
+	// P2 perf: atomic, avoids full row rewrite + lock contention on users table (prod 200 conn)
+	return s.repo.UpdateAcceptingOrders(ctx, id, isAccepting)
 }
 
 func (s *service) UpdateProfile(ctx context.Context, id uuid.UUID, req UpdateProfileRequest, avatarFile io.Reader, avatarFilename string) error {
@@ -768,7 +765,8 @@ func (s *service) UpdateProfile(ctx context.Context, id uuid.UUID, req UpdatePro
 			}
 		}
 
-		objectKey := fmt.Sprintf("avatars/%s%s", id.String(), ext)
+		// P1: cache bust with timestamp suffix to avoid CDN stale after overwrite (prod uploads local)
+		objectKey := fmt.Sprintf("avatars/%s_%d%s", id.String(), time.Now().Unix(), ext)
 		path, err := s.storage.Upload(ctx, objectKey, &buf, size, contentType)
 		if err != nil {
 			return fmt.Errorf("failed to upload avatar: %w", err)

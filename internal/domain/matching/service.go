@@ -54,25 +54,33 @@ func NewService(userRepo user.Repository, tripRepo trip.Repository, orderRepo or
 }
 
 func (s *service) EnqueueMatching(orderID uuid.UUID) {
-	// P0 fix: retry 3x with backoff instead of silent drop (prod 512M burst safety)
+	// P2 max perf anti-panic: non-blocking with retry, recover panic if channel closed during shutdown
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[matching] panic recovered enqueue %s: %v (likely shutdown)", orderID, r)
+		}
+	}()
+
 	for attempt := 0; attempt < 3; attempt++ {
 		select {
 		case s.jobQueue <- orderID:
 			return
 		default:
 			if attempt < 2 {
-				// brief backoff
 				log.Printf("[matching] queue full, retry %d for order %s", attempt+1, orderID)
-				// non-blocking sleep to allow workers to drain
 				time.Sleep(time.Duration(100*(attempt+1)) * time.Millisecond)
 				continue
 			}
-			// Last attempt: try spill to redis stream if available
+			// Last attempt: spill to redis overflow with timeout ctx to avoid hanging shutdown
 			if s.redis != nil {
-				if err := s.redis.Client().LPush(context.Background(), "matching:overflow", orderID.String()).Err(); err == nil {
+				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				err := s.redis.Client().LPush(ctx, "matching:overflow", orderID.String()).Err()
+				cancel()
+				if err == nil {
 					log.Printf("[matching] order %s spilled to redis overflow list", orderID)
 					return
 				}
+				log.Printf("[matching] overflow spill failed for %s: %v", orderID, err)
 			}
 			log.Printf("[matching] CRITICAL queue full after retries, dropping order %s", orderID)
 		}
@@ -94,9 +102,15 @@ func (s *service) worker(ctx context.Context, id int) {
 		case <-ctx.Done():
 			return
 		case orderID := <-s.jobQueue:
-			// Perform Matching Logic
-			log.Printf("Worker %d processing matching for order %s", id, orderID)
-			s.processMatching(ctx, orderID)
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						log.Printf("[matching] worker %d panic recovered for order %s: %v", id, orderID, r)
+					}
+				}()
+				log.Printf("Worker %d processing matching for order %s", id, orderID)
+				s.processMatching(ctx, orderID)
+			}()
 		}
 	}
 }

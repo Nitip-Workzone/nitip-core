@@ -21,6 +21,7 @@ type Repository interface {
 	ClearDeviceSessions(ctx context.Context, deviceID string, excludeUserID uuid.UUID) error
 	FindBankAccountByUserID(ctx context.Context, userID uuid.UUID) (*UserBankAccount, error)
 	UpsertBankAccount(ctx context.Context, bankAccount *UserBankAccount) error
+	UpdateAcceptingOrders(ctx context.Context, id uuid.UUID, isAccepting bool) error
 }
 
 type repository struct {
@@ -109,6 +110,17 @@ func (r *repository) Create(ctx context.Context, user *User) error {
 
 func (r *repository) Update(ctx context.Context, user *User) error {
 	_, err := r.db.NewUpdate().Model(user).WherePK().Exec(ctx)
+	return err
+}
+
+func (r *repository) UpdateAcceptingOrders(ctx context.Context, id uuid.UUID, isAccepting bool) error {
+	// P2 perf: atomic update only needed fields, avoid full row lock
+	_, err := r.db.NewUpdate().Model((*User)(nil)).
+		Set("is_accepting_orders = ?", isAccepting).
+		Set("updated_at = NOW()").
+		Where("id = ?", id).
+		Where("role = ?", "runner").
+		Exec(ctx)
 	return err
 }
 

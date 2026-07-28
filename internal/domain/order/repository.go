@@ -15,6 +15,9 @@ type Repository interface {
 	FindAvailable(ctx context.Context, params FindAvailableParams) ([]Order, error)
 	ExpireOldOrders(ctx context.Context, cutoff time.Time) (int64, error)
 	FindByID(ctx context.Context, id uuid.UUID) (*Order, error)
+	FindByIDForUpdate(ctx context.Context, db bun.IDB, id uuid.UUID) (*Order, error)
+	CancelAtomic(ctx context.Context, db bun.IDB, id uuid.UUID, reason string) (bool, error)
+	CompleteAtomic(ctx context.Context, db bun.IDB, id uuid.UUID, runnerID uuid.UUID, deliveryImg string) (bool, error)
 	FindByRequesterID(ctx context.Context, requesterID uuid.UUID) ([]Order, error)
 	FindByRunnerID(ctx context.Context, runnerID uuid.UUID) ([]Order, error)
 	FindByUserID(ctx context.Context, userID uuid.UUID, limit, offset int) ([]Order, error)
@@ -54,11 +57,14 @@ func NewRepository(db *bun.DB) Repository {
 
 func (r *repository) FindAll(ctx context.Context, offset, limit int) ([]Order, error) {
 	orders := []Order{}
-	query := r.db.NewSelect().Model(&orders).Order("created_at DESC")
-
-	if limit > 0 {
-		query = query.Limit(limit).Offset(offset)
+	// P2 heavy query guard: always limit, default 50 max 100 to prevent OOM 512M
+	if limit <= 0 {
+		limit = 50
 	}
+	if limit > 100 {
+		limit = 100
+	}
+	query := r.db.NewSelect().Model(&orders).Order("created_at DESC").Limit(limit).Offset(offset)
 
 	err := query.Scan(ctx)
 	return orders, err
@@ -66,14 +72,16 @@ func (r *repository) FindAll(ctx context.Context, offset, limit int) ([]Order, e
 
 func (r *repository) FindAllWithFilters(ctx context.Context, status string, offset, limit int) ([]Order, error) {
 	orders := []Order{}
-	query := r.db.NewSelect().Model(&orders).Order("created_at DESC")
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	query := r.db.NewSelect().Model(&orders).Order("created_at DESC").Limit(limit).Offset(offset)
 
 	if status != "" {
 		query = query.Where("status = ?", status)
-	}
-
-	if limit > 0 {
-		query = query.Limit(limit).Offset(offset)
 	}
 
 	err := query.Scan(ctx)
@@ -177,6 +185,49 @@ func (r *repository) FindByID(ctx context.Context, id uuid.UUID) (*Order, error)
 		return nil, err
 	}
 	return order, nil
+}
+
+func (r *repository) FindByIDForUpdate(ctx context.Context, db bun.IDB, id uuid.UUID) (*Order, error) {
+	order := new(Order)
+	err := db.NewSelect().Model(order).Where("id = ?", id).For("UPDATE").Scan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return order, nil
+}
+
+func (r *repository) CancelAtomic(ctx context.Context, db bun.IDB, id uuid.UUID, reason string) (bool, error) {
+	// Atomic cancel only if status IN allowed cancellable statuses, prevents race
+	res, err := db.NewUpdate().Model((*Order)(nil)).
+		Set("status = ?", StatusCancelled).
+		Set("dispute_reason = ?", reason).
+		Set("updated_at = ?", time.Now()).
+		Where("id = ?", id).
+		Where("status NOT IN (?, ?, ?)", StatusCompleted, StatusCancelled, StatusExpired).
+		Exec(ctx)
+	if err != nil {
+		return false, err
+	}
+	aff, _ := res.RowsAffected()
+	return aff > 0, nil
+}
+
+func (r *repository) CompleteAtomic(ctx context.Context, db bun.IDB, id uuid.UUID, runnerID uuid.UUID, deliveryImg string) (bool, error) {
+	// Atomic complete only if status = delivering and runner matches, prevent double release
+	res, err := db.NewUpdate().Model((*Order)(nil)).
+		Set("status = ?", StatusCompleted).
+		Set("delivery_image_url = ?", deliveryImg).
+		Set("payment_status = ?", PaymentReleased).
+		Set("updated_at = ?", time.Now()).
+		Where("id = ?", id).
+		Where("runner_id = ?", runnerID).
+		Where("status = ?", StatusDelivering).
+		Exec(ctx)
+	if err != nil {
+		return false, err
+	}
+	aff, _ := res.RowsAffected()
+	return aff > 0, nil
 }
 
 func (r *repository) FindByRequesterID(ctx context.Context, requesterID uuid.UUID) ([]Order, error) {

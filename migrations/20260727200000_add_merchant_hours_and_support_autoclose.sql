@@ -4,8 +4,9 @@
 ALTER TABLE merchants ADD COLUMN IF NOT EXISTS opening_hours JSONB NOT NULL DEFAULT '{}';
 ALTER TABLE merchants ADD COLUMN IF NOT EXISTS image_url TEXT;
 
--- Fix cod_enabled default should be true, not false (if previous migration set false, flip to true)
-INSERT INTO configs (key, value, description) VALUES ('cod_enabled', 'true', 'Aktif/nonaktif metode COD (true/false)') ON CONFLICT (key) DO UPDATE SET value = 'true' WHERE configs.value = 'false';
+-- P1 fix: cod_enabled should NOT override admin intentional false. Only insert if not exists default true.
+-- Previous version flipped false->true each deploy which is wrong for prod.
+INSERT INTO configs (key, value, description) VALUES ('cod_enabled', 'true', 'Aktif/nonaktif metode COD (true/false)') ON CONFLICT (key) DO NOTHING;
 
 -- Support auto-close config
 INSERT INTO configs (key, value, description) VALUES ('support_auto_close_days', '7', 'Otomatis tutup tiket resolved setelah N hari (0 = disable)') ON CONFLICT (key) DO NOTHING;

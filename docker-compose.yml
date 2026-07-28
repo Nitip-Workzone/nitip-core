@@ -103,11 +103,12 @@ services:
     command: >
       redis-server
       --maxmemory 192mb
-      --maxmemory-policy allkeys-lru
+      --maxmemory-policy volatile-lru
       --save ""
       --appendonly no
-      --hz 5
-      --activedefrag no
+      --hz 10
+      --activedefrag yes
+      --maxmemory-samples 10
     ports:
       - "127.0.0.1:6379:6379"
     volumes:

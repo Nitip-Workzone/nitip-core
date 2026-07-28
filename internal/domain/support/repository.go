@@ -12,10 +12,12 @@ import (
 type Repository interface {
 	CreateTicket(ctx context.Context, ticket *Ticket) error
 	FindTicketByID(ctx context.Context, id uuid.UUID) (*Ticket, error)
+	FindTicketByIDForUpdate(ctx context.Context, id uuid.UUID) (*Ticket, error)
 	FindTicketsByUser(ctx context.Context, userID uuid.UUID, limit, offset int) ([]Ticket, error)
 	FindAllTickets(ctx context.Context, status, category, search string, assignedCSID *uuid.UUID, limit, offset int) ([]Ticket, int, error)
 	FindQueueTickets(ctx context.Context, limit, offset int) ([]Ticket, int, error)
 	UpdateTicket(ctx context.Context, ticket *Ticket) error
+	ClaimTicketAtomic(ctx context.Context, ticketID, csID uuid.UUID) (*Ticket, error)
 	CountActiveByCS(ctx context.Context, csID uuid.UUID) (int, error)
 	AutoCloseResolved(ctx context.Context, days int) (int, error)
 	GetStats(ctx context.Context) (map[string]int, error)
@@ -53,15 +55,60 @@ func (r *repository) FindTicketByID(ctx context.Context, id uuid.UUID) (*Ticket,
 	return t, nil
 }
 
+func (r *repository) FindTicketByIDForUpdate(ctx context.Context, id uuid.UUID) (*Ticket, error) {
+	t := new(Ticket)
+	// FOR UPDATE to prevent concurrent claim race (prod 512M + 200 max_conn)
+	err := r.db.NewSelect().Model(t).Where("id = ?", id).For("UPDATE").Scan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return t, nil
+}
+
+func (r *repository) ClaimTicketAtomic(ctx context.Context, ticketID, csID uuid.UUID) (*Ticket, error) {
+	// Atomic conditional update: only claim if still queued/open and unassigned
+	// Returns updated ticket or error, prevents double claim without separate SELECT
+	var t Ticket
+	err := r.db.NewSelect().Model(&t).Where("id = ?", ticketID).For("UPDATE").Scan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if t.Status != StatusQueued && t.Status != StatusOpen {
+		return nil, fmt.Errorf("tiket tidak dalam antrian")
+	}
+	if t.AssignedCSID != nil {
+		return nil, fmt.Errorf("tiket sudah diambil CS lain")
+	}
+	// Perform atomic update with WHERE status still in queue to double guard
+	res, err := r.db.NewUpdate().Model((*Ticket)(nil)).
+		Set("assigned_cs_id = ?", csID).
+		Set("status = ?", StatusInProgress).
+		Set("updated_at = NOW()").
+		Where("id = ?", ticketID).
+		Where("status IN ('queued','open')").
+		Where("assigned_cs_id IS NULL").
+		Exec(ctx)
+	if err != nil {
+		return nil, err
+	}
+	aff, _ := res.RowsAffected()
+	if aff == 0 {
+		return nil, fmt.Errorf("tiket sudah diambil CS lain (race lost)")
+	}
+	// Re-fetch final
+	err = r.db.NewSelect().Model(&t).Where("id = ?", ticketID).Scan(ctx)
+	return &t, err
+}
+
 func (r *repository) FindTicketsByUser(ctx context.Context, userID uuid.UUID, limit, offset int) ([]Ticket, error) {
 	var tickets []Ticket
-	q := r.db.NewSelect().Model(&tickets).Where("user_id = ?", userID).Order("created_at DESC")
-	if limit > 0 {
-		q = q.Limit(limit)
+	if limit <= 0 {
+		limit = 50
 	}
-	if offset > 0 {
-		q = q.Offset(offset)
+	if limit > 100 {
+		limit = 100
 	}
+	q := r.db.NewSelect().Model(&tickets).Where("user_id = ?", userID).Order("created_at DESC").Limit(limit).Offset(offset)
 	err := q.Scan(ctx)
 	return tickets, err
 }
@@ -262,7 +309,10 @@ func (r *repository) SearchFAQ(ctx context.Context, query, category string, limi
 	q := r.db.NewSelect().Model(&faqs).Where("is_active = true")
 
 	if query != "" {
-		like := fmt.Sprintf("%%%s%%", query)
+		escaped := strings.ReplaceAll(query, `\`, `\\`)
+		escaped = strings.ReplaceAll(escaped, `%`, `\%`)
+		escaped = strings.ReplaceAll(escaped, `_`, `\_`)
+		like := fmt.Sprintf("%%%s%%", escaped)
 		q = q.Where("(question ILIKE ? OR answer ILIKE ? OR keywords ILIKE ?)", like, like, like)
 	}
 	if category != "" {
