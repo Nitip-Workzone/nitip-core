@@ -265,11 +265,11 @@ func WriteSSEEvent(w *bufio.Writer, ev PoolEvent) error {
 	if err != nil {
 		return err
 	}
-	// SSE format
-	if _, err := w.WriteString(fmt.Sprintf("event: %s\n", ev.Type)); err != nil {
+	// SSE format - use Fprintf to avoid QF1012
+	if _, err := fmt.Fprintf(w, "event: %s\n", ev.Type); err != nil {
 		return err
 	}
-	if _, err := w.WriteString(fmt.Sprintf("data: %s\n\n", string(b))); err != nil {
+	if _, err := fmt.Fprintf(w, "data: %s\n\n", string(b)); err != nil {
 		return err
 	}
 	return w.Flush()

@@ -100,7 +100,7 @@ func (r *repository) FindAvailable(ctx context.Context, params FindAvailablePara
 		Order("created_at DESC")
 
 	if len(params.AllowedTypes) > 0 {
-		query = query.Where("order_type IN (?)", bun.In(params.AllowedTypes)) // nolint:staticcheck
+		query = query.Where("order_type IN (?)", bun.List(params.AllowedTypes))
 	}
 
 	// Geolocation Matching - Performance optimized with PostGIS ST_DWithin + parameterized queries
@@ -144,24 +144,11 @@ func (r *repository) FindAvailable(ctx context.Context, params FindAvailablePara
 		localRadiusM := 15000.0 // 15km radius
 		// For orders <10km distance (distance_km column) AND pickup within 15km of runner - uses GIST index
 		query = query.WhereGroup(" OR ", func(q *bun.SelectQuery) *bun.SelectQuery {
-			// If we already had trip condition, this adds OR branch
-			if hasCondition {
-				return q.Where("distance_km < 10 AND ST_DWithin(pickup_geom, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?)", params.RunnerLng, params.RunnerLat, localRadiusM)
-			}
 			return q.Where("distance_km < 10 AND ST_DWithin(pickup_geom, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?)", params.RunnerLng, params.RunnerLat, localRadiusM)
 		})
 		if !hasCondition {
 			hasCondition = true
-		} else {
-			// When both conditions exist, we need special handling:
-			// The WhereGroup above with OR will create: (existing) OR (proximity)
-			// But our earlier trip condition was added as AND, so we rebuild query correctly:
-			// To avoid complexity, we use a fallback to combined OR in a single WHERE if both present
-			// We already added trip as AND, then added proximity as OR -> final is (trip AND proximity?) Actually bun will chain AND then OR -> need to fix
-			// Let's just ensure we don't return empty - the current chaining with WhereGroup OR will work as OR appended at top level
 		}
-	} else if hasCondition {
-		// only trip-based, already handled
 	}
 
 	// Edge: if both trip and proximity present, ensure OR logic wins
@@ -183,7 +170,7 @@ func (r *repository) FindAvailable(ctx context.Context, params FindAvailablePara
 			Order("created_at DESC")
 
 		if len(params.AllowedTypes) > 0 {
-			query = query.Where("order_type IN (?)", bun.In(params.AllowedTypes))
+			query = query.Where("order_type IN (?)", bun.List(params.AllowedTypes))
 		}
 
 		if params.IsRoundTrip {

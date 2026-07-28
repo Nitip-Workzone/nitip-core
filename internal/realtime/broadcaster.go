@@ -10,20 +10,6 @@ import (
 	"go.uber.org/zap"
 )
 
-// Minimal Order interface to avoid import cycle
-type orderMinimal struct {
-	ID            uuid.UUID
-	PickupLat     float64
-	PickupLng     float64
-	ItemDetails   string
-	DeliveryFee   float64
-	EstimatedCost float64
-	DistanceKm    float64
-	OrderType     string
-	Status        string
-	MerchantID    *uuid.UUID
-}
-
 type Broadcaster struct {
 	hub    *PoolHub
 	redis  *cache.Redis
@@ -150,19 +136,7 @@ func (b *Broadcaster) BroadcastOrderCancelled(orderID string, reason string, pic
 	}
 }
 
-// Implement PoolBroadcaster interface adapters for order service
-
-// For backward compat with interface defined in order service (uses Order struct)
-type OrderAdapter interface {
-	GetID() string
-	GetPickupLat() float64
-	GetPickupLng() float64
-	GetItemDetails() string
-	GetMerchantID() *uuid.UUID
-}
-
 // Direct simple wrappers used by order service if it passes full order
-
 func (b *Broadcaster) BroadcastNewOrderFull(orderIDStr string, lat, lng float64, item string, merchantID *uuid.UUID, cost float64, fee float64, dist float64) {
 	extra := map[string]interface{}{
 		"estimated_cost": cost,

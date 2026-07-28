@@ -29,12 +29,16 @@ func (r *Redis) GeoAddRunnerLive(ctx context.Context, runnerID string, lat, lng 
 
 // GeoRadiusRunners finds runners within radius (meters) from point
 func (r *Redis) GeoRadiusRunners(ctx context.Context, lat, lng float64, radiusM float64) ([]redis.GeoLocation, error) {
-	return r.client.GeoRadius(ctx, GeoKeyRunnersLive, lng, lat, &redis.GeoRadiusQuery{
-		Radius:   radiusM,
-		Unit:     "m",
+	return r.client.GeoSearchLocation(ctx, GeoKeyRunnersLive, &redis.GeoSearchLocationQuery{
+		GeoSearchQuery: redis.GeoSearchQuery{
+			Longitude:  lng,
+			Latitude:   lat,
+			Radius:     radiusM,
+			RadiusUnit: "m",
+			Sort:       "ASC",
+			Count:      50,
+		},
 		WithDist: true,
-		Sort:     "ASC",
-		Count:    50, // top 50 nearest
 	}).Result()
 }
 
