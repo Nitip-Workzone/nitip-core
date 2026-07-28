@@ -2,7 +2,6 @@ package order
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -104,52 +103,103 @@ func (r *repository) FindAvailable(ctx context.Context, params FindAvailablePara
 		query = query.Where("order_type IN (?)", bun.In(params.AllowedTypes)) // nolint:staticcheck
 	}
 
-	// Geolocation Matching
+	// Geolocation Matching - Performance optimized with PostGIS ST_DWithin + parameterized queries
 	// Hybrid Logic:
 	// 1. Path-based (Trip) if HasActiveTrip
 	// 2. Proximity-based (<10km) if IsAcceptingOrders
 
-	var matchingConditions []string
+	hasCondition := false
 
 	if params.HasActiveTrip && params.RadiusKm > 0 {
-		forwardLeg := fmt.Sprintf(`
-			(6371 * acos(LEAST(GREATEST(cos(radians(%f)) * cos(radians(pickup_lat)) * cos(radians(pickup_lng) - radians(%f)) + sin(radians(%f)) * sin(radians(pickup_lat)), -1), 1))) <= %f
-			AND
-			(6371 * acos(LEAST(GREATEST(cos(radians(%f)) * cos(radians(delivery_lat)) * cos(radians(delivery_lng) - radians(%f)) + sin(radians(%f)) * sin(radians(delivery_lat)), -1), 1))) <= %f
-		`, params.OriginLat, params.OriginLng, params.OriginLat, params.RadiusKm, params.DestLat, params.DestLng, params.DestLat, params.RadiusKm)
+		radiusM := params.RadiusKm * 1000
+		// PostGIS: ST_DWithin(geography, geography, meters) uses GIST index idx_orders_pickup_geom_gist
+		// Safe parameterized - no fmt.Sprintf injection
+		query = query.WhereGroup(" AND ", func(q *bun.SelectQuery) *bun.SelectQuery {
+			// forward leg: pickup near origin AND delivery near destination
+			forward := q.Where("ST_DWithin(pickup_geom, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?)", params.OriginLng, params.OriginLat, radiusM).
+				Where("ST_DWithin(delivery_geom, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?)", params.DestLng, params.DestLat, radiusM)
 
-		if params.IsRoundTrip {
-			reverseLeg := fmt.Sprintf(`
-				(6371 * acos(LEAST(GREATEST(cos(radians(%f)) * cos(radians(pickup_lat)) * cos(radians(pickup_lng) - radians(%f)) + sin(radians(%f)) * sin(radians(pickup_lat)), -1), 1))) <= %f
-				AND
-				(6371 * acos(LEAST(GREATEST(cos(radians(%f)) * cos(radians(delivery_lat)) * cos(radians(delivery_lng) - radians(%f)) + sin(radians(%f)) * sin(radians(delivery_lat)), -1), 1))) <= %f
-			`, params.DestLat, params.DestLng, params.DestLat, params.RadiusKm, params.OriginLat, params.OriginLng, params.OriginLat, params.RadiusKm)
-			matchingConditions = append(matchingConditions, fmt.Sprintf("(%s OR %s)", forwardLeg, reverseLeg))
-		} else {
-			matchingConditions = append(matchingConditions, forwardLeg)
-		}
+			if params.IsRoundTrip {
+				// round trip: also allow reverse leg
+				// Use WhereGroup OR: (forward) OR (reverse)
+				// bun doesn't support direct OR group easily, so we build raw with params via Where? Use bun. WhereOr attempt
+				// Fallback: combined OR using WhereGroup OR at top level? Do separate path for simplicity: keep forward, then OR reverse via WhereOrGroup
+				// To keep SQL correct, we do: (forward) OR (reverse) wrapped in AND for overall query - we achieve via second Where building OR
+				// We'll use a raw OR clause with placeholders
+				_ = forward
+				// Combined condition: (pickup near origin AND delivery near dest) OR (pickup near dest AND delivery near origin)
+				return q.WhereGroup(" AND ", func(q2 *bun.SelectQuery) *bun.SelectQuery {
+					return q2.Where("(ST_DWithin(pickup_geom, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?) AND ST_DWithin(delivery_geom, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?))",
+						params.OriginLng, params.OriginLat, radiusM, params.DestLng, params.DestLat, radiusM).
+						WhereOr("(ST_DWithin(pickup_geom, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?) AND ST_DWithin(delivery_geom, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?))",
+							params.DestLng, params.DestLat, radiusM, params.OriginLng, params.OriginLat, radiusM)
+				})
+			}
+			return forward
+		})
+		hasCondition = true
 	}
 
 	if params.IsAcceptingOrders && params.RunnerLat != 0 {
-		// Proximity Matching for < 10km orders
-		localRadius := 15.0 // Increased to 15km radius to find orders around runner
-		proximityCondition := fmt.Sprintf(`
-			(distance_km < 10 AND (6371 * acos(LEAST(GREATEST(cos(radians(%f)) * cos(radians(pickup_lat)) * cos(radians(pickup_lng) - radians(%f)) + sin(radians(%f)) * sin(radians(pickup_lat)), -1), 1))) <= %f)
-		`, params.RunnerLat, params.RunnerLng, params.RunnerLat, localRadius)
-		matchingConditions = append(matchingConditions, proximityCondition)
+		localRadiusM := 15000.0 // 15km radius
+		// For orders <10km distance (distance_km column) AND pickup within 15km of runner - uses GIST index
+		query = query.WhereGroup(" OR ", func(q *bun.SelectQuery) *bun.SelectQuery {
+			// If we already had trip condition, this adds OR branch
+			if hasCondition {
+				return q.Where("distance_km < 10 AND ST_DWithin(pickup_geom, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?)", params.RunnerLng, params.RunnerLat, localRadiusM)
+			}
+			return q.Where("distance_km < 10 AND ST_DWithin(pickup_geom, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?)", params.RunnerLng, params.RunnerLat, localRadiusM)
+		})
+		if !hasCondition {
+			hasCondition = true
+		} else {
+			// When both conditions exist, we need special handling:
+			// The WhereGroup above with OR will create: (existing) OR (proximity)
+			// But our earlier trip condition was added as AND, so we rebuild query correctly:
+			// To avoid complexity, we use a fallback to combined OR in a single WHERE if both present
+			// We already added trip as AND, then added proximity as OR -> final is (trip AND proximity?) Actually bun will chain AND then OR -> need to fix
+			// Let's just ensure we don't return empty - the current chaining with WhereGroup OR will work as OR appended at top level
+		}
+	} else if hasCondition {
+		// only trip-based, already handled
 	}
 
-	if len(matchingConditions) > 0 {
-		combined := ""
-		for i, cond := range matchingConditions {
-			if i == 0 {
-				combined = cond
-			} else {
-				combined += " OR " + cond
-			}
+	// Edge: if both trip and proximity present, ensure OR logic wins
+	// Rebuild if both present for correct semantics: (tripCondition) OR (proximityCondition)
+	if params.HasActiveTrip && params.IsAcceptingOrders && params.RunnerLat != 0 && params.RadiusKm > 0 {
+		// Reset query to use OR between two geo branches (keep other filters)
+		radiusM := params.RadiusKm * 1000
+		localRadiusM := 15000.0
+		// Re-create base query with OR geo filter
+		orders = []Order{}
+		query = r.db.NewSelect().
+			Model(&orders).
+			Where("(merchant_id IS NULL AND status = ?) OR (merchant_id IS NOT NULL AND (status = ? OR status = ? OR status = ? OR status = ?))", StatusPending, StatusMerchantAccepted, StatusAccepted, StatusCooking, StatusReady).
+			Where("created_at > ?", params.Cutoff).
+			WhereGroup(" AND ", func(q *bun.SelectQuery) *bun.SelectQuery {
+				return q.Where("payment_status = ?", PaymentEscrow).
+					WhereOr("payment_method = ?", MethodCOD)
+			}).
+			Order("created_at DESC")
+
+		if len(params.AllowedTypes) > 0 {
+			query = query.Where("order_type IN (?)", bun.In(params.AllowedTypes))
 		}
-		query = query.Where(combined)
-	} else {
+
+		if params.IsRoundTrip {
+			query = query.Where("( (ST_DWithin(pickup_geom, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?) AND ST_DWithin(delivery_geom, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?)) OR (ST_DWithin(pickup_geom, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?) AND ST_DWithin(delivery_geom, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?)) OR (distance_km < 10 AND ST_DWithin(pickup_geom, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?)) )",
+				params.OriginLng, params.OriginLat, radiusM, params.DestLng, params.DestLat, radiusM,
+				params.DestLng, params.DestLat, radiusM, params.OriginLng, params.OriginLat, radiusM,
+				params.RunnerLng, params.RunnerLat, localRadiusM)
+		} else {
+			query = query.Where("( (ST_DWithin(pickup_geom, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?) AND ST_DWithin(delivery_geom, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?)) OR (distance_km < 10 AND ST_DWithin(pickup_geom, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?)) )",
+				params.OriginLng, params.OriginLat, radiusM, params.DestLng, params.DestLat, radiusM,
+				params.RunnerLng, params.RunnerLat, localRadiusM)
+		}
+		hasCondition = true
+	}
+
+	if !hasCondition {
 		// If no matching logic (no trip, no online status, or no location), return empty list
 		return []Order{}, nil
 	}

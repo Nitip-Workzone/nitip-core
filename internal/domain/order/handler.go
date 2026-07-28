@@ -13,6 +13,7 @@ import (
 	"github.com/codecoffy/nitip-core/internal/cache"
 	"github.com/codecoffy/nitip-core/internal/domain/user"
 	"github.com/codecoffy/nitip-core/internal/middleware"
+	"github.com/codecoffy/nitip-core/internal/realtime"
 	"github.com/codecoffy/nitip-core/pkg/fileutil"
 	"github.com/codecoffy/nitip-core/pkg/jwt"
 	"github.com/codecoffy/nitip-core/pkg/response"
@@ -26,10 +27,14 @@ type Handler struct {
 	service Service
 	db      *bun.DB
 	redis   *cache.Redis
+	poolHub *realtime.PoolHub
 }
 
-func NewHandler(service Service, db *bun.DB, redis *cache.Redis) *Handler {
-	return &Handler{service: service, db: db, redis: redis}
+func NewHandler(service Service, db *bun.DB, redis *cache.Redis, poolHub *realtime.PoolHub) *Handler {
+	if poolHub == nil {
+		poolHub = realtime.NewPoolHub()
+	}
+	return &Handler{service: service, db: db, redis: redis, poolHub: poolHub}
 }
 
 func (h *Handler) RegisterRoutes(router fiber.Router) {
@@ -48,6 +53,11 @@ func (h *Handler) RegisterRoutes(router fiber.Router) {
 	orders.Get("/merchant/orders", middleware.Role(user.RoleMerchant), h.GetMerchantOrders)
 	orders.Post("/:id/merchant-accept", middleware.Role(user.RoleMerchant), h.MerchantAccept)
 	orders.Post("/:id/merchant-ready", middleware.Role(user.RoleMerchant), h.MerchantReady)
+
+	// Runner pool realtime (SSE)
+	orders.Get("/pool/stream", middleware.Role(user.RoleRunner), h.PoolStream)
+	// Merchant pool realtime (SSE)
+	orders.Get("/merchant/stream", middleware.Role(user.RoleMerchant), h.MerchantPoolStream)
 
 	// Runner endpoints
 	orders.Get("/available", middleware.Role(user.RoleRunner), h.GetAvailableOrders)
@@ -631,6 +641,215 @@ func (h *Handler) GetAvailableOrders(c *fiber.Ctx) error {
 	}
 
 	return response.Success(c, "daftar pesanan tersedia berhasil diambil", orders)
+}
+
+// PoolStream godoc
+// @Summary      Realtime pool stream for runners (SSE)
+// @Description  SSE stream delivering new orders nearby runner. Query token via ?token= also supported for EventSource.
+// @Tags         [Runner] Order Execution
+// @Produce      text/event-stream
+// @Security     BearerAuth
+// @Param        lat  query  number  false  "Runner latitude"
+// @Param        lng  query  number  false  "Runner longitude"
+// @Param        radius query number false "Radius km (default 15)"
+// @Success      200  {string}  string  "SSE Stream"
+// @Router       /orders/pool/stream [get]
+func (h *Handler) PoolStream(c *fiber.Ctx) error {
+	claims := c.Locals("user").(*jwt.CustomClaims)
+	runnerID := claims.UserID.String()
+
+	lat, _ := strconv.ParseFloat(c.Query("lat", "0"), 64)
+	lng, _ := strconv.ParseFloat(c.Query("lng", "0"), 64)
+	radiusKm, _ := strconv.ParseFloat(c.Query("radius", "15"), 64)
+	if radiusKm <= 0 || radiusKm > 50 {
+		radiusKm = 15
+	}
+
+	// If lat/lng not provided via query, try redis stored location
+	if lat == 0 && lng == 0 && h.redis != nil {
+		// attempt to get from hash runner:loc:{id}
+		hKey := fmt.Sprintf("runner:loc:%s", runnerID)
+		if client := h.redis.Client(); client != nil {
+			if vals, err := client.HGetAll(context.Background(), hKey).Result(); err == nil && len(vals) > 0 {
+				if v, ok := vals["lat"]; ok {
+					lat, _ = strconv.ParseFloat(v, 64)
+				}
+				if v, ok := vals["lng"]; ok {
+					lng, _ = strconv.ParseFloat(v, 64)
+				}
+			}
+		}
+	}
+
+	c.Set("Content-Type", "text/event-stream")
+	c.Set("Cache-Control", "no-cache")
+	c.Set("Connection", "keep-alive")
+	c.Set("Transfer-Encoding", "chunked")
+	c.Set("X-Accel-Buffering", "no")
+
+	// Increment connection counter
+	if h.redis != nil {
+		_, _ = h.redis.IncrCounter(context.Background(), "sse:connections")
+		// peak
+		// we handle peak in hub
+	}
+
+	c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
+		clientID := fmt.Sprintf("runner:%s:%d", runnerID, time.Now().UnixNano())
+
+		// Subscribe cells
+		var cellKeys []string
+		if lat != 0 && lng != 0 {
+			cellKeys = realtime.NeighborCells(lat, lng)
+		} else {
+			// fallback: single generic cell if no location
+			cellKeys = []string{"global"}
+		}
+
+		sseClient := &realtime.SSEClient{
+			ID:       clientID,
+			CellKeys: cellKeys,
+			Lat:      lat,
+			Lng:      lng,
+			RadiusKm: radiusKm,
+			Ch:       make(chan realtime.PoolEvent, 64),
+			Done:     make(chan struct{}),
+		}
+
+		h.poolHub.RegisterSSE(sseClient)
+		defer func() {
+			h.poolHub.UnregisterSSE(clientID)
+			if h.redis != nil {
+				// Decrement active conn counter via INCR negative? Use Decr logic: just get current and set? Simpler use INCR -1 via client
+				if cli := h.redis.Client(); cli != nil {
+					_, _ = cli.Decr(context.Background(), "pool:counter:sse:connections").Result()
+				}
+			}
+		}()
+
+		// Immediate heartbeat
+		_ = realtime.WriteSSEHeartbeat(w)
+
+		// On connect, send initial available orders snapshot as event?
+		// To keep payload small, frontend should still call GET /orders/available once
+		// We send just connected info
+		_ = realtime.WriteSSEEvent(w, realtime.PoolEvent{
+			Type:      "connected",
+			Timestamp: time.Now().UnixMilli(),
+			Data:      map[string]interface{}{"cells": cellKeys, "radius": radiusKm},
+		})
+
+		heartbeatTicker := time.NewTicker(20 * time.Second)
+		defer heartbeatTicker.Stop()
+
+		for {
+			select {
+			case <-sseClient.Done:
+				return
+			case <-heartbeatTicker.C:
+				if err := realtime.WriteSSEHeartbeat(w); err != nil {
+					return
+				}
+			case ev := <-sseClient.Ch:
+				if err := realtime.WriteSSEEvent(w, ev); err != nil {
+					return
+				}
+			}
+		}
+	})
+
+	return nil
+}
+
+// MerchantPoolStream godoc
+// @Summary      Realtime pool stream for merchants (SSE)
+// @Description  SSE stream for merchant incoming orders
+// @Tags         [Runner] Order Execution
+// @Produce      text/event-stream
+// @Security     BearerAuth
+// @Success      200  {string}  string  "SSE Stream"
+// @Router       /orders/merchant/stream [get]
+func (h *Handler) MerchantPoolStream(c *fiber.Ctx) error {
+	claims := c.Locals("user").(*jwt.CustomClaims)
+	userID := claims.UserID.String()
+
+	c.Set("Content-Type", "text/event-stream")
+	c.Set("Cache-Control", "no-cache")
+	c.Set("Connection", "keep-alive")
+	c.Set("Transfer-Encoding", "chunked")
+	c.Set("X-Accel-Buffering", "no")
+
+	if h.redis != nil {
+		_, _ = h.redis.IncrCounter(context.Background(), "sse:connections")
+	}
+
+	c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
+		clientID := fmt.Sprintf("merchant_user:%s:%d", userID, time.Now().UnixNano())
+
+		// For merchant user, we need to resolve merchantIDs owned
+		// For MVP: subscribe to generic merchant cell + user-specific
+		cellKeys := []string{"merchant:global", "merchant:user:" + userID}
+
+		// Try to expand to actual merchant IDs if service available
+		if h.service != nil {
+			if merchants, err := h.service.GetMerchantOrders(context.Background(), claims.UserID); err == nil {
+				seen := map[string]bool{}
+				for _, o := range merchants {
+					if o.MerchantID != nil {
+						k := "merchant:" + o.MerchantID.String()
+						if !seen[k] {
+							seen[k] = true
+							cellKeys = append(cellKeys, k)
+						}
+					}
+				}
+			}
+		}
+
+		sseClient := &realtime.SSEClient{
+			ID:       clientID,
+			CellKeys: cellKeys,
+			Ch:       make(chan realtime.PoolEvent, 64),
+			Done:     make(chan struct{}),
+		}
+
+		h.poolHub.RegisterSSE(sseClient)
+		defer func() {
+			h.poolHub.UnregisterSSE(clientID)
+			if h.redis != nil {
+				if cli := h.redis.Client(); cli != nil {
+					_, _ = cli.Decr(context.Background(), "pool:counter:sse:connections").Result()
+				}
+			}
+		}()
+
+		_ = realtime.WriteSSEHeartbeat(w)
+		_ = realtime.WriteSSEEvent(w, realtime.PoolEvent{
+			Type:      "connected",
+			Timestamp: time.Now().UnixMilli(),
+			Data:      map[string]interface{}{"cells": cellKeys},
+		})
+
+		heartbeatTicker := time.NewTicker(20 * time.Second)
+		defer heartbeatTicker.Stop()
+
+		for {
+			select {
+			case <-sseClient.Done:
+				return
+			case <-heartbeatTicker.C:
+				if err := realtime.WriteSSEHeartbeat(w); err != nil {
+					return
+				}
+			case ev := <-sseClient.Ch:
+				if err := realtime.WriteSSEEvent(w, ev); err != nil {
+					return
+				}
+			}
+		}
+	})
+
+	return nil
 }
 
 // Track godoc

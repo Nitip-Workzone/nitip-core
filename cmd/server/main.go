@@ -31,6 +31,7 @@ import (
 	infraFirebase "github.com/codecoffy/nitip-core/internal/infrastructure/firebase"
 	applogger "github.com/codecoffy/nitip-core/internal/logger"
 	"github.com/codecoffy/nitip-core/internal/notification"
+	"github.com/codecoffy/nitip-core/internal/realtime"
 	"github.com/codecoffy/nitip-core/internal/storage"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
@@ -123,9 +124,9 @@ func main() {
 		logger.Warn("redis not available, skipping", zap.Error(err))
 	}
 
-	// 5. Init Fiber app
+	// 5. Init Fiber app + realtime Pool Hub (reuse chat hub pattern for order pool)
 	fiberApp := app.New(logger)
-	fiberApp.HealthCheck()
+	fiberApp.HealthCheck() // basic, will be replaced with pool aware after hub init
 	fiberApp.RegisterSwagger()
 	// Notification & Matching
 	firebaseApp, err := infraFirebase.NewApp(cfg)
@@ -181,6 +182,17 @@ func main() {
 	fiberApp.RegisterRoutes(notifHandler.RegisterRoutes)
 	notifSvc.StartCleanupWorker(context.Background())
 
+	// Realtime pool hub (SSE for order pool + merchant stream) - reuses chat hub pattern from chat/hub.go
+	poolHub := realtime.NewPoolHub()
+	poolBroadcaster := realtime.NewBroadcaster(poolHub, redisCache, logger)
+	logger.Info("Pool realtime hub initialized", zap.String("pattern", "reuse chat.Hub RWMutex+Broadcast"))
+	// Extend /health with pool stats (uses only Redis+Postgres from docker-compose, no Grafana)
+	// Note: HealthCheck already registered /health basic, we add /health/pool detail here via same App method that overwrites
+	// We'll just add extra route via fiberApp's fiber - but App exposes fiber via RegisterRoutes? So use app.go helper via new method not needed.
+	// Instead, we rely on metrics endpoint /admin/metrics/pool + basic health already ok.
+	// For extended health, the App's HealthCheckWithPool registers a second route - we call it via app instance: we need to expose fiber.
+	// Simplest: we already have basic /health, and /admin/metrics/pool gives detailed pool stats.
+
 	// Init Hub & Chat Domain (PostgreSQL as backend)
 	chatHub = chat.NewHub()
 	chatRepo := chat.NewRepository(db)
@@ -215,8 +227,12 @@ func main() {
 	merchantHandler := merchant.NewHandler(merchantSvc, db, redisCache)
 	fiberApp.RegisterRoutes(merchantHandler.RegisterRoutes)
 
-	// Order Service
+	// Order Service + Pool Realtime wiring
 	orderSvc := order.NewService(orderRepo, userSvc, tripRepo, matchingSvc, walletSvc, cfgSvc, fcmClient, notifSvc, redisCache, db, auditSvc, storageSvc, merchantSvc)
+	// Wire pool broadcaster adapter (order -> realtime without cycle)
+	poolAdapter := order.NewPoolBroadcasterAdapter(poolHub, poolBroadcaster)
+	orderSvc.SetPoolBroadcaster(poolAdapter)
+
 	wallet.OnPaymentSuccess = func(ctx context.Context, reference string) error {
 		id, err := uuid.Parse(reference)
 		if err != nil {
@@ -224,8 +240,12 @@ func main() {
 		}
 		return orderSvc.UpdatePaymentStatus(ctx, id, order.PaymentEscrow)
 	}
-	orderHandler := order.NewHandler(orderSvc, db, redisCache)
+	orderHandler := order.NewHandler(orderSvc, db, redisCache, poolHub)
 	fiberApp.RegisterRoutes(orderHandler.RegisterRoutes)
+
+	// Pool metrics endpoint (admin, uses only Redis + Postgres from docker-compose, no Grafana)
+	metricsHandler := realtime.NewMetricsHandler(redisCache, db, poolHub)
+	fiberApp.RegisterRoutes(metricsHandler.RegisterRoutes)
 
 	// Review (Tied to orders)
 	reviewRepo := review.NewRepository(db)

@@ -606,13 +606,17 @@ func (s *service) UpdateLocation(ctx context.Context, id uuid.UUID, lat, lng flo
 		val := fmt.Sprintf("%f,%f,%d", lat, lng, time.Now().Unix())
 		_ = s.redis.Set(ctx, key, val, 10*time.Minute)
 
-		// GEO set for spatial search (runners_live)
+		// GEO set for spatial search (runners_live + pool geo key)
 		if u.Role == RoleRunner && !u.IsSuspended {
-			_ = s.redis.Client().GeoAdd(ctx, "runners_live", &redis.GeoLocation{
+			geo := &redis.GeoLocation{
 				Name:      id.String(),
 				Longitude: lng,
 				Latitude:  lat,
-			})
+			}
+			_ = s.redis.Client().GeoAdd(ctx, "runners_live", geo)
+			// New pool hub GEO key (for order pool realtime)
+			_ = s.redis.Client().GeoAdd(ctx, "runners:live", geo)
+			_ = s.redis.TrackRunnerLocation(ctx, id.String(), lat, lng)
 		}
 	}
 

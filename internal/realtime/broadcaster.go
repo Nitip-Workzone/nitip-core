@@ -1,0 +1,197 @@
+package realtime
+
+import (
+	"context"
+	"encoding/json"
+	"time"
+
+	"github.com/codecoffy/nitip-core/internal/cache"
+	"github.com/google/uuid"
+	"go.uber.org/zap"
+)
+
+// Minimal Order interface to avoid import cycle
+type orderMinimal struct {
+	ID            uuid.UUID
+	PickupLat     float64
+	PickupLng     float64
+	ItemDetails   string
+	DeliveryFee   float64
+	EstimatedCost float64
+	DistanceKm    float64
+	OrderType     string
+	Status        string
+	MerchantID    *uuid.UUID
+}
+
+type Broadcaster struct {
+	hub    *PoolHub
+	redis  *cache.Redis
+	logger *zap.Logger
+}
+
+func NewBroadcaster(hub *PoolHub, redis *cache.Redis, logger *zap.Logger) *Broadcaster {
+	return &Broadcaster{hub: hub, redis: redis, logger: logger}
+}
+
+// BroadcastNewOrder broadcasts new order to nearby cells
+func (b *Broadcaster) BroadcastOrderCreated(orderID string, pickupLat, pickupLng float64, itemDetails string, merchantID *uuid.UUID, extra map[string]interface{}) {
+	if b.hub == nil {
+		return
+	}
+	start := time.Now()
+
+	cells := NeighborCells(pickupLat, pickupLng)
+
+	data := map[string]interface{}{
+		"order_id":   orderID,
+		"pickup_lat": pickupLat,
+		"pickup_lng": pickupLng,
+		"item":       itemDetails,
+	}
+	if merchantID != nil {
+		data["merchant_id"] = merchantID.String()
+	}
+	for k, v := range extra {
+		data[k] = v
+	}
+
+	ev := PoolEvent{
+		Type:      EventOrderCreated,
+		OrderID:   orderID,
+		Timestamp: time.Now().UnixMilli(),
+		Data:      data,
+	}
+
+	b.hub.BroadcastToCells(cells, ev)
+
+	// Also broadcast to merchant cells if merchant order
+	if merchantID != nil {
+		b.hub.BroadcastMerchant(merchantID.String(), PoolEvent{
+			Type:      EventOrderCreated,
+			OrderID:   orderID,
+			Timestamp: time.Now().UnixMilli(),
+			Data:      data,
+		})
+		// also global merchant feed
+		b.hub.BroadcastToCell("merchant:global", ev)
+	}
+
+	latency := time.Since(start).Milliseconds()
+
+	// Redis counters - no Grafana needed
+	if b.redis != nil {
+		_, _ = b.redis.IncrCounter(context.Background(), "events:total")
+		_, _ = b.redis.IncrCounter(context.Background(), "orders:created")
+		_ = b.redis.Client().HSet(context.Background(), "pool:last_broadcast", map[string]interface{}{
+			"order_id":   orderID,
+			"latency_ms": latency,
+			"ts":         time.Now().Unix(),
+			"cells":      len(cells),
+		}).Err()
+	}
+
+	if b.logger != nil {
+		b.logger.Info("[POOL] broadcast new order",
+			zap.String("order_id", orderID),
+			zap.Int("cells", len(cells)),
+			zap.Int64("latency_ms", latency),
+		)
+	}
+
+	// Async insert to pool_metrics Postgres via redis? We do async goroutine if needed
+	// Postgres insert deferred to admin metrics endpoint reading pool_metrics table
+	// To avoid import cycle, we store JSON in redis list for later flush?
+	// For MVP, log only + redis counters sufficient
+	_ = json.RawMessage{} // keep import
+}
+
+// BroadcastOrderClaimed removes order from pool view
+func (b *Broadcaster) BroadcastOrderClaimed(orderID string, runnerID string, pickupLat, pickupLng float64) {
+	if b.hub == nil {
+		return
+	}
+	cells := NeighborCells(pickupLat, pickupLng)
+	ev := PoolEvent{
+		Type:      EventOrderClaimed,
+		OrderID:   orderID,
+		Timestamp: time.Now().UnixMilli(),
+		Data: map[string]interface{}{
+			"order_id":  orderID,
+			"runner_id": runnerID,
+		},
+	}
+	b.hub.BroadcastToCells(cells, ev)
+	if b.redis != nil {
+		_, _ = b.redis.IncrCounter(context.Background(), "events:total")
+		_, _ = b.redis.IncrCounter(context.Background(), "orders:claimed")
+		_, _ = b.redis.IncrCounter(context.Background(), "claim:success")
+	}
+}
+
+// BroadcastOrderCancelled
+func (b *Broadcaster) BroadcastOrderCancelled(orderID string, reason string, pickupLat, pickupLng float64) {
+	if b.hub == nil {
+		return
+	}
+	cells := NeighborCells(pickupLat, pickupLng)
+	ev := PoolEvent{
+		Type:      EventOrderCancelled,
+		OrderID:   orderID,
+		Timestamp: time.Now().UnixMilli(),
+		Data: map[string]interface{}{
+			"order_id": orderID,
+			"reason":   reason,
+		},
+	}
+	b.hub.BroadcastToCells(cells, ev)
+	if b.redis != nil {
+		_, _ = b.redis.IncrCounter(context.Background(), "events:total")
+	}
+}
+
+// Implement PoolBroadcaster interface adapters for order service
+
+// For backward compat with interface defined in order service (uses Order struct)
+type OrderAdapter interface {
+	GetID() string
+	GetPickupLat() float64
+	GetPickupLng() float64
+	GetItemDetails() string
+	GetMerchantID() *uuid.UUID
+}
+
+// Direct simple wrappers used by order service if it passes full order
+
+func (b *Broadcaster) BroadcastNewOrderFull(orderIDStr string, lat, lng float64, item string, merchantID *uuid.UUID, cost float64, fee float64, dist float64) {
+	extra := map[string]interface{}{
+		"estimated_cost": cost,
+		"delivery_fee":   fee,
+		"distance_km":    dist,
+	}
+	b.BroadcastOrderCreated(orderIDStr, lat, lng, item, merchantID, extra)
+}
+
+func (b *Broadcaster) BroadcastMerchant(merchantID string, eventType string, orderID string, data map[string]interface{}) {
+	if b.hub == nil {
+		return
+	}
+	ev := PoolEvent{
+		Type:      eventType,
+		OrderID:   orderID,
+		Timestamp: time.Now().UnixMilli(),
+		Data:      data,
+	}
+	b.hub.BroadcastMerchant(merchantID, ev)
+	b.hub.BroadcastToCell("merchant:global", ev)
+}
+
+// IncrClaimConflict increments redis + hub counter
+func (b *Broadcaster) IncrClaimConflict() {
+	if b.hub != nil {
+		b.hub.IncrClaimConflict()
+	}
+	if b.redis != nil {
+		_, _ = b.redis.IncrCounter(context.Background(), "claim:conflict")
+	}
+}

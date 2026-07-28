@@ -149,6 +149,16 @@ type Service interface {
 	StartBackgroundCleanup(ctx context.Context)
 	StartPaymentWorkerPool(ctx context.Context, numWorkers int)
 	RefreshQRIS(ctx context.Context, orderID, requesterID uuid.UUID) (*Order, error)
+
+	// Realtime pool
+	SetPoolBroadcaster(b PoolBroadcaster)
+}
+
+type PoolBroadcaster interface {
+	BroadcastNewOrder(order *Order)
+	BroadcastClaimed(orderID string, runnerID string, pickupLat, pickupLng float64)
+	BroadcastCancelled(orderID string, reason string, pickupLat, pickupLng float64)
+	BroadcastMerchantEvent(merchantID string, eventType string, order *Order)
 }
 
 type service struct {
@@ -167,6 +177,7 @@ type service struct {
 	merchantSvc  merchant.Service
 	paymentQueue chan PaymentJob
 	paymentOnce  sync.Once
+	poolHub      PoolBroadcaster
 }
 
 func NewService(repo Repository, userSvc user.Service, tripRepo trip.Repository, matchingSvc Matcher, walletSvc wallet.Service, configSvc systemconfig.Service, fcm notification.Notifier, notifSvc notifDomain.Service, redis *cache.Redis, db *bun.DB, auditSvc audit.Service, storage storage.Storage, merchantSvc merchant.Service) Service {
@@ -186,6 +197,10 @@ func NewService(repo Repository, userSvc user.Service, tripRepo trip.Repository,
 		merchantSvc:  merchantSvc,
 		paymentQueue: make(chan PaymentJob, 500),
 	}
+}
+
+func (s *service) SetPoolBroadcaster(b PoolBroadcaster) {
+	s.poolHub = b
 }
 
 func (s *service) Create(ctx context.Context, requesterID uuid.UUID, req CreateOrderRequest) (*Order, error) {
@@ -514,6 +529,19 @@ func (s *service) Create(ctx context.Context, requesterID uuid.UUID, req CreateO
 				}
 			}
 		}
+
+		// --- Realtime Pool Broadcast (new) ---
+		if s.poolHub != nil {
+			// async non-blocking
+			go s.poolHub.BroadcastNewOrder(order)
+			if order.MerchantID != nil {
+				go s.poolHub.BroadcastMerchantEvent(order.MerchantID.String(), "order_created", order)
+			}
+		}
+		if s.redis != nil {
+			_, _ = s.redis.IncrCounter(context.Background(), "orders:created")
+			_, _ = s.redis.IncrCounter(context.Background(), "events:total")
+		}
 	}
 
 	return order, nil
@@ -742,7 +770,26 @@ func (s *service) AcceptOrder(ctx context.Context, orderID, runnerID uuid.UUID) 
 	})
 
 	if err != nil {
+		// Track claim conflict for metrics if race detected
+		if strings.Contains(err.Error(), "diambil oleh runner lain") {
+			if s.redis != nil {
+				_, _ = s.redis.IncrCounter(context.Background(), "claim:conflict")
+			}
+			// also hub internal counter if broadcaster supports it
+			if bc, ok := s.poolHub.(interface{ IncrConflict() }); ok {
+				bc.IncrConflict()
+			}
+		}
 		return err
+	}
+
+	// --- Realtime: broadcast claimed to remove from pool ---
+	if s.poolHub != nil {
+		go s.poolHub.BroadcastClaimed(orderID.String(), runnerID.String(), order.PickupLat, order.PickupLng)
+	}
+	if s.redis != nil {
+		_, _ = s.redis.IncrCounter(context.Background(), "claim:success")
+		_, _ = s.redis.IncrCounter(context.Background(), "events:total")
 	}
 
 	// Audit Log
@@ -1029,6 +1076,13 @@ func (s *service) CancelOrder(ctx context.Context, orderID, userID uuid.UUID, re
 					Type:     "order",
 					Metadata: map[string]interface{}{"order_id": ord.ID.String(), "status": StatusCancelled, "reason": reason},
 				})
+			}
+		}
+		// Realtime: remove cancelled order from pool
+		if s.poolHub != nil {
+			go s.poolHub.BroadcastCancelled(ord.ID.String(), reason, ord.PickupLat, ord.PickupLng)
+			if ord.MerchantID != nil {
+				go s.poolHub.BroadcastMerchantEvent(ord.MerchantID.String(), "order_cancelled", ord)
 			}
 		}
 	}

@@ -141,6 +141,48 @@ func (a *App) HealthCheck() {
 	})
 }
 
+// PoolStatsProvider interface to avoid import cycle (realtime -> app)
+type PoolStatsProvider interface {
+	ConnectionCount() int64
+	TotalEvents() int64
+	ClaimConflicts() int64
+}
+
+type RedisStatsProvider interface {
+	GetAllPoolCounters(ctx context.Context) (map[string]int64, error)
+}
+
+func (a *App) HealthCheckWithPool(poolHub PoolStatsProvider, redisProvider RedisStatsProvider) {
+	a.fiber.Get("/health", func(c *fiber.Ctx) error {
+		resp := fiber.Map{
+			"status":    "ok",
+			"service":   "nitip-core",
+			"timestamp": time.Now().Format(time.RFC3339),
+		}
+		if poolHub != nil {
+			resp["sse_connections"] = poolHub.ConnectionCount()
+			resp["sse_total_events"] = poolHub.TotalEvents()
+			resp["claim_conflicts"] = poolHub.ClaimConflicts()
+		}
+		if redisProvider != nil {
+			if counters, err := redisProvider.GetAllPoolCounters(c.Context()); err == nil {
+				resp["pool_counters"] = counters
+			}
+			resp["redis_up"] = true
+		} else {
+			resp["redis_up"] = false
+		}
+		return c.JSON(resp)
+	})
+
+	a.fiber.Get("/favicon.ico", func(c *fiber.Ctx) error {
+		return c.SendStatus(fiber.StatusNoContent)
+	})
+	a.fiber.Get("/", func(c *fiber.Ctx) error {
+		return c.Redirect("/docs/index.html", fiber.StatusMovedPermanently)
+	})
+}
+
 // RegisterSwagger mounts the Swagger UI at /docs (only in non-production)
 func (a *App) RegisterSwagger() {
 	if os.Getenv("APP_ENV") == "production" {
