@@ -521,7 +521,7 @@ func (s *service) Create(ctx context.Context, requesterID uuid.UUID, req CreateO
 					if ownerUser != nil && ownerUser.FcmToken != nil && *ownerUser.FcmToken != "" {
 						_ = s.fcm.SendToDevice(bgCtx, *ownerUser.FcmToken, "Pesanan Baru Masuk (Otomatis)",
 							fmt.Sprintf("Pesanan %s diterima otomatis. Silakan mulai masak!", order.ItemDetails),
-							map[string]string{"order_id": order.ID.String()})
+							map[string]string{"order_id": order.ID.String(), "type": "merchant_order"})
 					}
 
 				}()
@@ -535,7 +535,7 @@ func (s *service) Create(ctx context.Context, requesterID uuid.UUID, req CreateO
 					if ownerUser != nil && ownerUser.FcmToken != nil && *ownerUser.FcmToken != "" {
 						_ = s.fcm.SendToDevice(bgCtx, *ownerUser.FcmToken, "Pesanan Baru Masuk",
 							fmt.Sprintf("Pesanan %s membutuhkan konfirmasi Anda.", order.ItemDetails),
-							map[string]string{"order_id": order.ID.String()})
+							map[string]string{"order_id": order.ID.String(), "type": "merchant_order"})
 					}
 
 				}()
@@ -955,7 +955,7 @@ func (s *service) AcceptOrder(ctx context.Context, orderID, runnerID uuid.UUID) 
 					if merchOwner != nil && merchOwner.FcmToken != nil && *merchOwner.FcmToken != "" {
 						_ = s.fcm.SendToDevice(bgCtx, *merchOwner.FcmToken, "Mulai Masak Pesanan",
 							fmt.Sprintf("Runner %s menuju toko Anda. Silakan siapkan pesanan %s!", r.Name, order.ItemDetails),
-							map[string]string{"order_id": order.ID.String()})
+							map[string]string{"order_id": order.ID.String(), "type": "merchant_order"})
 					}
 
 				}()
@@ -1161,15 +1161,40 @@ func (s *service) CancelOrder(ctx context.Context, orderID, userID uuid.UUID, re
 
 	if err == nil {
 		// Notify other parties about cancellation
-		if isRequester && ord.RunnerID != nil {
-			// Requester cancels -> notify runner
-			_ = s.notifSvc.CreateNotification(ctx, notifDomain.CreateNotificationRequest{
-				UserID:   *ord.RunnerID,
-				Title:    "Pesanan Dibatalkan",
-				Message:  fmt.Sprintf("Pesanan %s dibatalkan oleh penitip. Alasan: %s", ord.ItemDetails, reason),
-				Type:     "order",
-				Metadata: map[string]interface{}{"order_id": ord.ID.String(), "status": StatusCancelled, "reason": reason},
-			})
+		if isRequester {
+			if ord.RunnerID != nil {
+				// Requester cancels -> notify runner
+				_ = s.notifSvc.CreateNotification(ctx, notifDomain.CreateNotificationRequest{
+					UserID:   *ord.RunnerID,
+					Title:    "Pesanan Dibatalkan",
+					Message:  fmt.Sprintf("Pesanan %s dibatalkan oleh penitip. Alasan: %s", ord.ItemDetails, reason),
+					Type:     "order",
+					Metadata: map[string]interface{}{"order_id": ord.ID.String(), "status": StatusCancelled, "reason": reason},
+				})
+			}
+			if ord.MerchantID != nil {
+				merch, _ := s.merchantSvc.GetMerchantByID(ctx, *ord.MerchantID)
+				if merch != nil {
+					_ = s.notifSvc.CreateNotification(ctx, notifDomain.CreateNotificationRequest{
+						UserID:   merch.OwnerID,
+						Title:    "Pesanan Dibatalkan",
+						Message:  fmt.Sprintf("Pesanan %s dibatalkan oleh penitip. Alasan: %s", ord.ItemDetails, reason),
+						Type:     "order",
+						Metadata: map[string]interface{}{"order_id": ord.ID.String(), "status": StatusCancelled, "reason": reason},
+					})
+					if s.fcm != nil && config.App.FcmEnabled {
+						go func() {
+							bgCtx := context.Background()
+							ownerUser, _ := s.userSvc.GetByID(bgCtx, merch.OwnerID, merch.OwnerID)
+							if ownerUser != nil && ownerUser.FcmToken != nil && *ownerUser.FcmToken != "" {
+								_ = s.fcm.SendToDevice(bgCtx, *ownerUser.FcmToken, "Pesanan Dibatalkan",
+									fmt.Sprintf("Pesanan %s dibatalkan oleh pelanggan. Alasan: %s", ord.ItemDetails, reason),
+									map[string]string{"order_id": ord.ID.String(), "type": "merchant_order"})
+							}
+						}()
+					}
+				}
+			}
 		}
 		if isRunner {
 			_ = s.notifSvc.CreateNotification(ctx, notifDomain.CreateNotificationRequest{
@@ -1189,6 +1214,17 @@ func (s *service) CancelOrder(ctx context.Context, orderID, userID uuid.UUID, re
 						Type:     "order",
 						Metadata: map[string]interface{}{"order_id": ord.ID.String(), "status": StatusCancelled, "reason": reason},
 					})
+					if s.fcm != nil && config.App.FcmEnabled {
+						go func() {
+							bgCtx := context.Background()
+							ownerUser, _ := s.userSvc.GetByID(bgCtx, merch.OwnerID, merch.OwnerID)
+							if ownerUser != nil && ownerUser.FcmToken != nil && *ownerUser.FcmToken != "" {
+								_ = s.fcm.SendToDevice(bgCtx, *ownerUser.FcmToken, "Pesanan Dibatalkan Runner",
+									fmt.Sprintf("Runner membatalkan pesanan %s. Alasan: %s", ord.ItemDetails, reason),
+									map[string]string{"order_id": ord.ID.String(), "type": "merchant_order"})
+							}
+						}()
+					}
 				}
 			}
 		}
@@ -1519,7 +1555,7 @@ func (s *service) processPayment(ctx context.Context, orderID uuid.UUID, payment
 							if ownerUser != nil && ownerUser.FcmToken != nil && *ownerUser.FcmToken != "" {
 								_ = s.fcm.SendToDevice(bgCtx, *ownerUser.FcmToken, "Pesanan Baru Masuk (Otomatis)",
 									fmt.Sprintf("Pesanan %s diterima otomatis. Silakan mulai masak!", orderObj.ItemDetails),
-									map[string]string{"order_id": orderObj.ID.String()})
+									map[string]string{"order_id": orderObj.ID.String(), "type": "merchant_order"})
 							}
 
 						}()
@@ -1533,7 +1569,7 @@ func (s *service) processPayment(ctx context.Context, orderID uuid.UUID, payment
 							if ownerUser != nil && ownerUser.FcmToken != nil && *ownerUser.FcmToken != "" {
 								_ = s.fcm.SendToDevice(bgCtx, *ownerUser.FcmToken, "Pesanan Baru Masuk",
 									fmt.Sprintf("Pesanan %s membutuhkan konfirmasi Anda.", orderObj.ItemDetails),
-									map[string]string{"order_id": orderObj.ID.String()})
+									map[string]string{"order_id": orderObj.ID.String(), "type": "merchant_order"})
 							}
 
 						}()
@@ -2627,11 +2663,23 @@ func (s *service) GetMerchantOrders(ctx context.Context, ownerID uuid.UUID) ([]O
 		return nil, err
 	}
 	var orders []Order
+	// FIX merchant hilang saat menunggu runner: include merchant_accepted + limit 100 + allow unpaid QRIS juga terlihat di merchant
 	err = s.db.NewSelect().
 		Model(&orders).
 		Where("merchant_id = ?", merch.ID).
-		Where("payment_status = ? OR payment_method = ?", PaymentEscrow, MethodCOD).
+		Where("status IN (?)", bun.List([]string{
+			StatusPending,
+			StatusMerchantAccepted,
+			StatusCooking,
+			StatusReady,
+			StatusAccepted,
+			StatusPurchasing,
+			StatusDelivering,
+			StatusCompleted,
+		})).
+		Where("payment_status = ? OR payment_method = ? OR payment_status = ?", PaymentEscrow, MethodCOD, PaymentUnpaid).
 		Order("created_at DESC").
+		Limit(100).
 		Scan(ctx)
 	return orders, err
 }

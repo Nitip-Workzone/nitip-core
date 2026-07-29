@@ -47,13 +47,57 @@ func (r *repository) GetByOrderIDAndReviewerID(ctx context.Context, db bun.IDB, 
 }
 
 func (r *repository) GetAverageRatingByReviewee(ctx context.Context, db bun.IDB, revieweeID uuid.UUID) (float64, error) {
-	var avg float64
+	var ratings []int
 	err := db.NewSelect().Model((*Review)(nil)).
-		ColumnExpr("COALESCE(AVG(runner_rating), 0)").
+		Column("runner_rating").
 		Where("runner_id = ?", revieweeID).
 		Where("runner_rating IS NOT NULL").
-		Scan(ctx, &avg)
-	return avg, err
+		Scan(ctx, &ratings)
+	if err != nil {
+		return 0, err
+	}
+
+	if len(ratings) == 0 {
+		return 0, nil
+	}
+
+	// Rule: Jika total ulasan < 3, gunakan rata-rata standar
+	if len(ratings) < 3 {
+		sum := 0
+		for _, val := range ratings {
+			sum += val
+		}
+		return float64(sum) / float64(len(ratings)), nil
+	}
+
+	// Cari satu rating terendah
+	lowestIdx := 0
+	lowestVal := ratings[0]
+	for i, val := range ratings {
+		if val < lowestVal {
+			lowestVal = val
+			lowestIdx = i
+		}
+	}
+
+	// Hitung rata-rata jika rating terendah diabaikan
+	sumExcluding := 0
+	for i, val := range ratings {
+		if i != lowestIdx {
+			sumExcluding += val
+		}
+	}
+	avgExcluding := float64(sumExcluding) / float64(len(ratings)-1)
+
+	// Jika rating terendah bernilai <= 2 DAN rata-rata ulasan lainnya >= 4.0,
+	// abaikan rating terendah tersebut agar tidak langsung merusak performa runner (outlier protection)
+	if lowestVal <= 2 && avgExcluding >= 4.0 {
+		return avgExcluding, nil
+	}
+
+	// Jika tidak memenuhi syarat di atas, hitung rata-rata standar (termasuk rating terendah)
+	sumAll := sumExcluding + lowestVal
+	return float64(sumAll) / float64(len(ratings)), nil
 }
 
 func (r *repository) GetAverageRatingByMerchant(ctx context.Context, db bun.IDB, merchantID uuid.UUID) (float64, error) {
