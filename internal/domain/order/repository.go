@@ -106,46 +106,50 @@ func (r *repository) FindAvailable(ctx context.Context, params FindAvailablePara
 	}
 
 	// Build geo condition as single AND group containing OR branches
-	// This prevents OR from escaping status filter (previous bug: OR at top-level leaked completed orders)
+	// Previous bug: returned empty when online but no trip/loc → broke realtime pool UX (needs pull).
+	// Fix low-burden: if online without geo, fallback to status-only (no geo filter) so SSE + fetch works.
 	hasTrip := params.HasActiveTrip && params.RadiusKm > 0
 	hasProximity := params.IsAcceptingOrders && params.RunnerLat != 0 && params.RunnerLng != 0
+	hasOnlineNoGeo := params.IsAcceptingOrders && !hasProximity && !hasTrip
 
-	if !hasTrip && !hasProximity {
-		// If no matching logic (no trip, no online status, or no location), return empty list
+	if !hasTrip && !hasProximity && !hasOnlineNoGeo {
+		// Offline & no trip → empty to save DB
 		return []Order{}, nil
 	}
 
-	// Now add geo condition as AND (status filter stays enforced)
-	query := baseQuery.WhereGroup(" AND ", func(q *bun.SelectQuery) *bun.SelectQuery {
-		// Inside this, we have OR between trip and proximity
-		return q.WhereGroup(" OR ", func(q2 *bun.SelectQuery) *bun.SelectQuery {
-			// Trip branch
-			if hasTrip {
-				radiusM := params.RadiusKm * 1000
-				if params.IsRoundTrip {
-					// (pickup near origin AND delivery near dest) OR (pickup near dest AND delivery near origin)
-					// WhereOrGroup not available in bun version, use WhereOr with raw combined condition
-					q2 = q2.WhereGroup(" OR ", func(q3 *bun.SelectQuery) *bun.SelectQuery {
-						return q3.Where("(ST_DWithin(pickup_geom, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?) AND ST_DWithin(delivery_geom, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?))",
-							params.OriginLng, params.OriginLat, radiusM, params.DestLng, params.DestLat, radiusM).
-							WhereOr("(ST_DWithin(pickup_geom, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?) AND ST_DWithin(delivery_geom, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?))",
-								params.DestLng, params.DestLat, radiusM, params.OriginLng, params.OriginLat, radiusM)
-					})
-				} else {
-					q2 = q2.WhereGroup(" AND ", func(q3 *bun.SelectQuery) *bun.SelectQuery {
-						return q3.Where("ST_DWithin(pickup_geom, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?)", params.OriginLng, params.OriginLat, radiusM).
-							Where("ST_DWithin(delivery_geom, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?)", params.DestLng, params.DestLat, radiusM)
-					})
+	var query *bun.SelectQuery
+	if hasOnlineNoGeo {
+		// Online fallback: no geo, just status/payment – allows realtime pool to show orders immediately
+		// PostGIS skipped, low burden (indexed columns, limit 100)
+		query = baseQuery
+	} else {
+		// With geo
+		query = baseQuery.WhereGroup(" AND ", func(q *bun.SelectQuery) *bun.SelectQuery {
+			return q.WhereGroup(" OR ", func(q2 *bun.SelectQuery) *bun.SelectQuery {
+				if hasTrip {
+					radiusM := params.RadiusKm * 1000
+					if params.IsRoundTrip {
+						q2 = q2.WhereGroup(" OR ", func(q3 *bun.SelectQuery) *bun.SelectQuery {
+							return q3.Where("(ST_DWithin(pickup_geom, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?) AND ST_DWithin(delivery_geom, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?))",
+								params.OriginLng, params.OriginLat, radiusM, params.DestLng, params.DestLat, radiusM).
+								WhereOr("(ST_DWithin(pickup_geom, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?) AND ST_DWithin(delivery_geom, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?))",
+									params.DestLng, params.DestLat, radiusM, params.OriginLng, params.OriginLat, radiusM)
+						})
+					} else {
+						q2 = q2.WhereGroup(" AND ", func(q3 *bun.SelectQuery) *bun.SelectQuery {
+							return q3.Where("ST_DWithin(pickup_geom, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?)", params.OriginLng, params.OriginLat, radiusM).
+								Where("ST_DWithin(delivery_geom, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?)", params.DestLng, params.DestLat, radiusM)
+						})
+					}
 				}
-			}
-			// Proximity branch
-			if hasProximity {
-				localRadiusM := 15000.0
-				q2 = q2.WhereOr("distance_km < 10 AND ST_DWithin(pickup_geom, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?)", params.RunnerLng, params.RunnerLat, localRadiusM)
-			}
-			return q2
+				if hasProximity {
+					localRadiusM := 15000.0
+					q2 = q2.WhereOr("distance_km < 10 AND ST_DWithin(pickup_geom, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ?)", params.RunnerLng, params.RunnerLat, localRadiusM)
+				}
+				return q2
+			})
 		})
-	})
+	}
 
 	if params.Limit > 0 {
 		query = query.Limit(params.Limit).Offset(params.Offset)

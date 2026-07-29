@@ -1755,8 +1755,11 @@ func (s *service) GetAvailableOrders(ctx context.Context, runnerID uuid.UUID) ([
 		}
 	}
 
-	// Logic: If no trip and not accepting orders, return empty
+	// FIX: Allow online runners to see orders even without trip or precise location
+	// Previous logic returned empty if !trip && !online, which broke realtime pool for new runners (heartbeat not yet sent)
+	// Now: if online, allow fallback to status-only fetch in repo (low burden, no geo filter)
 	if !params.HasActiveTrip && !params.IsAcceptingOrders {
+		// Still empty if truly offline and no trip – save DB
 		return []Order{}, nil
 	}
 

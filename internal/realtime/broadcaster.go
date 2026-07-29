@@ -50,6 +50,8 @@ func (b *Broadcaster) BroadcastOrderCreated(orderID string, pickupLat, pickupLng
 	}
 
 	b.hub.BroadcastToCells(cells, ev)
+	// Also broadcast to global fallback so runners without precise location still get realtime (low burden)
+	b.hub.BroadcastToCell("global", ev)
 
 	// Also broadcast to merchant cells if merchant order
 	if merchantID != nil {
