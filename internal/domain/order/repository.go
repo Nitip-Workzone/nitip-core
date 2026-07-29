@@ -239,13 +239,13 @@ func (r *repository) CompleteAtomic(ctx context.Context, db bun.IDB, id uuid.UUI
 
 func (r *repository) FindByRequesterID(ctx context.Context, requesterID uuid.UUID) ([]Order, error) {
 	orders := []Order{}
-	err := r.db.NewSelect().Model(&orders).Where("requester_id = ?", requesterID).Order("created_at DESC").Scan(ctx)
+	err := r.db.NewSelect().Model(&orders).Where("requester_id = ?", requesterID).Order("created_at DESC").Limit(100).Scan(ctx)
 	return orders, err
 }
 
 func (r *repository) FindByRunnerID(ctx context.Context, runnerID uuid.UUID) ([]Order, error) {
 	orders := []Order{}
-	err := r.db.NewSelect().Model(&orders).Where("runner_id = ?", runnerID).Order("created_at DESC").Scan(ctx)
+	err := r.db.NewSelect().Model(&orders).Where("runner_id = ?", runnerID).Order("created_at DESC").Limit(100).Scan(ctx)
 	return orders, err
 }
 

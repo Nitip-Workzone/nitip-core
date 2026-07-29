@@ -173,7 +173,7 @@ func main() {
 	orderRepo := order.NewRepository(db)
 
 	matchingSvc := matching.NewService(userRepo, tripRepo, orderRepo, redisCache, fcmClient)
-	matchingSvc.StartWorkerPool(context.Background(), 10) // Start background matching workers
+	// Worker pool will be started gracefully in the background workers section
 
 	// Notification History
 	notifRepo := notificationDomain.NewRepository(db)

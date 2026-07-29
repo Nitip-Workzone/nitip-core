@@ -1884,24 +1884,44 @@ func (s *service) syncRedisGeoOrderPool(ctx context.Context) {
 	if s.redis == nil {
 		return
 	}
-	var activeOrders []Order
-	err := s.db.NewSelect().
-		Model(&activeOrders).
-		Column("id", "pickup_lat", "pickup_lng").
-		Where("status IN (?)", bun.List([]string{StatusPending, StatusMerchantAccepted, StatusAccepted, StatusCooking, StatusReady})).
-		WhereGroup(" AND ", func(q *bun.SelectQuery) *bun.SelectQuery {
-			return q.Where("payment_status = ?", PaymentEscrow).
-				WhereOr("payment_method = ?", MethodCOD)
-		}).
-		Scan(ctx)
-	if err != nil {
-		log.Printf("[GEO-SWEEPER] Gagal mendapatkan daftar order aktif dari DB: %v", err)
-		return
-	}
 
+	limit := 500
+	offset := 0
 	activeMap := make(map[string]Order)
-	for _, o := range activeOrders {
-		activeMap[o.ID.String()] = o
+	totalActive := 0
+
+	for {
+		var activeOrders []Order
+		err := s.db.NewSelect().
+			Model(&activeOrders).
+			Column("id", "pickup_lat", "pickup_lng").
+			Where("status IN (?)", bun.List([]string{StatusPending, StatusMerchantAccepted, StatusAccepted, StatusCooking, StatusReady})).
+			WhereGroup(" AND ", func(q *bun.SelectQuery) *bun.SelectQuery {
+				return q.Where("payment_status = ?", PaymentEscrow).
+					WhereOr("payment_method = ?", MethodCOD)
+			}).
+			Limit(limit).
+			Offset(offset).
+			Scan(ctx)
+
+		if err != nil {
+			log.Printf("[GEO-SWEEPER] Gagal mendapatkan daftar order aktif dari DB: %v", err)
+			return
+		}
+
+		if len(activeOrders) == 0 {
+			break
+		}
+
+		for _, o := range activeOrders {
+			activeMap[o.ID.String()] = o
+			totalActive++
+		}
+
+		if len(activeOrders) < limit {
+			break
+		}
+		offset += limit
 	}
 
 	redisIDs, err := s.redis.Client().ZRange(ctx, "orders:live", 0, -1).Result()
@@ -1918,10 +1938,10 @@ func (s *service) syncRedisGeoOrderPool(ctx context.Context) {
 	}
 
 	for idStr, o := range activeMap {
-		_ = s.redis.GeoAddOrder(ctx, idStr, o.PickupLat, o.PickupLng)
+		_ = s.redis.GeoAddOrder(ctx, idStr, o.PickupLng, o.PickupLat)
 	}
 
-	log.Printf("[GEO-SWEEPER] Sinkronisasi Redis GEO selesai. Jumlah order aktif: %d", len(activeOrders))
+	log.Printf("[GEO-SWEEPER] Sinkronisasi Redis GEO selesai. Jumlah order aktif: %d", totalActive)
 }
 
 func (s *service) RequestPriceAdjustment(ctx context.Context, orderID, runnerID uuid.UUID, adjustedCost float64, reason string) error {

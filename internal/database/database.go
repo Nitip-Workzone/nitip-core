@@ -3,6 +3,7 @@ package database
 import (
 	"database/sql"
 	"fmt"
+	"time"
 
 	"github.com/codecoffy/nitip-core/config"
 	_ "github.com/go-sql-driver/mysql"
@@ -25,6 +26,12 @@ func New(cfg *config.Config, logger *zap.Logger) (*bun.DB, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to open mysql connection: %w", err)
 		}
+		
+		// Set Connection Pool Limits
+		sqldb.SetMaxOpenConns(50)
+		sqldb.SetMaxIdleConns(10)
+		sqldb.SetConnMaxLifetime(30 * time.Minute)
+		
 		db = bun.NewDB(sqldb, mysqldialect.New())
 		logger.Info("database driver: mysql",
 			zap.String("host", cfg.DBHost),
@@ -34,6 +41,12 @@ func New(cfg *config.Config, logger *zap.Logger) (*bun.DB, error) {
 
 	default: // postgres
 		sqldb := sql.OpenDB(pgdriver.NewConnector(pgdriver.WithDSN(cfg.DSN())))
+		
+		// Set Connection Pool Limits
+		sqldb.SetMaxOpenConns(50)
+		sqldb.SetMaxIdleConns(10)
+		sqldb.SetConnMaxLifetime(30 * time.Minute)
+		
 		db = bun.NewDB(sqldb, pgdialect.New())
 		logger.Info("database driver: postgres",
 			zap.String("host", cfg.DBHost),
