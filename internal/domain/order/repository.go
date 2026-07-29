@@ -101,26 +101,24 @@ func (r *repository) FindAvailable(ctx context.Context, params FindAvailablePara
 		}).
 		Order("created_at DESC")
 
-	if len(params.AllowedTypes) > 0 {
-		baseQuery = baseQuery.Where("order_type IN (?)", bun.List(params.AllowedTypes))
-	}
-
-	// Build geo condition as single AND group containing OR branches
-	// Previous bug: returned empty when online but no trip/loc → broke realtime pool UX (needs pull).
-	// Fix low-burden: if online without geo, fallback to status-only (no geo filter) so SSE + fetch works.
+	// FIX: only apply AllowedTypes when hasTrip, otherwise online runners see all types (instant + regular)
+	// This fixes case where order is instant but trip allows regular only → would be hidden
 	hasTrip := params.HasActiveTrip && params.RadiusKm > 0
 	hasProximity := params.IsAcceptingOrders && params.RunnerLat != 0 && params.RunnerLng != 0
 	hasOnlineNoGeo := params.IsAcceptingOrders && !hasProximity && !hasTrip
 
 	if !hasTrip && !hasProximity && !hasOnlineNoGeo {
-		// Offline & no trip → empty to save DB
 		return []Order{}, nil
+	}
+
+	// Apply type filter only for trip-based matching, not for online fallback
+	if len(params.AllowedTypes) > 0 && hasTrip {
+		baseQuery = baseQuery.Where("order_type IN (?)", bun.List(params.AllowedTypes))
 	}
 
 	var query *bun.SelectQuery
 	if hasOnlineNoGeo {
-		// Online fallback: no geo, just status/payment – allows realtime pool to show orders immediately
-		// PostGIS skipped, low burden (indexed columns, limit 100)
+		// Online fallback: no geo, just status/payment – instant realtime
 		query = baseQuery
 	} else {
 		// With geo
