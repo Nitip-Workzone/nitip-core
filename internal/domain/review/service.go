@@ -72,7 +72,7 @@ func (s *service) SubmitReview(ctx context.Context, orderID, reviewerID uuid.UUI
 			MerchantID:      o.MerchantID,
 			MerchantRating:  merchantRating,
 			MerchantComment: merchantComment,
-			RequesterID:      &o.RequesterID,
+			RequesterID:     &o.RequesterID,
 		}
 		if err := s.repo.Create(ctx, tx, rv); err != nil {
 			if isDuplicateReviewError(err) {
@@ -137,7 +137,7 @@ func (s *service) SubmitRunnerReview(ctx context.Context, orderID, runnerID uuid
 			OrderID:          orderID,
 			ReviewerID:       runnerID,
 			RunnerID:         runnerID,
-			RequesterID:       &o.RequesterID,
+			RequesterID:      &o.RequesterID,
 			RequesterRating:  &requesterRating,
 			RequesterComment: requesterComment,
 		}

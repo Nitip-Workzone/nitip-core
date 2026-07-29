@@ -517,13 +517,13 @@ func (s *service) Create(ctx context.Context, requesterID uuid.UUID, req CreateO
 			if s.fcm != nil && config.App.FcmEnabled {
 				go func() {
 					bgCtx := context.Background()
-				ownerUser, _ := s.userSvc.GetByID(bgCtx, merch.OwnerID, merch.OwnerID)
-				if ownerUser != nil && ownerUser.FcmToken != nil && *ownerUser.FcmToken != "" {
-					_ = s.fcm.SendToDevice(bgCtx, *ownerUser.FcmToken, "Pesanan Baru Masuk (Otomatis)",
-						fmt.Sprintf("Pesanan %s diterima otomatis. Silakan mulai masak!", order.ItemDetails),
-						map[string]string{"order_id": order.ID.String()})
-				}
-			
+					ownerUser, _ := s.userSvc.GetByID(bgCtx, merch.OwnerID, merch.OwnerID)
+					if ownerUser != nil && ownerUser.FcmToken != nil && *ownerUser.FcmToken != "" {
+						_ = s.fcm.SendToDevice(bgCtx, *ownerUser.FcmToken, "Pesanan Baru Masuk (Otomatis)",
+							fmt.Sprintf("Pesanan %s diterima otomatis. Silakan mulai masak!", order.ItemDetails),
+							map[string]string{"order_id": order.ID.String()})
+					}
+
 				}()
 			}
 		} else {
@@ -531,13 +531,13 @@ func (s *service) Create(ctx context.Context, requesterID uuid.UUID, req CreateO
 			if s.fcm != nil && config.App.FcmEnabled {
 				go func() {
 					bgCtx := context.Background()
-				ownerUser, _ := s.userSvc.GetByID(bgCtx, merch.OwnerID, merch.OwnerID)
-				if ownerUser != nil && ownerUser.FcmToken != nil && *ownerUser.FcmToken != "" {
-					_ = s.fcm.SendToDevice(bgCtx, *ownerUser.FcmToken, "Pesanan Baru Masuk",
-						fmt.Sprintf("Pesanan %s membutuhkan konfirmasi Anda.", order.ItemDetails),
-						map[string]string{"order_id": order.ID.String()})
-				}
-			
+					ownerUser, _ := s.userSvc.GetByID(bgCtx, merch.OwnerID, merch.OwnerID)
+					if ownerUser != nil && ownerUser.FcmToken != nil && *ownerUser.FcmToken != "" {
+						_ = s.fcm.SendToDevice(bgCtx, *ownerUser.FcmToken, "Pesanan Baru Masuk",
+							fmt.Sprintf("Pesanan %s membutuhkan konfirmasi Anda.", order.ItemDetails),
+							map[string]string{"order_id": order.ID.String()})
+					}
+
 				}()
 			}
 		}
@@ -925,13 +925,13 @@ func (s *service) AcceptOrder(ctx context.Context, orderID, runnerID uuid.UUID) 
 	if s.fcm != nil && config.App.FcmEnabled {
 		go func() {
 			bgCtx := context.Background()
-		reqUser, _ := s.userSvc.GetByID(bgCtx, order.RequesterID, order.RequesterID)
-		if reqUser != nil && reqUser.FcmToken != nil && *reqUser.FcmToken != "" {
-			_ = s.fcm.SendToDevice(bgCtx, *reqUser.FcmToken, "Pesanan Diterima",
-				fmt.Sprintf("Runner sedang memproses pesanan Anda (%s)", order.ItemDetails),
-				map[string]string{"order_id": order.ID.String()})
-		}
-	
+			reqUser, _ := s.userSvc.GetByID(bgCtx, order.RequesterID, order.RequesterID)
+			if reqUser != nil && reqUser.FcmToken != nil && *reqUser.FcmToken != "" {
+				_ = s.fcm.SendToDevice(bgCtx, *reqUser.FcmToken, "Pesanan Diterima",
+					fmt.Sprintf("Runner sedang memproses pesanan Anda (%s)", order.ItemDetails),
+					map[string]string{"order_id": order.ID.String()})
+			}
+
 		}()
 	}
 
@@ -951,13 +951,13 @@ func (s *service) AcceptOrder(ctx context.Context, orderID, runnerID uuid.UUID) 
 			if s.fcm != nil && config.App.FcmEnabled {
 				go func() {
 					bgCtx := context.Background()
-				merchOwner, _ := s.userSvc.GetByID(bgCtx, merch.OwnerID, merch.OwnerID)
-				if merchOwner != nil && merchOwner.FcmToken != nil && *merchOwner.FcmToken != "" {
-					_ = s.fcm.SendToDevice(bgCtx, *merchOwner.FcmToken, "Mulai Masak Pesanan",
-						fmt.Sprintf("Runner %s menuju toko Anda. Silakan siapkan pesanan %s!", r.Name, order.ItemDetails),
-						map[string]string{"order_id": order.ID.String()})
-				}
-			
+					merchOwner, _ := s.userSvc.GetByID(bgCtx, merch.OwnerID, merch.OwnerID)
+					if merchOwner != nil && merchOwner.FcmToken != nil && *merchOwner.FcmToken != "" {
+						_ = s.fcm.SendToDevice(bgCtx, *merchOwner.FcmToken, "Mulai Masak Pesanan",
+							fmt.Sprintf("Runner %s menuju toko Anda. Silakan siapkan pesanan %s!", r.Name, order.ItemDetails),
+							map[string]string{"order_id": order.ID.String()})
+					}
+
 				}()
 			}
 		}
@@ -1029,13 +1029,13 @@ func (s *service) PickupOrder(ctx context.Context, orderID, runnerID uuid.UUID) 
 	if s.fcm != nil && config.App.FcmEnabled {
 		go func() {
 			bgCtx := context.Background()
-		reqUser, _ := s.userSvc.GetByID(bgCtx, order.RequesterID, order.RequesterID)
-		if reqUser != nil && reqUser.FcmToken != nil && *reqUser.FcmToken != "" {
-			_ = s.fcm.SendToDevice(bgCtx, *reqUser.FcmToken, "Pesanan Dalam Perjalanan",
-				fmt.Sprintf("Runner sedang menuju lokasi Anda untuk pesanan %s", order.ItemDetails),
-				map[string]string{"order_id": order.ID.String(), "type": "order_delivering"})
-		}
-	
+			reqUser, _ := s.userSvc.GetByID(bgCtx, order.RequesterID, order.RequesterID)
+			if reqUser != nil && reqUser.FcmToken != nil && *reqUser.FcmToken != "" {
+				_ = s.fcm.SendToDevice(bgCtx, *reqUser.FcmToken, "Pesanan Dalam Perjalanan",
+					fmt.Sprintf("Runner sedang menuju lokasi Anda untuk pesanan %s", order.ItemDetails),
+					map[string]string{"order_id": order.ID.String(), "type": "order_delivering"})
+			}
+
 		}()
 	}
 
@@ -1428,13 +1428,13 @@ func (s *service) CompleteOrder(ctx context.Context, orderID, runnerID uuid.UUID
 		if s.fcm != nil && config.App.FcmEnabled {
 			go func() {
 				bgCtx := context.Background()
-			reqUser, _ := s.userSvc.GetByID(bgCtx, order.RequesterID, order.RequesterID)
-			if reqUser != nil && reqUser.FcmToken != nil && *reqUser.FcmToken != "" {
-				_ = s.fcm.SendToDevice(bgCtx, *reqUser.FcmToken, "Pesanan Selesai",
-					fmt.Sprintf("Pesanan %s selesai! Beri ulasan sekarang.", order.ItemDetails),
-					map[string]string{"order_id": order.ID.String(), "type": "order_completed"})
-			}
-		
+				reqUser, _ := s.userSvc.GetByID(bgCtx, order.RequesterID, order.RequesterID)
+				if reqUser != nil && reqUser.FcmToken != nil && *reqUser.FcmToken != "" {
+					_ = s.fcm.SendToDevice(bgCtx, *reqUser.FcmToken, "Pesanan Selesai",
+						fmt.Sprintf("Pesanan %s selesai! Beri ulasan sekarang.", order.ItemDetails),
+						map[string]string{"order_id": order.ID.String(), "type": "order_completed"})
+				}
+
 			}()
 		}
 	}
@@ -1515,13 +1515,13 @@ func (s *service) processPayment(ctx context.Context, orderID uuid.UUID, payment
 					if s.fcm != nil && config.App.FcmEnabled {
 						go func() {
 							bgCtx := context.Background()
-						ownerUser, _ := s.userSvc.GetByID(bgCtx, merch.OwnerID, merch.OwnerID)
-						if ownerUser != nil && ownerUser.FcmToken != nil && *ownerUser.FcmToken != "" {
-							_ = s.fcm.SendToDevice(bgCtx, *ownerUser.FcmToken, "Pesanan Baru Masuk (Otomatis)",
-								fmt.Sprintf("Pesanan %s diterima otomatis. Silakan mulai masak!", orderObj.ItemDetails),
-								map[string]string{"order_id": orderObj.ID.String()})
-						}
-					
+							ownerUser, _ := s.userSvc.GetByID(bgCtx, merch.OwnerID, merch.OwnerID)
+							if ownerUser != nil && ownerUser.FcmToken != nil && *ownerUser.FcmToken != "" {
+								_ = s.fcm.SendToDevice(bgCtx, *ownerUser.FcmToken, "Pesanan Baru Masuk (Otomatis)",
+									fmt.Sprintf("Pesanan %s diterima otomatis. Silakan mulai masak!", orderObj.ItemDetails),
+									map[string]string{"order_id": orderObj.ID.String()})
+							}
+
 						}()
 					}
 				} else {
@@ -1529,13 +1529,13 @@ func (s *service) processPayment(ctx context.Context, orderID uuid.UUID, payment
 					if s.fcm != nil && config.App.FcmEnabled {
 						go func() {
 							bgCtx := context.Background()
-						ownerUser, _ := s.userSvc.GetByID(bgCtx, merch.OwnerID, merch.OwnerID)
-						if ownerUser != nil && ownerUser.FcmToken != nil && *ownerUser.FcmToken != "" {
-							_ = s.fcm.SendToDevice(bgCtx, *ownerUser.FcmToken, "Pesanan Baru Masuk",
-								fmt.Sprintf("Pesanan %s membutuhkan konfirmasi Anda.", orderObj.ItemDetails),
-								map[string]string{"order_id": orderObj.ID.String()})
-						}
-					
+							ownerUser, _ := s.userSvc.GetByID(bgCtx, merch.OwnerID, merch.OwnerID)
+							if ownerUser != nil && ownerUser.FcmToken != nil && *ownerUser.FcmToken != "" {
+								_ = s.fcm.SendToDevice(bgCtx, *ownerUser.FcmToken, "Pesanan Baru Masuk",
+									fmt.Sprintf("Pesanan %s membutuhkan konfirmasi Anda.", orderObj.ItemDetails),
+									map[string]string{"order_id": orderObj.ID.String()})
+							}
+
 						}()
 					}
 				}
@@ -1768,17 +1768,17 @@ func (s *service) ResolveDispute(ctx context.Context, orderID uuid.UUID, side st
 		if s.fcm != nil && config.App.FcmEnabled {
 			go func() {
 				bgCtx := context.Background()
-			reqUser, _ := s.userSvc.GetByID(bgCtx, order.RequesterID, order.RequesterID)
-			if reqUser != nil && reqUser.FcmToken != nil && *reqUser.FcmToken != "" {
-				_ = s.fcm.SendToDevice(bgCtx, *reqUser.FcmToken, "Sengketa Selesai", msg, map[string]string{"order_id": order.ID.String()})
-			}
-			if order.RunnerID != nil {
-				runUser, _ := s.userSvc.GetByID(bgCtx, *order.RunnerID, *order.RunnerID)
-				if runUser != nil && runUser.FcmToken != nil && *runUser.FcmToken != "" {
-					_ = s.fcm.SendToDevice(bgCtx, *runUser.FcmToken, "Sengketa Selesai", msg, map[string]string{"order_id": order.ID.String()})
+				reqUser, _ := s.userSvc.GetByID(bgCtx, order.RequesterID, order.RequesterID)
+				if reqUser != nil && reqUser.FcmToken != nil && *reqUser.FcmToken != "" {
+					_ = s.fcm.SendToDevice(bgCtx, *reqUser.FcmToken, "Sengketa Selesai", msg, map[string]string{"order_id": order.ID.String()})
 				}
-			}
-		
+				if order.RunnerID != nil {
+					runUser, _ := s.userSvc.GetByID(bgCtx, *order.RunnerID, *order.RunnerID)
+					if runUser != nil && runUser.FcmToken != nil && *runUser.FcmToken != "" {
+						_ = s.fcm.SendToDevice(bgCtx, *runUser.FcmToken, "Sengketa Selesai", msg, map[string]string{"order_id": order.ID.String()})
+					}
+				}
+
 			}()
 		}
 	}
@@ -2116,14 +2116,14 @@ func (s *service) RequestPriceAdjustment(ctx context.Context, orderID, runnerID 
 		if s.fcm != nil && config.App.FcmEnabled {
 			go func() {
 				bgCtx := context.Background()
-			requester, errReq := s.userSvc.GetByID(bgCtx, order.RequesterID, order.RequesterID)
-			if errReq == nil && requester.FcmToken != nil && *requester.FcmToken != "" {
-				_ = s.fcm.SendToDevice(bgCtx, *requester.FcmToken, "Penyesuaian Harga", "Runner meminta penyesuaian harga untuk pesanan Anda.", map[string]string{
-					"type":     "price_adjustment",
-					"order_id": order.ID.String(),
-				})
-			}
-		
+				requester, errReq := s.userSvc.GetByID(bgCtx, order.RequesterID, order.RequesterID)
+				if errReq == nil && requester.FcmToken != nil && *requester.FcmToken != "" {
+					_ = s.fcm.SendToDevice(bgCtx, *requester.FcmToken, "Penyesuaian Harga", "Runner meminta penyesuaian harga untuk pesanan Anda.", map[string]string{
+						"type":     "price_adjustment",
+						"order_id": order.ID.String(),
+					})
+				}
+
 			}()
 		}
 	}
@@ -2679,13 +2679,13 @@ func (s *service) MerchantAcceptOrder(ctx context.Context, orderID, ownerID uuid
 	if s.fcm != nil && config.App.FcmEnabled {
 		go func() {
 			bgCtx := context.Background()
-		reqUser, _ := s.userSvc.GetByID(bgCtx, order.RequesterID, order.RequesterID)
-		if reqUser != nil && reqUser.FcmToken != nil && *reqUser.FcmToken != "" {
-			_ = s.fcm.SendToDevice(bgCtx, *reqUser.FcmToken, "Pesanan Diterima Merchant",
-				fmt.Sprintf("Merchant menyetujui pesanan Anda: %s. Menunggu runner menjemput.", order.ItemDetails),
-				map[string]string{"order_id": order.ID.String()})
-		}
-	
+			reqUser, _ := s.userSvc.GetByID(bgCtx, order.RequesterID, order.RequesterID)
+			if reqUser != nil && reqUser.FcmToken != nil && *reqUser.FcmToken != "" {
+				_ = s.fcm.SendToDevice(bgCtx, *reqUser.FcmToken, "Pesanan Diterima Merchant",
+					fmt.Sprintf("Merchant menyetujui pesanan Anda: %s. Menunggu runner menjemput.", order.ItemDetails),
+					map[string]string{"order_id": order.ID.String()})
+			}
+
 		}()
 	}
 
@@ -2729,13 +2729,13 @@ func (s *service) MerchantReadyOrder(ctx context.Context, orderID, ownerID uuid.
 	if s.fcm != nil && config.App.FcmEnabled {
 		go func() {
 			bgCtx := context.Background()
-		reqUser, _ := s.userSvc.GetByID(bgCtx, order.RequesterID, order.RequesterID)
-		if reqUser != nil && reqUser.FcmToken != nil && *reqUser.FcmToken != "" {
-			_ = s.fcm.SendToDevice(bgCtx, *reqUser.FcmToken, "Makanan Siap Diambil",
-				fmt.Sprintf("Pesanan Anda di %s sudah selesai disiapkan!", merch.Name),
-				map[string]string{"order_id": order.ID.String()})
-		}
-	
+			reqUser, _ := s.userSvc.GetByID(bgCtx, order.RequesterID, order.RequesterID)
+			if reqUser != nil && reqUser.FcmToken != nil && *reqUser.FcmToken != "" {
+				_ = s.fcm.SendToDevice(bgCtx, *reqUser.FcmToken, "Makanan Siap Diambil",
+					fmt.Sprintf("Pesanan Anda di %s sudah selesai disiapkan!", merch.Name),
+					map[string]string{"order_id": order.ID.String()})
+			}
+
 		}()
 	}
 
@@ -2751,13 +2751,13 @@ func (s *service) MerchantReadyOrder(ctx context.Context, orderID, ownerID uuid.
 		if s.fcm != nil && config.App.FcmEnabled {
 			go func() {
 				bgCtx := context.Background()
-			runUser, _ := s.userSvc.GetByID(bgCtx, *order.RunnerID, *order.RunnerID)
-			if runUser != nil && runUser.FcmToken != nil && *runUser.FcmToken != "" {
-				_ = s.fcm.SendToDevice(bgCtx, *runUser.FcmToken, "Pesanan Siap Diambil",
-					fmt.Sprintf("Silakan ambil pesanan %s di %s.", order.ItemDetails, merch.Name),
-					map[string]string{"order_id": order.ID.String()})
-			}
-		
+				runUser, _ := s.userSvc.GetByID(bgCtx, *order.RunnerID, *order.RunnerID)
+				if runUser != nil && runUser.FcmToken != nil && *runUser.FcmToken != "" {
+					_ = s.fcm.SendToDevice(bgCtx, *runUser.FcmToken, "Pesanan Siap Diambil",
+						fmt.Sprintf("Silakan ambil pesanan %s di %s.", order.ItemDetails, merch.Name),
+						map[string]string{"order_id": order.ID.String()})
+				}
+
 			}()
 		}
 	}

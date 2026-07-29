@@ -12,8 +12,8 @@ import (
 	notifDomain "github.com/codecoffy/nitip-core/internal/domain/notification"
 	"github.com/codecoffy/nitip-core/internal/domain/order"
 	"github.com/codecoffy/nitip-core/internal/domain/user"
-	"github.com/codecoffy/nitip-core/internal/storage"
 	"github.com/codecoffy/nitip-core/internal/notification"
+	"github.com/codecoffy/nitip-core/internal/storage"
 	"github.com/google/uuid"
 )
 

@@ -85,10 +85,10 @@ var (
 	StatusAccepted         = "accepted"
 	StatusPurchasing       = "purchasing"
 	StatusDelivering       = "delivering"
-	StatusCompleted  = "completed"
-	StatusCancelled  = "cancelled"
-	StatusExpired    = "expired"
-	StatusDisputed   = "disputed"
+	StatusCompleted        = "completed"
+	StatusCancelled        = "cancelled"
+	StatusExpired          = "expired"
+	StatusDisputed         = "disputed"
 
 	// Adjustment Status
 	AdjustmentPending  = "pending"
