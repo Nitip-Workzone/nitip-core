@@ -43,19 +43,23 @@ func (r *repository) FindByID(ctx context.Context, id uuid.UUID) (*Trip, error) 
 
 func (r *repository) FindByRunnerID(ctx context.Context, runnerID uuid.UUID) ([]Trip, error) {
 	var trips []Trip
+	// P1 FIX: limit 100 to prevent OOM on many trips
 	err := r.db.NewSelect().Model(&trips).
 		Where("runner_id = ?", runnerID).
 		Order("created_at DESC").
+		Limit(100).
 		Scan(ctx)
 	return trips, err
 }
 
 func (r *repository) FindAllActive(ctx context.Context) ([]Trip, error) {
 	var trips []Trip
+	// P1 FIX: limit 100 for active trips to prevent unbounded scan
 	err := r.db.NewSelect().Model(&trips).
 		Where("status = ?", StatusActive).
 		Where("departure_time > NOW()").
 		Order("departure_time ASC").
+		Limit(100).
 		Scan(ctx)
 	return trips, err
 }

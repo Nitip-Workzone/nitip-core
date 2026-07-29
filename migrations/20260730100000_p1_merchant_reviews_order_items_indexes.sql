@@ -57,7 +57,8 @@ CREATE INDEX IF NOT EXISTS idx_wallet_tx_type_status ON wallet_transactions(wall
 -- 6. Support tickets assignee for active ticket lookup
 CREATE INDEX IF NOT EXISTS idx_support_tickets_cs_status ON support_tickets(assigned_cs_id, status) WHERE assigned_cs_id IS NOT NULL;
 
--- Goose StatementEnd
+-- +goose StatementEnd
+
 -- +goose Down
 -- +goose StatementBegin
 DROP TRIGGER IF EXISTS trg_merchants_set_geom ON merchants;
@@ -79,4 +80,4 @@ DROP INDEX IF EXISTS idx_users_last_location;
 DROP INDEX IF EXISTS idx_wallet_tx_type_status;
 DROP INDEX IF EXISTS idx_support_tickets_cs_status;
 -- Keep geom column for compatibility, just drop indexes above
--- Goose StatementEnd
+-- +goose StatementEnd

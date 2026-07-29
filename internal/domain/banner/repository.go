@@ -26,7 +26,8 @@ func NewRepository(db *bun.DB) Repository {
 
 func (r *repository) GetAll(ctx context.Context) ([]Banner, error) {
 	var banners []Banner
-	err := r.db.NewSelect().Model(&banners).Order("created_at DESC").Scan(ctx)
+	// P2 minor: limit 100 even though low cardinality
+	err := r.db.NewSelect().Model(&banners).Order("created_at DESC").Limit(100).Scan(ctx)
 	return banners, err
 }
 

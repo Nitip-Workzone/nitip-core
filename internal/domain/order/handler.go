@@ -749,12 +749,12 @@ func (h *Handler) PoolStream(c *fiber.Ctx) error {
 		radiusKm = 15
 	}
 
-	// If lat/lng not provided via query, try redis stored location
+	// If lat/lng not provided via query, try redis stored location — with timeout ctx not Background (P1)
 	if lat == 0 && lng == 0 && h.redis != nil {
-		// attempt to get from hash runner:loc:{id}
 		hKey := fmt.Sprintf("runner:loc:%s", runnerID)
 		if client := h.redis.Client(); client != nil {
-			if vals, err := client.HGetAll(context.Background(), hKey).Result(); err == nil && len(vals) > 0 {
+			ctxTimeout, cancel := context.WithTimeout(c.Context(), 2*time.Second)
+			if vals, err := client.HGetAll(ctxTimeout, hKey).Result(); err == nil && len(vals) > 0 {
 				if v, ok := vals["lat"]; ok {
 					lat, _ = strconv.ParseFloat(v, 64)
 				}
@@ -762,6 +762,7 @@ func (h *Handler) PoolStream(c *fiber.Ctx) error {
 					lng, _ = strconv.ParseFloat(v, 64)
 				}
 			}
+			cancel()
 		}
 	}
 
@@ -771,11 +772,11 @@ func (h *Handler) PoolStream(c *fiber.Ctx) error {
 	c.Set("Transfer-Encoding", "chunked")
 	c.Set("X-Accel-Buffering", "no")
 
-	// Increment connection counter
+	// Increment connection counter with timeout ctx (was Background)
 	if h.redis != nil {
-		_, _ = h.redis.IncrCounter(context.Background(), "sse:connections")
-		// peak
-		// we handle peak in hub
+		ctxTimeout, cancel := context.WithTimeout(c.Context(), 2*time.Second)
+		_, _ = h.redis.IncrCounter(ctxTimeout, "sse:connections")
+		cancel()
 	}
 
 	c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
@@ -804,9 +805,10 @@ func (h *Handler) PoolStream(c *fiber.Ctx) error {
 		defer func() {
 			h.poolHub.UnregisterSSE(clientID)
 			if h.redis != nil {
-				// Decrement active conn counter via INCR negative? Use Decr logic: just get current and set? Simpler use INCR -1 via client
 				if cli := h.redis.Client(); cli != nil {
-					_, _ = cli.Decr(context.Background(), "pool:counter:sse:connections").Result()
+					ctxTimeout, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+					_, _ = cli.Decr(ctxTimeout, "pool:counter:sse:connections").Result()
+					cancel()
 				}
 			}
 		}()
@@ -867,19 +869,23 @@ func (h *Handler) MerchantPoolStream(c *fiber.Ctx) error {
 	c.Set("X-Accel-Buffering", "no")
 
 	if h.redis != nil {
-		_, _ = h.redis.IncrCounter(context.Background(), "sse:connections")
+		ctxTimeout, cancel := context.WithTimeout(c.Context(), 2*time.Second)
+		_, _ = h.redis.IncrCounter(ctxTimeout, "sse:connections")
+		cancel()
 	}
+
+	// Capture request context for use inside StreamWriter goroutine (P0 fix: avoid Background in SSE)
+	reqCtx := c.Context()
 
 	c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
 		clientID := fmt.Sprintf("merchant_user:%s:%d", userID, time.Now().UnixNano())
 
-		// For merchant user, we need to resolve merchantIDs owned
-		// For MVP: subscribe to generic merchant cell + user-specific
 		cellKeys := []string{"merchant:global", "merchant:user:" + userID}
 
-		// Try to expand to actual merchant IDs if service available
+		// Expand to actual merchant IDs — use timeout ctx (was Background)
 		if h.service != nil {
-			if merchants, err := h.service.GetMerchantOrders(context.Background(), claims.UserID); err == nil {
+			ctxTimeout, cancel := context.WithTimeout(reqCtx, 3*time.Second)
+			if merchants, err := h.service.GetMerchantOrders(ctxTimeout, claims.UserID); err == nil {
 				seen := map[string]bool{}
 				for _, o := range merchants {
 					if o.MerchantID != nil {
@@ -891,6 +897,7 @@ func (h *Handler) MerchantPoolStream(c *fiber.Ctx) error {
 					}
 				}
 			}
+			cancel()
 		}
 
 		sseClient := &realtime.SSEClient{
@@ -905,7 +912,9 @@ func (h *Handler) MerchantPoolStream(c *fiber.Ctx) error {
 			h.poolHub.UnregisterSSE(clientID)
 			if h.redis != nil {
 				if cli := h.redis.Client(); cli != nil {
-					_, _ = cli.Decr(context.Background(), "pool:counter:sse:connections").Result()
+					ctxTimeout, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+					_, _ = cli.Decr(ctxTimeout, "pool:counter:sse:connections").Result()
+					cancel()
 				}
 			}
 		}()

@@ -8,10 +8,10 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net/http"
 	"os"
 	"strconv"
-	"math"
 	"strings"
 	"time"
 
@@ -240,16 +240,16 @@ func (s *service) InitiateTopUp(ctx context.Context, userID uuid.UUID, amount fl
 		}
 
 		log.Printf("[MOCK-QRIS-CHARGE-REQUEST] URL: %s/api/qris/generate, Payload: %s", pgUrl, string(body))
-		resp, err := http.Post(fmt.Sprintf("%s/api/qris/generate", pgUrl), "application/json", bytes.NewBuffer(body))
+		httpClient := &http.Client{Timeout: 10 * time.Second}
+		resp, err := httpClient.Post(fmt.Sprintf("%s/api/qris/generate", pgUrl), "application/json", bytes.NewBuffer(body))
 		if err != nil {
 			log.Printf("[MOCK-QRIS-CHARGE-ERROR] Connection error: %v", err)
 			return nil, fmt.Errorf("gagal menghubungi payment gateway: %v", err)
 		}
-		defer func() {
-			_ = resp.Body.Close()
-		}()
+		defer func() { _ = resp.Body.Close() }()
 
-		respBytes, _ := io.ReadAll(resp.Body)
+		// P0 FIX: LimitReader 1MB to prevent OOM if PG returns huge body
+		respBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		log.Printf("[MOCK-QRIS-CHARGE-RESPONSE] Status: %s, Body: %s", resp.Status, string(respBytes))
 
 		var qrisResp struct {
@@ -1014,7 +1014,7 @@ func (s *service) RecoverPendingWithdrawals(ctx context.Context) error {
 			continue
 		}
 
-		fmt.Printf("[WALLET] Attempting to recover pending withdrawal: %s\n", tx.ID)
+		log.Printf("[WALLET] Attempting to recover pending withdrawal: %s", tx.ID)
 
 		// In a real PG, we would hit their GET /status API.
 		// For this mock, we just re-trigger the disbursement or check with mock.
@@ -1044,16 +1044,15 @@ func (s *service) triggerPgDisbursement(wtx *WalletTransaction, channel *Withdra
 
 	body, _ := json.Marshal(payload)
 	log.Printf("[DISBURSEMENT-TRANSFER-REQUEST] URL: %s/api/disbursement/transfer, Payload: %s", pgUrl, string(body))
-	resp, err := http.Post(fmt.Sprintf("%s/api/disbursement/transfer", pgUrl), "application/json", bytes.NewBuffer(body))
+	httpClient := &http.Client{Timeout: 10 * time.Second}
+	resp, err := httpClient.Post(fmt.Sprintf("%s/api/disbursement/transfer", pgUrl), "application/json", bytes.NewBuffer(body))
 	if err != nil {
 		log.Printf("[WALLET] Error triggering PG disbursement: %v", err)
 		return
 	}
-	defer func() {
-		_ = resp.Body.Close()
-	}()
+	defer func() { _ = resp.Body.Close() }()
 
-	respBytes, _ := io.ReadAll(resp.Body)
+	respBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	log.Printf("[DISBURSEMENT-TRANSFER-RESPONSE] Status: %d, Body: %s", resp.StatusCode, string(respBytes))
 }
 

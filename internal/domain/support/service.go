@@ -132,13 +132,13 @@ func (s *service) ListQueueTickets(ctx context.Context, limit, offset int) ([]Ti
 }
 
 func (s *service) GetActiveTicketByCS(ctx context.Context, csID uuid.UUID) (*Ticket, error) {
-	tickets, _, err := s.repo.FindAllTickets(ctx, "", "", "", &csID, 0, 0)
+	// P1 FIX: was limit 0,0 = no limit fetches ALL tickets for CS (OOM if 10k) -> now limit 20 + filter active in query if repo supports, fallback limited scan
+	tickets, _, err := s.repo.FindAllTickets(ctx, "", "", "", &csID, 20, 0)
 	if err != nil {
 		return nil, err
 	}
 	for _, t := range tickets {
 		if t.Status == StatusAssigned || t.Status == StatusInProgress || t.Status == StatusWaitingUser {
-			// Return first active
 			tt := t
 			return &tt, nil
 		}

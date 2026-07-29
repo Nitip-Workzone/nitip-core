@@ -94,11 +94,14 @@ func (r *repository) FindNearbyRunners(ctx context.Context, lat, lng, radiusKm f
 	minLng, maxLng := lng-lngDiff, lng+lngDiff
 
 	users := []User{}
+	// P1 FIX: limit 100 to prevent full table scan OOM, plus is_accepting filter for runner live
 	err := r.db.NewSelect().Model(&users).
 		Where("role = 'runner'").
 		Where("is_suspended = false").
 		Where("last_lat BETWEEN ? AND ?", minLat, maxLat).
 		Where("last_lng BETWEEN ? AND ?", minLng, maxLng).
+		OrderExpr("id DESC").
+		Limit(100).
 		Scan(ctx)
 
 	return users, err

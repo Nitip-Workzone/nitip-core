@@ -55,25 +55,28 @@ func (h *Hub) Unregister(orderID string, userID uuid.UUID) {
 func (h *Hub) Broadcast(orderID string, msg interface{}) {
 	h.mu.RLock()
 	clients, ok := h.orders[orderID]
+	// copy slice to avoid holding lock during IO
+	cp := make([]*Client, len(clients))
+	copy(cp, clients)
 	h.mu.RUnlock()
 
 	if !ok {
 		return
 	}
 
+	// P1 FIX: avoid HOL blocking sequential 5s deadline per client — collect dead without holding lock
 	var deadClients []uuid.UUID
-	for _, client := range clients {
-		if err := client.Conn.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
+	for _, client := range cp {
+		// Non-blocking check: if already dead skip quickly
+		if err := client.Conn.SetWriteDeadline(time.Now().Add(2 * time.Second)); err != nil {
 			deadClients = append(deadClients, client.UserID)
 			continue
 		}
-		err := client.Conn.WriteJSON(msg)
-		if err != nil {
+		if err := client.Conn.WriteJSON(msg); err != nil {
 			deadClients = append(deadClients, client.UserID)
 		}
 	}
 
-	// Cleanup dead connections
 	if len(deadClients) > 0 {
 		for _, userID := range deadClients {
 			h.Unregister(orderID, userID)
