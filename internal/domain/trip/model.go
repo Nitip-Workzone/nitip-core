@@ -28,7 +28,7 @@ type Trip struct {
 	MaxVolumeLiters       float64    `bun:"max_volume_liters,notnull,default:0" json:"max_volume_liters"`
 	AvailableVolumeLiters float64    `bun:"available_volume_liters,notnull,default:0" json:"available_volume_liters"`
 	VehicleType           string     `bun:"vehicle_type,notnull,default:'motorcycle'" json:"vehicle_type"`
-	AllowedServiceTypes   []string   `bun:"allowed_service_types,array,notnull,default:'{instant,regular}'" json:"allowed_service_types"`
+	AllowedServiceTypes   []string   `bun:"allowed_service_types,array,notnull" json:"allowed_service_types"`
 	CreatedAt             time.Time  `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"created_at"`
 	UpdatedAt             time.Time  `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updated_at"`
 }
