@@ -58,13 +58,52 @@ func (r *Redis) Client() *redis.Client {
 	return r.client
 }
 
-func (r *Redis) AcquireLock(ctx context.Context, key string, ttl time.Duration) (bool, error) {
+func (r *Redis) AcquireLock(ctx context.Context, key string, ttl time.Duration) (string, error) {
+	token := fmt.Sprintf("%d", time.Now().UnixNano())
 	//nolint:staticcheck // SA1019: SetNX is deprecated but still works fine in v9
-	return r.client.SetNX(ctx, key, "locked", ttl).Result()
+	ok, err := r.client.SetNX(ctx, key, token, ttl).Result()
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return "", nil
+	}
+	return token, nil
 }
 
-func (r *Redis) ReleaseLock(ctx context.Context, key string) error {
-	return r.client.Del(ctx, key).Err()
+func (r *Redis) ReleaseLock(ctx context.Context, key string, token string) error {
+	if token == "" {
+		return nil
+	}
+	script := redis.NewScript(`
+		if redis.call("get", KEYS[1]) == ARGV[1] then
+			return redis.call("del", KEYS[1])
+		else
+			return 0
+		end
+	`)
+	return script.Run(ctx, r.client, []string{key}, token).Err()
+}
+
+func (r *Redis) GeoAddOrder(ctx context.Context, orderID string, lat, lng float64) error {
+	return r.client.GeoAdd(ctx, "orders:live", &redis.GeoLocation{
+		Name:      orderID,
+		Longitude: lng,
+		Latitude:  lat,
+	}).Err()
+}
+
+func (r *Redis) GeoRemoveOrder(ctx context.Context, orderID string) error {
+	return r.client.ZRem(ctx, "orders:live", orderID).Err()
+}
+
+func (r *Redis) GeoSearchOrders(ctx context.Context, lat, lng, radiusKm float64) ([]string, error) {
+	return r.client.GeoSearch(ctx, "orders:live", &redis.GeoSearchQuery{
+		Longitude:  lng,
+		Latitude:   lat,
+		Radius:     radiusKm,
+		RadiusUnit: "km",
+	}).Result()
 }
 
 func (r *Redis) Close() error {

@@ -233,9 +233,13 @@ func (s *service) processMatching(ctx context.Context, orderID uuid.UUID) {
 			matchedRunners = append(matchedRunners, r.user)
 		}
 
-		if err := s.DispatchOrder(ctx, orderID.String(), matchedRunners); err != nil {
-			log.Printf("Error dispatching matched order %s: %v", orderID, err)
-		}
+		go func(runners []user.User) {
+			bgCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if err := s.DispatchOrder(bgCtx, orderID.String(), runners); err != nil {
+				log.Printf("Error dispatching matched order %s asynchronously: %v", orderID, err)
+			}
+		}(matchedRunners)
 	}
 }
 

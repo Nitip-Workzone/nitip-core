@@ -44,6 +44,7 @@ type FindAvailableParams struct {
 	RunnerLng         float64
 	IsAcceptingOrders bool
 	HasActiveTrip     bool
+	IDs               []uuid.UUID
 }
 
 type repository struct {
@@ -103,6 +104,15 @@ func (r *repository) FindAvailable(ctx context.Context, params FindAvailablePara
 
 	if len(params.AllowedTypes) > 0 {
 		baseQuery = baseQuery.Where("order_type IN (?)", bun.List(params.AllowedTypes))
+	}
+
+	if len(params.IDs) > 0 {
+		baseQuery = baseQuery.Where("id IN (?)", bun.List(params.IDs))
+		if params.Limit > 0 {
+			baseQuery = baseQuery.Limit(params.Limit).Offset(params.Offset)
+		}
+		err := baseQuery.Scan(ctx)
+		return orders, err
 	}
 
 	// Build geo condition as single AND group containing OR branches

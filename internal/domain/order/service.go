@@ -208,11 +208,11 @@ func (s *service) Create(ctx context.Context, requesterID uuid.UUID, req CreateO
 	// --- Concurrency Guard: Redis Lock for Merchant ---
 	if req.MerchantID != nil {
 		lockKey := fmt.Sprintf("lock:merchant:order:%s", req.MerchantID.String())
-		ok, lockErr := s.redis.AcquireLock(ctx, lockKey, 3*time.Second)
-		if lockErr != nil || !ok {
+		lockToken, lockErr := s.redis.AcquireLock(ctx, lockKey, 3*time.Second)
+		if lockErr != nil || lockToken == "" {
 			return nil, errors.New("merchant sedang memproses pesanan lain, silakan coba beberapa saat lagi")
 		}
-		defer func() { _ = s.redis.ReleaseLock(ctx, lockKey) }()
+		defer func() { _ = s.redis.ReleaseLock(ctx, lockKey, lockToken) }()
 	}
 
 	u, err := s.userSvc.GetByID(ctx, requesterID, requesterID)
@@ -505,6 +505,9 @@ func (s *service) Create(ctx context.Context, requesterID uuid.UUID, req CreateO
 
 	// Trigger Smart Matching & Merchant Notifications only if order is PAID (escrow) or COD
 	if order.PaymentStatus == PaymentEscrow || order.PaymentMethod == MethodCOD {
+		if s.redis != nil {
+			_ = s.redis.GeoAddOrder(ctx, order.ID.String(), order.PickupLat, order.PickupLng)
+		}
 		if order.MerchantID == nil {
 			s.matchingSvc.EnqueueMatching(order.ID)
 		} else if order.Status == StatusCooking {
@@ -646,11 +649,11 @@ func (s *service) GetByUser(ctx context.Context, userID uuid.UUID, limit, offset
 func (s *service) AcceptOrder(ctx context.Context, orderID, runnerID uuid.UUID) error {
 	// --- Concurrency Guard: Redis Lock ---
 	lockKey := fmt.Sprintf("lock:order:accept:%s", orderID.String())
-	ok, lockErr := s.redis.AcquireLock(ctx, lockKey, 5*time.Second)
-	if lockErr != nil || !ok {
+	lockToken, lockErr := s.redis.AcquireLock(ctx, lockKey, 5*time.Second)
+	if lockErr != nil || lockToken == "" {
 		return errors.New("pesanan ini sedang diproses oleh sistem, silakan coba sesaat lagi")
 	}
-	defer func() { _ = s.redis.ReleaseLock(ctx, lockKey) }()
+	defer func() { _ = s.redis.ReleaseLock(ctx, lockKey, lockToken) }()
 
 	order, err := s.repo.FindByID(ctx, orderID)
 	if err != nil {
@@ -790,6 +793,7 @@ func (s *service) AcceptOrder(ctx context.Context, orderID, runnerID uuid.UUID) 
 		go s.poolHub.BroadcastOrderStatus(orderID.String(), newStatus, "order_status")
 	}
 	if s.redis != nil {
+		_ = s.redis.GeoRemoveOrder(ctx, orderID.String())
 		_, _ = s.redis.IncrCounter(context.Background(), "claim:success")
 		_, _ = s.redis.IncrCounter(context.Background(), "events:total")
 	}
@@ -1092,6 +1096,9 @@ func (s *service) CancelOrder(ctx context.Context, orderID, userID uuid.UUID, re
 				go s.poolHub.BroadcastMerchantEvent(ord.MerchantID.String(), "order_cancelled", ord)
 			}
 		}
+		if s.redis != nil {
+			_ = s.redis.GeoRemoveOrder(ctx, ord.ID.String())
+		}
 	}
 
 	return err
@@ -1368,6 +1375,9 @@ func (s *service) processPayment(ctx context.Context, orderID uuid.UUID, payment
 		}
 
 		// Success update: Trigger matching & audit log
+		if s.redis != nil && orderObj != nil {
+			_ = s.redis.GeoAddOrder(ctx, orderID.String(), orderObj.PickupLat, orderObj.PickupLng)
+		}
 		if orderObj != nil && orderObj.MerchantID != nil {
 			merch, err := s.merchantSvc.GetMerchantByID(ctx, *orderObj.MerchantID)
 			if err == nil {
@@ -1457,7 +1467,7 @@ func (s *service) ForceCancelOrder(ctx context.Context, orderID uuid.UUID) error
 	}
 
 	// --- Unified Admin Force-Cancel Transaction ---
-	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+	err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		// 1. Handle Escrow Refund if applicable
 		if order.PaymentMethod == MethodEscrow && order.PaymentStatus == PaymentEscrow {
 			totalEscrow := order.EstimatedCost + order.DeliveryFee
@@ -1479,6 +1489,10 @@ func (s *service) ForceCancelOrder(ctx context.Context, orderID uuid.UUID) error
 
 		return s.repo.Update(ctx, tx, order)
 	})
+	if err == nil && s.redis != nil {
+		_ = s.redis.GeoRemoveOrder(ctx, orderID.String())
+	}
+	return err
 }
 
 func (s *service) DisputeOrder(ctx context.Context, orderID, requesterID uuid.UUID, reason, proofURL string) error {
@@ -1755,16 +1769,62 @@ func (s *service) GetAvailableOrders(ctx context.Context, runnerID uuid.UUID) ([
 		}
 	}
 
-	// FIX: Allow online runners to see orders even without trip or precise location
-	// Previous logic returned empty if !trip && !online, which broke realtime pool for new runners (heartbeat not yet sent)
-	// Now: if online, allow fallback to status-only fetch in repo (low burden, no geo filter)
-	if !params.HasActiveTrip && !params.IsAcceptingOrders {
-		// Still empty if truly offline and no trip – save DB
+	hasTrip := params.HasActiveTrip && params.RadiusKm > 0
+	hasProximity := params.IsAcceptingOrders && params.RunnerLat != 0 && params.RunnerLng != 0
+	hasOnlineNoGeo := params.IsAcceptingOrders && !hasProximity && !hasTrip
+
+	if !hasTrip && !hasProximity && !hasOnlineNoGeo {
+		// Offline & no trip -> empty to save DB
 		return []Order{}, nil
 	}
 
-	fmt.Printf("[Matching] Runner %s searching orders. LastLoc: %f,%f. HasTrip: %v. AcceptingOrders: %v\n",
-		runnerID, params.RunnerLat, params.RunnerLng, params.HasActiveTrip, params.IsAcceptingOrders)
+	if (hasTrip || hasProximity) && s.redis != nil {
+		var nearbyIDs []uuid.UUID
+		if hasProximity {
+			if ids, err := s.redis.GeoSearchOrders(ctx, params.RunnerLat, params.RunnerLng, 15.0); err == nil {
+				for _, idStr := range ids {
+					if id, parseErr := uuid.Parse(idStr); parseErr == nil {
+						nearbyIDs = append(nearbyIDs, id)
+					}
+				}
+			}
+		}
+		if hasTrip {
+			if ids, err := s.redis.GeoSearchOrders(ctx, params.OriginLat, params.OriginLng, params.RadiusKm); err == nil {
+				for _, idStr := range ids {
+					if id, parseErr := uuid.Parse(idStr); parseErr == nil {
+						nearbyIDs = append(nearbyIDs, id)
+					}
+				}
+			}
+			if ids, err := s.redis.GeoSearchOrders(ctx, params.DestLat, params.DestLng, params.RadiusKm); err == nil {
+				for _, idStr := range ids {
+					if id, parseErr := uuid.Parse(idStr); parseErr == nil {
+						nearbyIDs = append(nearbyIDs, id)
+					}
+				}
+			}
+		}
+
+		if len(nearbyIDs) == 0 {
+			// No nearby orders in Redis GEO -> avoid hitting Postgres altogether!
+			return []Order{}, nil
+		}
+
+		// Deduplicate IDs
+		seen := make(map[uuid.UUID]bool)
+		var uniqueIDs []uuid.UUID
+		for _, id := range nearbyIDs {
+			if !seen[id] {
+				seen[id] = true
+				uniqueIDs = append(uniqueIDs, id)
+			}
+		}
+		params.IDs = uniqueIDs
+	}
+
+	fmt.Printf("[Matching] Runner %s searching orders. LastLoc: %f,%f. HasTrip: %v. AcceptingOrders: %v. Found %d IDs in Redis GEO.\n",
+		runnerID, params.RunnerLat, params.RunnerLng, params.HasActiveTrip, params.IsAcceptingOrders, len(params.IDs))
 
 	orders, err := s.repo.FindAvailable(ctx, params)
 	if err == nil {
@@ -1778,15 +1838,23 @@ func (s *service) GetAvailableOrders(ctx context.Context, runnerID uuid.UUID) ([
 }
 
 func (s *service) StartBackgroundCleanup(ctx context.Context) {
-	ticker := time.NewTicker(5 * time.Hour)
+	expiryTicker := time.NewTicker(5 * time.Hour)
+	geoTicker := time.NewTicker(1 * time.Hour)
+
+	// Sync once on startup asynchronously
+	go s.syncRedisGeoOrderPool(context.Background())
+
 	go func() {
 		for {
 			select {
 			case <-ctx.Done():
-				ticker.Stop()
+				expiryTicker.Stop()
+				geoTicker.Stop()
 				return
-			case <-ticker.C:
+			case <-expiryTicker.C:
 				s.expireOldOrders(context.Background())
+			case <-geoTicker.C:
+				s.syncRedisGeoOrderPool(context.Background())
 			}
 		}
 	}()
@@ -1810,6 +1878,50 @@ func (s *service) expireOldOrders(ctx context.Context) {
 	if count > 0 {
 		return
 	}
+}
+
+func (s *service) syncRedisGeoOrderPool(ctx context.Context) {
+	if s.redis == nil {
+		return
+	}
+	var activeOrders []Order
+	err := s.db.NewSelect().
+		Model(&activeOrders).
+		Column("id", "pickup_lat", "pickup_lng").
+		Where("status IN (?)", bun.List([]string{StatusPending, StatusMerchantAccepted, StatusAccepted, StatusCooking, StatusReady})).
+		WhereGroup(" AND ", func(q *bun.SelectQuery) *bun.SelectQuery {
+			return q.Where("payment_status = ?", PaymentEscrow).
+				WhereOr("payment_method = ?", MethodCOD)
+		}).
+		Scan(ctx)
+	if err != nil {
+		log.Printf("[GEO-SWEEPER] Gagal mendapatkan daftar order aktif dari DB: %v", err)
+		return
+	}
+
+	activeMap := make(map[string]Order)
+	for _, o := range activeOrders {
+		activeMap[o.ID.String()] = o
+	}
+
+	redisIDs, err := s.redis.Client().ZRange(ctx, "orders:live", 0, -1).Result()
+	if err != nil {
+		log.Printf("[GEO-SWEEPER] Gagal membaca orders:live dari Redis: %v", err)
+		return
+	}
+
+	for _, idStr := range redisIDs {
+		if _, exists := activeMap[idStr]; !exists {
+			_ = s.redis.GeoRemoveOrder(ctx, idStr)
+			log.Printf("[GEO-SWEEPER] Menghapus order stale %s dari Redis GEO", idStr)
+		}
+	}
+
+	for idStr, o := range activeMap {
+		_ = s.redis.GeoAddOrder(ctx, idStr, o.PickupLat, o.PickupLng)
+	}
+
+	log.Printf("[GEO-SWEEPER] Sinkronisasi Redis GEO selesai. Jumlah order aktif: %d", len(activeOrders))
 }
 
 func (s *service) RequestPriceAdjustment(ctx context.Context, orderID, runnerID uuid.UUID, adjustedCost float64, reason string) error {

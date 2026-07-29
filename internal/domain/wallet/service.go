@@ -417,11 +417,11 @@ func (s *service) InquiryAccount(ctx context.Context, req InquiryAccountRequest)
 func (s *service) RequestWithdrawal(ctx context.Context, userID uuid.UUID, amount float64, channelID *uuid.UUID, pin string, destMetadata map[string]interface{}) (*WalletTransaction, error) {
 	// --- Concurrency Guard: Redis Lock ---
 	lockKey := fmt.Sprintf("lock:withdraw:%s", userID.String())
-	ok, err := s.redis.AcquireLock(ctx, lockKey, 10*time.Second)
-	if err != nil || !ok {
+	lockToken, err := s.redis.AcquireLock(ctx, lockKey, 10*time.Second)
+	if err != nil || lockToken == "" {
 		return nil, errors.New("permintaan penarikan sedang diproses, silakan tunggu sejenak")
 	}
-	defer func() { _ = s.redis.ReleaseLock(ctx, lockKey) }()
+	defer func() { _ = s.redis.ReleaseLock(ctx, lockKey, lockToken) }()
 
 	u, err := s.userSvc.GetByID(ctx, userID, userID)
 	if err != nil {

@@ -909,6 +909,31 @@ func (h *Handler) Track(c *fiber.Ctx) error {
 		return response.BadRequest(c, "ID pesanan tidak valid")
 	}
 
+	claims := c.Locals("user").(*jwt.CustomClaims)
+
+	order, err := h.service.GetByID(c.Context(), id, claims.UserID, claims.Role)
+	if err != nil {
+		return response.NotFound(c, "pesanan tidak ditemukan")
+	}
+
+	isAuthorized := claims.Role == user.RoleAdmin ||
+		order.RequesterID == claims.UserID ||
+		(order.RunnerID != nil && *order.RunnerID == claims.UserID)
+
+	if !isAuthorized && claims.Role == user.RoleMerchant && order.MerchantID != nil {
+		exists, err := h.db.NewSelect().
+			Table("merchants").
+			Where("id = ? AND owner_id = ?", order.MerchantID, claims.UserID).
+			Exists(c.Context())
+		if err == nil && exists {
+			isAuthorized = true
+		}
+	}
+
+	if !isAuthorized {
+		return response.Forbidden(c, "anda tidak memiliki akses untuk melacak pesanan ini")
+	}
+
 	c.Set("Content-Type", "text/event-stream")
 	c.Set("Cache-Control", "no-cache")
 	c.Set("Connection", "keep-alive")
