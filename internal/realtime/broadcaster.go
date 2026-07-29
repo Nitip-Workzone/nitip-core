@@ -94,7 +94,7 @@ func (b *Broadcaster) BroadcastOrderCreated(orderID string, pickupLat, pickupLng
 	_ = json.RawMessage{} // keep import
 }
 
-// BroadcastOrderClaimed removes order from pool view
+// BroadcastOrderClaimed removes order from pool view – also to global + order:{id} for realtime without pull
 func (b *Broadcaster) BroadcastOrderClaimed(orderID string, runnerID string, pickupLat, pickupLng float64) {
 	if b.hub == nil {
 		return
@@ -110,6 +110,13 @@ func (b *Broadcaster) BroadcastOrderClaimed(orderID string, runnerID string, pic
 		},
 	}
 	b.hub.BroadcastToCells(cells, ev)
+	b.hub.BroadcastToCell("global", ev)
+	b.hub.BroadcastToCell("order:"+orderID, PoolEvent{
+		Type:      EventOrderStatus,
+		OrderID:   orderID,
+		Timestamp: time.Now().UnixMilli(),
+		Data:      map[string]interface{}{"order_id": orderID, "status": "claimed", "runner_id": runnerID},
+	})
 	if b.redis != nil {
 		_, _ = b.redis.IncrCounter(context.Background(), "events:total")
 		_, _ = b.redis.IncrCounter(context.Background(), "orders:claimed")
@@ -117,7 +124,7 @@ func (b *Broadcaster) BroadcastOrderClaimed(orderID string, runnerID string, pic
 	}
 }
 
-// BroadcastOrderCancelled
+// BroadcastOrderCancelled – also to global + order:{id} so pool list auto-removes without pull
 func (b *Broadcaster) BroadcastOrderCancelled(orderID string, reason string, pickupLat, pickupLng float64) {
 	if b.hub == nil {
 		return
@@ -133,6 +140,13 @@ func (b *Broadcaster) BroadcastOrderCancelled(orderID string, reason string, pic
 		},
 	}
 	b.hub.BroadcastToCells(cells, ev)
+	b.hub.BroadcastToCell("global", ev)
+	b.hub.BroadcastToCell("order:"+orderID, PoolEvent{
+		Type:      EventOrderCancelled,
+		OrderID:   orderID,
+		Timestamp: time.Now().UnixMilli(),
+		Data:      map[string]interface{}{"order_id": orderID, "status": "cancelled", "reason": reason},
+	})
 	if b.redis != nil {
 		_, _ = b.redis.IncrCounter(context.Background(), "events:total")
 	}
