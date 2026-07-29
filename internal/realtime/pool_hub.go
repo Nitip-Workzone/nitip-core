@@ -17,6 +17,7 @@ const (
 	EventOrderExpired   = "order_expired"
 	EventOrderCompleted = "order_completed"
 	EventOrderReady     = "order_ready"
+	EventOrderStatus    = "order_status"
 	EventPoolHeartbeat  = "heartbeat"
 )
 

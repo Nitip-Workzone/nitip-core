@@ -159,6 +159,7 @@ type PoolBroadcaster interface {
 	BroadcastClaimed(orderID string, runnerID string, pickupLat, pickupLng float64)
 	BroadcastCancelled(orderID string, reason string, pickupLat, pickupLng float64)
 	BroadcastMerchantEvent(merchantID string, eventType string, order *Order)
+	BroadcastOrderStatus(orderID string, status string, eventType string)
 }
 
 type service struct {
@@ -783,9 +784,10 @@ func (s *service) AcceptOrder(ctx context.Context, orderID, runnerID uuid.UUID) 
 		return err
 	}
 
-	// --- Realtime: broadcast claimed to remove from pool ---
+	// --- Realtime: broadcast claimed to remove from pool + order status push ---
 	if s.poolHub != nil {
 		go s.poolHub.BroadcastClaimed(orderID.String(), runnerID.String(), order.PickupLat, order.PickupLng)
+		go s.poolHub.BroadcastOrderStatus(orderID.String(), newStatus, "order_status")
 	}
 	if s.redis != nil {
 		_, _ = s.redis.IncrCounter(context.Background(), "claim:success")
@@ -885,6 +887,11 @@ func (s *service) PickupOrder(ctx context.Context, orderID, runnerID uuid.UUID) 
 	s.auditSvc.Log(ctx, &runnerID, audit.ActionOrderPickup, "order", orderID.String(),
 		map[string]interface{}{"status": oldStatus},
 		map[string]interface{}{"status": StatusDelivering}, "", "")
+
+	// Realtime push delivering
+	if s.poolHub != nil {
+		go s.poolHub.BroadcastOrderStatus(orderID.String(), StatusDelivering, "order_status")
+	}
 
 	// In-app notification - runner menuju penitip
 	_ = s.notifSvc.CreateNotification(ctx, notifDomain.CreateNotificationRequest{
@@ -1259,6 +1266,10 @@ func (s *service) CompleteOrder(ctx context.Context, orderID, runnerID uuid.UUID
 	})
 
 	if err == nil {
+		// Realtime push completed – low burden async
+		if s.poolHub != nil {
+			go s.poolHub.BroadcastOrderStatus(orderID.String(), StatusCompleted, "completed")
+		}
 		// In-app notifications untuk penyelesaian
 		_ = s.notifSvc.CreateNotification(ctx, notifDomain.CreateNotificationRequest{
 			UserID:  order.RequesterID,
@@ -2372,6 +2383,10 @@ func (s *service) MerchantAcceptOrder(ctx context.Context, orderID, ownerID uuid
 		return err
 	}
 
+	if s.poolHub != nil {
+		go s.poolHub.BroadcastOrderStatus(orderID.String(), StatusMerchantAccepted, "order_status")
+	}
+
 	// Trigger runner matching now that merchant accepted
 	s.matchingSvc.EnqueueMatching(orderID)
 
@@ -2415,6 +2430,10 @@ func (s *service) MerchantReadyOrder(ctx context.Context, orderID, ownerID uuid.
 	order.UpdatedAt = time.Now()
 	if err := s.repo.Update(ctx, s.db, order); err != nil {
 		return err
+	}
+
+	if s.poolHub != nil {
+		go s.poolHub.BroadcastOrderStatus(orderID.String(), StatusReady, "order_status")
 	}
 
 	// Notify Penitip

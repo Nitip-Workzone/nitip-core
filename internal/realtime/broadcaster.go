@@ -160,6 +160,28 @@ func (b *Broadcaster) BroadcastMerchant(merchantID string, eventType string, ord
 	b.hub.BroadcastToCell("merchant:global", ev)
 }
 
+// BroadcastOrderStatus sends status update to order-specific channel (order:{id})
+// Low burden: 0 DB queries, in-memory hub broadcast only
+func (b *Broadcaster) BroadcastOrderStatus(orderID string, status string, eventType string) {
+	if b.hub == nil {
+		return
+	}
+	if eventType == "" {
+		eventType = EventOrderStatus
+	}
+	ev := PoolEvent{
+		Type:      eventType,
+		OrderID:   orderID,
+		Timestamp: time.Now().UnixMilli(),
+		Data: map[string]interface{}{
+			"order_id": orderID,
+			"status":   status,
+		},
+	}
+	// Order-specific cell for detail page SSE
+	b.hub.BroadcastToCell("order:"+orderID, ev)
+}
+
 // IncrClaimConflict increments redis + hub counter
 func (b *Broadcaster) IncrClaimConflict() {
 	if b.hub != nil {

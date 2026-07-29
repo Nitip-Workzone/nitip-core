@@ -409,33 +409,68 @@ func (h *Handler) Stream(c *fiber.Ctx) error {
 	c.Set("Cache-Control", "no-cache")
 	c.Set("Connection", "keep-alive")
 	c.Set("Transfer-Encoding", "chunked")
+	c.Set("X-Accel-Buffering", "no")
 
 	claims := c.Locals("user").(*jwt.CustomClaims)
-	c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
-		// MVP: Simple poller masquerading as SSE for simplicity.
-		// In production, use Redis Pub/Sub to trigger events instead of polling.
-		lastStatus := ""
-		for {
-			order, err := h.service.GetByID(c.Context(), id, claims.UserID, claims.Role)
-			if err != nil {
-				return
-			}
 
-			if order.Status != lastStatus {
-				lastStatus = order.Status
-				msg := "data: {\"status\": \"" + order.Status + "\"}\n\n"
-				_, writeErr := w.WriteString(msg)
-				_ = w.Flush()
-				if writeErr != nil {
+	// Single query for initial state + permission check
+	initialOrder, err := h.service.GetByID(c.Context(), id, claims.UserID, claims.Role)
+	if err != nil {
+		return response.BadRequest(c, err.Error())
+	}
+
+	c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
+		// Event-driven low-burden SSE: subscribe to PoolHub cell "order:{id}"
+		// Zero DB queries while idle, only push on status change.
+		cellKey := fmt.Sprintf("order:%s", id.String())
+		clientID := fmt.Sprintf("order_stream:%s:%d", id.String(), time.Now().UnixNano())
+
+		sseClient := &realtime.SSEClient{
+			ID:       clientID,
+			CellKeys: []string{cellKey},
+			Ch:       make(chan realtime.PoolEvent, 16),
+			Done:     make(chan struct{}),
+		}
+
+		if h.poolHub != nil {
+			h.poolHub.RegisterSSE(sseClient)
+			defer h.poolHub.UnregisterSSE(clientID)
+		}
+
+		// Send initial status immediately (1 query already done)
+		initMsg := "data: {\"status\": \"" + initialOrder.Status + "\", \"type\": \"init\"}\n\n"
+		_, _ = w.WriteString(initMsg)
+		_ = w.Flush()
+
+		// Heartbeat every 25s (battery friendly vs 20s pool)
+		heartbeatTicker := time.NewTicker(25 * time.Second)
+		defer heartbeatTicker.Stop()
+
+		// Terminal statuses – short-lived connection then close
+		if initialOrder.Status == StatusCompleted || initialOrder.Status == StatusCancelled || initialOrder.Status == StatusExpired {
+			return
+		}
+
+		for {
+			select {
+			case <-sseClient.Done:
+				return
+			case <-heartbeatTicker.C:
+				if err := realtime.WriteSSEHeartbeat(w); err != nil {
+					return
+				}
+			case ev := <-sseClient.Ch:
+				// Write event data – ev.Data may contain status
+				if err := realtime.WriteSSEEvent(w, ev); err != nil {
+					return
+				}
+				// End stream if terminal status reached
+				if ev.Type == realtime.EventOrderCompleted || ev.Type == realtime.EventOrderCancelled || ev.Type == realtime.EventOrderExpired {
+					// Give client time to receive
+					time.Sleep(100 * time.Millisecond)
 					return
 				}
 			}
-
-			if lastStatus == StatusCompleted || lastStatus == StatusCancelled {
-				return // End stream
-			}
-
-			time.Sleep(3 * time.Second)
 		}
 	})
 

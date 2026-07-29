@@ -50,6 +50,23 @@ func (a *poolHubAdapter) BroadcastMerchantEvent(merchantID string, eventType str
 	}
 }
 
+func (a *poolHubAdapter) BroadcastOrderStatus(orderID string, status string, eventType string) {
+	if a.broadcaster != nil {
+		a.broadcaster.BroadcastOrderStatus(orderID, status, eventType)
+	} else if a.hub != nil {
+		// Fallback: direct hub broadcast
+		a.hub.BroadcastToCell("order:"+orderID, realtime.PoolEvent{
+			Type:      eventType,
+			OrderID:   orderID,
+			Timestamp: 0,
+			Data: map[string]interface{}{
+				"status":   status,
+				"order_id": orderID,
+			},
+		})
+	}
+}
+
 func (a *poolHubAdapter) IncrConflict() {
 	if a.broadcaster != nil {
 		a.broadcaster.IncrClaimConflict()
