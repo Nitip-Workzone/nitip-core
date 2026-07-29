@@ -20,13 +20,14 @@ func NewBroadcaster(hub *PoolHub, redis *cache.Redis, logger *zap.Logger) *Broad
 	return &Broadcaster{hub: hub, redis: redis, logger: logger}
 }
 
-// BroadcastNewOrder – new order must be instant for ALL runners, not just nearby cells
-// Low burden: BroadcastToAll is non-blocking, <1ms for 100 conns, 0 DB
+// BroadcastNewOrder broadcasts new order to nearby cells
 func (b *Broadcaster) BroadcastOrderCreated(orderID string, pickupLat, pickupLng float64, itemDetails string, merchantID *uuid.UUID, extra map[string]interface{}) {
 	if b.hub == nil {
 		return
 	}
 	start := time.Now()
+
+	cells := NeighborCells(pickupLat, pickupLng)
 
 	data := map[string]interface{}{
 		"order_id":   orderID,
@@ -48,8 +49,9 @@ func (b *Broadcaster) BroadcastOrderCreated(orderID string, pickupLat, pickupLng
 		Data:      data,
 	}
 
-	// Strategy: instant for ALL – geo filtering done by GET /available fallback, but new order must appear <2s
-	b.hub.BroadcastToAll(ev)
+	b.hub.BroadcastToCells(cells, ev)
+	// Also broadcast to global fallback so runners without precise location still get realtime (low burden)
+	b.hub.BroadcastToCell("global", ev)
 
 	// Also broadcast to merchant cells if merchant order
 	if merchantID != nil {
@@ -64,8 +66,8 @@ func (b *Broadcaster) BroadcastOrderCreated(orderID string, pickupLat, pickupLng
 	}
 
 	latency := time.Since(start).Milliseconds()
-	cells := NeighborCells(pickupLat, pickupLng)
 
+	// Redis counters - no Grafana needed
 	if b.redis != nil {
 		_, _ = b.redis.IncrCounter(context.Background(), "events:total")
 		_, _ = b.redis.IncrCounter(context.Background(), "orders:created")
@@ -92,11 +94,12 @@ func (b *Broadcaster) BroadcastOrderCreated(orderID string, pickupLat, pickupLng
 	_ = json.RawMessage{} // keep import
 }
 
-// BroadcastOrderClaimed – instant for all runners (not geo-filtered) for <1s removal, low burden
+// BroadcastOrderClaimed removes order from pool view – also to global + order:{id} for realtime without pull
 func (b *Broadcaster) BroadcastOrderClaimed(orderID string, runnerID string, pickupLat, pickupLng float64) {
 	if b.hub == nil {
 		return
 	}
+	cells := NeighborCells(pickupLat, pickupLng)
 	ev := PoolEvent{
 		Type:      EventOrderClaimed,
 		OrderID:   orderID,
@@ -106,8 +109,8 @@ func (b *Broadcaster) BroadcastOrderClaimed(orderID string, runnerID string, pic
 			"runner_id": runnerID,
 		},
 	}
-	// Broadcast to ALL runners instantly – geo-agnostic, non-blocking, <1ms for 100 conns, 0 DB
-	b.hub.BroadcastToAll(ev)
+	b.hub.BroadcastToCells(cells, ev)
+	b.hub.BroadcastToCell("global", ev)
 	b.hub.BroadcastToCell("order:"+orderID, PoolEvent{
 		Type:      EventOrderStatus,
 		OrderID:   orderID,
@@ -121,11 +124,12 @@ func (b *Broadcaster) BroadcastOrderClaimed(orderID string, runnerID string, pic
 	}
 }
 
-// BroadcastOrderCancelled – instant for all runners, low burden (BroadcastToAll, 0 DB)
+// BroadcastOrderCancelled – also to global + order:{id} so pool list auto-removes without pull
 func (b *Broadcaster) BroadcastOrderCancelled(orderID string, reason string, pickupLat, pickupLng float64) {
 	if b.hub == nil {
 		return
 	}
+	cells := NeighborCells(pickupLat, pickupLng)
 	ev := PoolEvent{
 		Type:      EventOrderCancelled,
 		OrderID:   orderID,
@@ -135,7 +139,8 @@ func (b *Broadcaster) BroadcastOrderCancelled(orderID string, reason string, pic
 			"reason":   reason,
 		},
 	}
-	b.hub.BroadcastToAll(ev)
+	b.hub.BroadcastToCells(cells, ev)
+	b.hub.BroadcastToCell("global", ev)
 	b.hub.BroadcastToCell("order:"+orderID, PoolEvent{
 		Type:      EventOrderCancelled,
 		OrderID:   orderID,
