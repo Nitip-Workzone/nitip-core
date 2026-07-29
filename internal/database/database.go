@@ -26,12 +26,13 @@ func New(cfg *config.Config, logger *zap.Logger) (*bun.DB, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to open mysql connection: %w", err)
 		}
-		
-		// Set Connection Pool Limits
+
+		// P1 FIX: tuned pool for 512M — IdleTime 5m + jitter avoidance + higher idle for burst
 		sqldb.SetMaxOpenConns(50)
-		sqldb.SetMaxIdleConns(10)
+		sqldb.SetMaxIdleConns(20)
 		sqldb.SetConnMaxLifetime(30 * time.Minute)
-		
+		sqldb.SetConnMaxIdleTime(5 * time.Minute)
+
 		db = bun.NewDB(sqldb, mysqldialect.New())
 		logger.Info("database driver: mysql",
 			zap.String("host", cfg.DBHost),
@@ -41,12 +42,13 @@ func New(cfg *config.Config, logger *zap.Logger) (*bun.DB, error) {
 
 	default: // postgres
 		sqldb := sql.OpenDB(pgdriver.NewConnector(pgdriver.WithDSN(cfg.DSN())))
-		
-		// Set Connection Pool Limits
+
+		// P1 FIX: tuned pool for 512M — IdleTime 5m + higher idle for burst
 		sqldb.SetMaxOpenConns(50)
-		sqldb.SetMaxIdleConns(10)
+		sqldb.SetMaxIdleConns(20)
 		sqldb.SetConnMaxLifetime(30 * time.Minute)
-		
+		sqldb.SetConnMaxIdleTime(5 * time.Minute)
+
 		db = bun.NewDB(sqldb, pgdialect.New())
 		logger.Info("database driver: postgres",
 			zap.String("host", cfg.DBHost),

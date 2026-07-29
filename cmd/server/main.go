@@ -118,10 +118,14 @@ func main() {
 	}
 	defer func() { _ = db.Close() }()
 
-	// 4. Init Redis (optional — comment out if not needed)
+	// 4. Init Redis — required in prod, fallback to in-memory for dev if unavailable
 	redisCache, err := cache.NewRedis(cfg, logger)
 	if err != nil {
-		logger.Warn("redis not available, skipping", zap.Error(err))
+		if !cfg.IsDevelopment() {
+			logger.Fatal("redis is required in non-development env but not available", zap.Error(err))
+		}
+		logger.Warn("redis not available, using in-memory fallback (dev only) — rate limiting & pool will be degraded", zap.Error(err))
+		redisCache = nil
 	}
 
 	// 5. Init Fiber app + realtime Pool Hub (reuse chat hub pattern for order pool)

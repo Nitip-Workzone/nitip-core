@@ -68,7 +68,10 @@ func (h *Handler) RegisterRoutes(router fiber.Router) {
 // @Success      200  {object}  response.envelope{data=Wallet}
 // @Router       /wallets/balance [get]
 func (h *Handler) GetBalance(c *fiber.Ctx) error {
-	userClaims := c.Locals("user").(*jwt.CustomClaims)
+	userClaims := jwt.GetClaims(c)
+	if userClaims == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
 	userID := userClaims.UserID
 
 	w, err := h.service.GetBalance(c.Context(), userID)
@@ -90,7 +93,10 @@ func (h *Handler) GetBalance(c *fiber.Ctx) error {
 // @Success      200  {object}  response.envelope{data=[]WalletTransaction}
 // @Router       /wallets/transactions [get]
 func (h *Handler) GetTransactions(c *fiber.Ctx) error {
-	userClaims := c.Locals("user").(*jwt.CustomClaims)
+	userClaims := jwt.GetClaims(c)
+	if userClaims == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
 	userID := userClaims.UserID
 
 	page, _ := strconv.Atoi(c.Query("page", "1"))
@@ -125,7 +131,10 @@ type AmountRequest struct {
 // @Failure      422   {object}  response.envelope{errors=[]response.ValidationError}
 // @Router       /wallets/topup [post]
 func (h *Handler) TopUp(c *fiber.Ctx) error {
-	userClaims := c.Locals("user").(*jwt.CustomClaims)
+	userClaims := jwt.GetClaims(c)
+	if userClaims == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
 	userID := userClaims.UserID
 
 	var req AmountRequest
@@ -264,7 +273,10 @@ type WithdrawRequest struct {
 // @Failure      422   {object}  response.envelope{errors=[]response.ValidationError}
 // @Router       /wallets/withdraw [post]
 func (h *Handler) Withdraw(c *fiber.Ctx) error {
-	userClaims := c.Locals("user").(*jwt.CustomClaims)
+	userClaims := jwt.GetClaims(c)
+	if userClaims == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
 	userID := userClaims.UserID
 
 	var req WithdrawRequest
@@ -343,7 +355,10 @@ func (h *Handler) AdminApproveWithdrawal(c *fiber.Ctx) error {
 		return response.BadRequest(c, "ID transaksi tidak valid")
 	}
 
-	claims := c.Locals("user").(*jwt.CustomClaims)
+	claims := jwt.GetClaims(c)
+	if claims == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
 	if err := h.service.ApproveWithdrawal(c.Context(), txID, claims.UserID); err != nil {
 		return response.BadRequest(c, err.Error())
 	}
@@ -368,7 +383,10 @@ func (h *Handler) GetTransactionStatus(c *fiber.Ctx) error {
 	}
 
 	// Pastikan transaksi milik user yang sedang login
-	userClaims := c.Locals("user").(*jwt.CustomClaims)
+	userClaims := jwt.GetClaims(c)
+	if userClaims == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
 	userID := userClaims.UserID
 
 	wtx, err := h.service.GetTransactionStatus(c.Context(), reference)

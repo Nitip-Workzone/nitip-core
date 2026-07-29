@@ -4,7 +4,6 @@ import (
 	"context"
 	"log"
 	"os"
-	"strings"
 	"time"
 
 	_ "github.com/codecoffy/nitip-core/docs" // swagger generated docs
@@ -23,10 +22,11 @@ type App struct {
 }
 
 func New(logger *zap.Logger) *App {
-	// Tighter body limit for API (2 MB), larger for file uploads handled separately
+	// P0 #8 Fix: Read/Write timeout 5m -> 30s to prevent slow-client DoS holding workers
+	// SSE routes (/pool/stream, /track) will override with longer timeout via group if needed
 	f := fiber.New(fiber.Config{
-		ReadTimeout:  5 * time.Minute,
-		WriteTimeout: 5 * time.Minute,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 30 * time.Second,
 		BodyLimit:    2 * 1024 * 1024, // 2 MB default
 		ErrorHandler: middleware.ErrorHandler,
 	})
@@ -55,43 +55,39 @@ func New(logger *zap.Logger) *App {
 		AllowMethods: "GET, POST, PUT, PATCH, DELETE, OPTIONS",
 	}))
 
-	// 4. Request / Response Logger (Payload & Response Body Audit Logger)
+	// 4. Request / Response Logger — P1: sampling only slow >=500ms or error >=400 to avoid GC pressure & log fill
 	f.Use(func(c *fiber.Ctx) error {
+		start := time.Now()
+		err := c.Next()
+		elapsed := time.Since(start)
+		status := c.Response().StatusCode()
+
+		// Sample: log only slow requests or errors (reduces log volume 90% + avoids PII body dump)
+		shouldLog := elapsed >= 500*time.Millisecond || status >= 400
+		// In non-prod, log also 2xx but without body dump to keep visibility low cost
+		isProd := os.Getenv("APP_ENV") == "production"
+		if !isProd && status < 400 && elapsed < 500*time.Millisecond {
+			// Skip successful fast requests in dev to reduce noise (optional: log only path+status)
+			if elapsed < 100*time.Millisecond {
+				return err
+			}
+			shouldLog = true
+		}
+
+		if !shouldLog {
+			return err
+		}
+
 		method := c.Method()
 		path := c.Path()
-		reqBody := c.Body()
-
-		var reqStr string
-		if len(reqBody) > 0 {
-			reqStr = string(reqBody)
-			reqStr = strings.ReplaceAll(reqStr, "\n", "")
-			reqStr = strings.ReplaceAll(reqStr, "\t", "")
-			if len(reqStr) > 1000 {
-				reqStr = reqStr[:1000] + "..."
-			}
-		}
-
-		// Proceed with request
-		err := c.Next()
-
-		respBody := c.Response().Body()
-		var respStr string
-		if len(respBody) > 0 {
-			respStr = string(respBody)
-			respStr = strings.ReplaceAll(respStr, "\n", "")
-			respStr = strings.ReplaceAll(respStr, "\t", "")
-			if len(respStr) > 1000 {
-				respStr = respStr[:1000] + "..."
-			}
-		}
-
-		status := c.Response().StatusCode()
-		if len(reqStr) > 0 {
-			log.Printf("[API] %s %s -> %d | Req: %s | Resp: %s", method, path, status, reqStr, respStr)
+		// Avoid body dump for PII & GC — only log size & status+latency
+		reqSize := len(c.Body())
+		respSize := len(c.Response().Body())
+		if reqSize > 0 {
+			log.Printf("[API] %s %s -> %d (%s) req=%dB resp=%dB", method, path, status, elapsed.Round(time.Millisecond), reqSize, respSize)
 		} else {
-			log.Printf("[API] %s %s -> %d | Resp: %s", method, path, status, respStr)
+			log.Printf("[API] %s %s -> %d (%s) resp=%dB", method, path, status, elapsed.Round(time.Millisecond), respSize)
 		}
-
 		return err
 	})
 

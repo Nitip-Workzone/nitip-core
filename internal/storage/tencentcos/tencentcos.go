@@ -36,7 +36,9 @@ func New(secretID, secretKey, region, bucket, baseURL string, defaultExpire time
 		}
 	}
 
+	// P0 #10 FIX: http client timeout 10s to prevent hang holding Fiber worker
 	client := cos.NewClient(&cos.BaseURL{BucketURL: bucketURL}, &http.Client{
+		Timeout: 10 * time.Second,
 		Transport: &cos.AuthorizationTransport{
 			SecretID:  secretID,
 			SecretKey: secretKey,

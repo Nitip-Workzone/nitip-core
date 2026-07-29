@@ -54,7 +54,10 @@ func (h *Handler) GetMessages(c *fiber.Ctx) error {
 		return response.BadRequest(c, "ID pesanan tidak valid")
 	}
 
-	userClaims := c.Locals("user").(*jwt.CustomClaims)
+	userClaims := jwt.GetClaims(c)
+	if userClaims == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
 	limit, _ := strconv.Atoi(c.Query("limit", "50"))
 
 	messages, err := h.service.GetHistory(c.Context(), orderID, userClaims.UserID, limit)
@@ -85,7 +88,10 @@ func (h *Handler) SendMessage(c *fiber.Ctx) error {
 		return response.BadRequest(c, "ID pesanan tidak valid")
 	}
 
-	userClaims := c.Locals("user").(*jwt.CustomClaims)
+	userClaims := jwt.GetClaims(c)
+	if userClaims == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
 
 	var req SendMessageRequest
 	if err := c.BodyParser(&req); err != nil {
@@ -124,7 +130,10 @@ func (h *Handler) SendImage(c *fiber.Ctx) error {
 		return response.BadRequest(c, "ID pesanan tidak valid")
 	}
 
-	userClaims := c.Locals("user").(*jwt.CustomClaims)
+	userClaims := jwt.GetClaims(c)
+	if userClaims == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
 
 	file, err := c.FormFile("image")
 	if err != nil {
@@ -166,7 +175,17 @@ func (h *Handler) SendImage(c *fiber.Ctx) error {
 // @Router       /orders/{id}/ws [get]
 func (h *Handler) WebSocket(c *websocket.Conn) {
 	orderID := c.Params("id")
-	userClaims := c.Locals("user").(*jwt.CustomClaims)
+	// websocket.Conn Locals type assertion - GetClaims works only for fiber.Ctx, use safe check here
+	lc := c.Locals("user")
+	if lc == nil {
+		_ = c.Close()
+		return
+	}
+	userClaims, ok := lc.(*jwt.CustomClaims)
+	if !ok || userClaims == nil {
+		_ = c.Close()
+		return
+	}
 
 	// Register client to Hub via Service
 	client := &Client{

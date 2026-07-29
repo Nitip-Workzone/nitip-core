@@ -14,8 +14,8 @@ type TOTPVerifyRequest struct {
 
 // SetupTOTP handles generating a new TOTP secret and QR code for the authenticated user.
 func (h *Handler) SetupTOTP(c *fiber.Ctx) error {
-	claims, ok := c.Locals("user").(*jwt.CustomClaims)
-	if !ok {
+	claims := jwt.GetClaims(c)
+	if claims == nil {
 		return response.Unauthorized(c, "Tidak diizinkan")
 	}
 	userID := claims.UserID
@@ -33,8 +33,8 @@ func (h *Handler) SetupTOTP(c *fiber.Ctx) error {
 
 // EnableTOTP verifies the first code to enable TOTP on the account.
 func (h *Handler) EnableTOTP(c *fiber.Ctx) error {
-	claims, ok := c.Locals("user").(*jwt.CustomClaims)
-	if !ok {
+	claims := jwt.GetClaims(c)
+	if claims == nil {
 		return response.Unauthorized(c, "Tidak diizinkan")
 	}
 	userID := claims.UserID
@@ -57,8 +57,8 @@ func (h *Handler) EnableTOTP(c *fiber.Ctx) error {
 
 // DisableTOTP disables TOTP for the current user.
 func (h *Handler) DisableTOTP(c *fiber.Ctx) error {
-	claims, ok := c.Locals("user").(*jwt.CustomClaims)
-	if !ok {
+	claims := jwt.GetClaims(c)
+	if claims == nil {
 		return response.Unauthorized(c, "Tidak diizinkan")
 	}
 	userID := claims.UserID
@@ -81,8 +81,8 @@ func (h *Handler) DisableTOTP(c *fiber.Ctx) error {
 
 // AdminDisableTOTP disables TOTP for a specific user.
 func (h *Handler) AdminDisableTOTP(c *fiber.Ctx) error {
-	claims, ok := c.Locals("user").(*jwt.CustomClaims)
-	if !ok {
+	claims := jwt.GetClaims(c)
+	if claims == nil {
 		return response.Unauthorized(c, "Tidak diizinkan")
 	}
 	adminID := claims.UserID

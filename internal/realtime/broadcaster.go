@@ -67,16 +67,18 @@ func (b *Broadcaster) BroadcastOrderCreated(orderID string, pickupLat, pickupLng
 
 	latency := time.Since(start).Milliseconds()
 
-	// Redis counters - no Grafana needed
+	// Redis counters - with timeout ctx to avoid hang holding request path
 	if b.redis != nil {
-		_, _ = b.redis.IncrCounter(context.Background(), "events:total")
-		_, _ = b.redis.IncrCounter(context.Background(), "orders:created")
-		_ = b.redis.Client().HSet(context.Background(), "pool:last_broadcast", map[string]interface{}{
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		_, _ = b.redis.IncrCounter(ctx, "events:total")
+		_, _ = b.redis.IncrCounter(ctx, "orders:created")
+		_ = b.redis.Client().HSet(ctx, "pool:last_broadcast", map[string]interface{}{
 			"order_id":   orderID,
 			"latency_ms": latency,
 			"ts":         time.Now().Unix(),
 			"cells":      len(cells),
 		}).Err()
+		cancel()
 	}
 
 	if b.logger != nil {
@@ -118,9 +120,11 @@ func (b *Broadcaster) BroadcastOrderClaimed(orderID string, runnerID string, pic
 		Data:      map[string]interface{}{"order_id": orderID, "status": "claimed", "runner_id": runnerID},
 	})
 	if b.redis != nil {
-		_, _ = b.redis.IncrCounter(context.Background(), "events:total")
-		_, _ = b.redis.IncrCounter(context.Background(), "orders:claimed")
-		_, _ = b.redis.IncrCounter(context.Background(), "claim:success")
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		_, _ = b.redis.IncrCounter(ctx, "events:total")
+		_, _ = b.redis.IncrCounter(ctx, "orders:claimed")
+		_, _ = b.redis.IncrCounter(ctx, "claim:success")
+		cancel()
 	}
 }
 
@@ -148,7 +152,9 @@ func (b *Broadcaster) BroadcastOrderCancelled(orderID string, reason string, pic
 		Data:      map[string]interface{}{"order_id": orderID, "status": "cancelled", "reason": reason},
 	})
 	if b.redis != nil {
-		_, _ = b.redis.IncrCounter(context.Background(), "events:total")
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		_, _ = b.redis.IncrCounter(ctx, "events:total")
+		cancel()
 	}
 }
 

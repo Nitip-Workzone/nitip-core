@@ -77,8 +77,8 @@ func (h *Handler) parsePagination(c *fiber.Ctx) (int, int) {
 }
 
 func (h *Handler) getUserID(c *fiber.Ctx) (uuid.UUID, error) {
-	claims, ok := c.Locals("user").(*jwt.CustomClaims)
-	if !ok {
+	claims := jwt.GetClaims(c)
+	if claims == nil {
 		return uuid.Nil, fiber.NewError(401, "unauthorized")
 	}
 	return claims.UserID, nil

@@ -59,7 +59,10 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 		return response.ValidationFailed(c, errs)
 	}
 
-	claims := c.Locals("user").(*jwt.CustomClaims)
+	claims := jwt.GetClaims(c)
+	if claims == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
 
 	trip, err := h.service.Create(c.Context(), claims.UserID, req)
 	if err != nil {
@@ -78,7 +81,10 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 // @Success      200   {object}  response.envelope{data=[]Trip}
 // @Router       /trips/me [get]
 func (h *Handler) GetMyTrips(c *fiber.Ctx) error {
-	claims := c.Locals("user").(*jwt.CustomClaims)
+	claims := jwt.GetClaims(c)
+	if claims == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
 
 	// Merchant/requester calling this should get empty list, not 403, to avoid Flutter log spam
 	if claims.Role == user.RoleMerchant || claims.Role == user.RoleRequester {
@@ -125,7 +131,10 @@ func (h *Handler) Start(c *fiber.Ctx) error {
 		return response.BadRequest(c, "ID perjalanan tidak valid")
 	}
 
-	claims := c.Locals("user").(*jwt.CustomClaims)
+	claims := jwt.GetClaims(c)
+	if claims == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
 
 	if err := h.service.Start(c.Context(), id, claims.UserID); err != nil {
 		return response.InternalError(c, err.Error())
@@ -150,7 +159,10 @@ func (h *Handler) Cancel(c *fiber.Ctx) error {
 		return response.BadRequest(c, "ID perjalanan tidak valid")
 	}
 
-	claims := c.Locals("user").(*jwt.CustomClaims)
+	claims := jwt.GetClaims(c)
+	if claims == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
 
 	if err := h.service.Cancel(c.Context(), id, claims.UserID); err != nil {
 		return response.InternalError(c, err.Error())
@@ -177,7 +189,10 @@ func (h *Handler) Complete(c *fiber.Ctx) error {
 		return response.BadRequest(c, "ID perjalanan tidak valid")
 	}
 
-	claims := c.Locals("user").(*jwt.CustomClaims)
+	claims := jwt.GetClaims(c)
+	if claims == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
 
 	if err := h.service.Complete(c.Context(), id, claims.UserID); err != nil {
 		return response.BadRequest(c, err.Error())

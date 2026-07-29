@@ -22,7 +22,12 @@ func NewService(repo Repository) Service {
 
 func (s *service) GetValue(ctx context.Context, key string, defaultValue string) string {
 	if val, ok := s.cache.Load(key); ok {
-		return val.(string)
+		// P0 #7 FIX: safe type assert to avoid panic if cache corrupted non-string
+		if str, ok := val.(string); ok {
+			return str
+		}
+		// If corrupted, delete and fallback to DB
+		s.cache.Delete(key)
 	}
 
 	cfg, err := s.repo.Get(ctx, key)

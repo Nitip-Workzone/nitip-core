@@ -41,7 +41,10 @@ func (h *Handler) RegisterRoutes(router fiber.Router) {
 // @Success      200  {object}  response.envelope{data=[]Notification}
 // @Router       /notifications [get]
 func (h *Handler) List(c *fiber.Ctx) error {
-	claims := c.Locals("user").(*jwt.CustomClaims)
+	claims := jwt.GetClaims(c)
+	if claims == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
 	userID := claims.UserID
 
 	limit, _ := strconv.Atoi(c.Query("limit", "20"))
@@ -64,7 +67,10 @@ func (h *Handler) List(c *fiber.Ctx) error {
 // @Success      200  {object}  response.envelope{data=map[string]int}
 // @Router       /notifications/unread-count [get]
 func (h *Handler) UnreadCount(c *fiber.Ctx) error {
-	claims := c.Locals("user").(*jwt.CustomClaims)
+	claims := jwt.GetClaims(c)
+	if claims == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
 	userID := claims.UserID
 
 	count, err := h.service.GetUnreadCount(c.Context(), userID)
@@ -87,7 +93,10 @@ func (h *Handler) UnreadCount(c *fiber.Ctx) error {
 // @Success      200  {object}  response.envelope
 // @Router       /notifications/{id}/read [put]
 func (h *Handler) MarkAsRead(c *fiber.Ctx) error {
-	claims := c.Locals("user").(*jwt.CustomClaims)
+	claims := jwt.GetClaims(c)
+	if claims == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
 	userID := claims.UserID
 
 	id, err := uuid.Parse(c.Params("id"))
@@ -111,7 +120,10 @@ func (h *Handler) MarkAsRead(c *fiber.Ctx) error {
 // @Success      200  {object}  response.envelope
 // @Router       /notifications/read-all [put]
 func (h *Handler) MarkAllAsRead(c *fiber.Ctx) error {
-	claims := c.Locals("user").(*jwt.CustomClaims)
+	claims := jwt.GetClaims(c)
+	if claims == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
 	userID := claims.UserID
 
 	if err := h.service.MarkAllAsRead(c.Context(), userID); err != nil {

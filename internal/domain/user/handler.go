@@ -109,7 +109,7 @@ func (h *Handler) Get(c *fiber.Ctx) error {
 
 	// Get requester ID if available (optional for public info, but we want masking)
 	var requesterID uuid.UUID
-	if claims, ok := c.Locals("user").(*jwt.CustomClaims); ok {
+	if claims := jwt.GetClaims(c); claims != nil {
 		requesterID = claims.UserID
 	}
 
@@ -242,8 +242,8 @@ func (h *Handler) Refresh(c *fiber.Ctx) error {
 // @Success      200   {object}  response.envelope
 // @Router       /auth/logout [post]
 func (h *Handler) Logout(c *fiber.Ctx) error {
-	userClaims, ok := c.Locals("user").(*jwt.CustomClaims)
-	if !ok {
+	userClaims := jwt.GetClaims(c)
+	if userClaims == nil {
 		return response.Unauthorized(c, "tidak memiliki akses")
 	}
 
@@ -326,7 +326,11 @@ func (h *Handler) AdminVerifyUser(c *fiber.Ctx) error {
 		return response.BadRequest(c, "nilai is_verified tidak valid")
 	}
 
-	adminID := c.Locals("user").(*jwt.CustomClaims).UserID
+	claimsTmp := jwt.GetClaims(c)
+	if claimsTmp == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
+	adminID := claimsTmp.UserID
 	if err := h.service.UpdateVerification(c.Context(), id, adminID, isVerified); err != nil {
 		return response.BadRequest(c, err.Error())
 	}
@@ -358,7 +362,11 @@ func (h *Handler) AdminUpdateTrust(c *fiber.Ctx) error {
 		return response.BadRequest(c, "nilai skor tidak valid")
 	}
 
-	adminID := c.Locals("user").(*jwt.CustomClaims).UserID
+	claimsTmp := jwt.GetClaims(c)
+	if claimsTmp == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
+	adminID := claimsTmp.UserID
 	if err := h.service.UpdateTrustScore(c.Context(), id, adminID, score); err != nil {
 		return response.BadRequest(c, err.Error())
 	}
@@ -396,7 +404,11 @@ func (h *Handler) AdminSuspendUser(c *fiber.Ctx) error {
 		return response.BadRequest(c, "alasan wajib diisi untuk suspensi")
 	}
 
-	adminID := c.Locals("user").(*jwt.CustomClaims).UserID
+	claimsTmp := jwt.GetClaims(c)
+	if claimsTmp == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
+	adminID := claimsTmp.UserID
 	if err := h.service.UpdateSuspendStatus(c.Context(), id, adminID, isSuspended, reason); err != nil {
 		return response.BadRequest(c, err.Error())
 	}
@@ -417,8 +429,8 @@ func (h *Handler) AdminSuspendUser(c *fiber.Ctx) error {
 // @Failure      404  {object}  response.envelope
 // @Router       /users/me [get]
 func (h *Handler) GetMe(c *fiber.Ctx) error {
-	userClaims, ok := c.Locals("user").(*jwt.CustomClaims)
-	if !ok {
+	userClaims := jwt.GetClaims(c)
+	if userClaims == nil {
 		return response.Unauthorized(c, "tidak memiliki akses: token tidak valid")
 	}
 
@@ -444,8 +456,8 @@ func (h *Handler) GetMe(c *fiber.Ctx) error {
 // @Failure      422   {object}  response.envelope{errors=[]response.ValidationError}
 // @Router       /users/home [put]
 func (h *Handler) UpdateHome(c *fiber.Ctx) error {
-	userClaims, ok := c.Locals("user").(*jwt.CustomClaims)
-	if !ok {
+	userClaims := jwt.GetClaims(c)
+	if userClaims == nil {
 		return response.Unauthorized(c, "tidak memiliki akses: token tidak valid")
 	}
 
@@ -480,8 +492,8 @@ func (h *Handler) UpdateHome(c *fiber.Ctx) error {
 // @Failure      400   {object}  response.envelope
 // @Router       /users/profile [put]
 func (h *Handler) UpdateProfile(c *fiber.Ctx) error {
-	userClaims, ok := c.Locals("user").(*jwt.CustomClaims)
-	if !ok {
+	userClaims := jwt.GetClaims(c)
+	if userClaims == nil {
 		return response.Unauthorized(c, "tidak memiliki akses: token tidak valid")
 	}
 
@@ -596,7 +608,10 @@ func (h *Handler) UpdateLocation(c *fiber.Ctx) error {
 		return response.BadRequest(c, "format permintaan tidak valid")
 	}
 
-	claims := c.Locals("user").(*jwt.CustomClaims)
+	claims := jwt.GetClaims(c)
+	if claims == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
 
 	if err := h.service.UpdateLocation(c.Context(), claims.UserID, req.Lat, req.Lng); err != nil {
 		return response.InternalError(c, err.Error())
@@ -625,7 +640,10 @@ type LocationUpdate struct {
 // @Failure      403  {object}  response.envelope
 // @Router       /users/heartbeat [post]
 func (h *Handler) Heartbeat(c *fiber.Ctx) error {
-	claims := c.Locals("user").(*jwt.CustomClaims)
+	claims := jwt.GetClaims(c)
+	if claims == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
 
 	var req HeartbeatRequest
 	if err := c.BodyParser(&req); err != nil {
@@ -676,7 +694,16 @@ func (h *Handler) Heartbeat(c *fiber.Ctx) error {
 // @Security     BearerAuth
 // @Router       /users/location/stream [get]
 func (h *Handler) StreamLocation(c *websocket.Conn) {
-	userClaims := c.Locals("user").(*jwt.CustomClaims)
+	lc := c.Locals("user")
+	if lc == nil {
+		_ = c.Close()
+		return
+	}
+	userClaims, ok := lc.(*jwt.CustomClaims)
+	if !ok || userClaims == nil {
+		_ = c.Close()
+		return
+	}
 	if userClaims.Role != RoleRunner {
 		_ = c.WriteMessage(websocket.TextMessage, []byte("Forbidden: only runners can stream location"))
 		_ = c.Close()
@@ -735,8 +762,8 @@ func (h *Handler) StreamLocation(c *websocket.Conn) {
 // @Failure      401   {object}  response.envelope
 // @Router       /users/pin/setup [post]
 func (h *Handler) SetupPin(c *fiber.Ctx) error {
-	userClaims, ok := c.Locals("user").(*jwt.CustomClaims)
-	if !ok {
+	userClaims := jwt.GetClaims(c)
+	if userClaims == nil {
 		return response.Unauthorized(c, "tidak memiliki akses")
 	}
 
@@ -769,8 +796,8 @@ func (h *Handler) SetupPin(c *fiber.Ctx) error {
 // @Failure      401   {object}  response.envelope
 // @Router       /users/pin/change [post]
 func (h *Handler) ChangePin(c *fiber.Ctx) error {
-	userClaims, ok := c.Locals("user").(*jwt.CustomClaims)
-	if !ok {
+	userClaims := jwt.GetClaims(c)
+	if userClaims == nil {
 		return response.Unauthorized(c, "tidak memiliki akses")
 	}
 
@@ -803,8 +830,8 @@ func (h *Handler) ChangePin(c *fiber.Ctx) error {
 // @Failure      401   {object}  response.envelope
 // @Router       /users/pin/verify [post]
 func (h *Handler) VerifyPin(c *fiber.Ctx) error {
-	userClaims, ok := c.Locals("user").(*jwt.CustomClaims)
-	if !ok {
+	userClaims := jwt.GetClaims(c)
+	if userClaims == nil {
 		return response.Unauthorized(c, "tidak memiliki akses")
 	}
 
@@ -844,7 +871,11 @@ func (h *Handler) AdminUnlockPin(c *fiber.Ctx) error {
 		return response.InternalError(c, err.Error())
 	}
 
-	adminID := c.Locals("user").(*jwt.CustomClaims).UserID
+	claimsTmpUnlock := jwt.GetClaims(c)
+	if claimsTmpUnlock == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
+	adminID := claimsTmpUnlock.UserID
 	log.Printf("[ADMIN_ACTION] Admin %s unlocked PIN for User %s", adminID, id)
 
 	return response.Success(c, "PIN pengguna berhasil dibuka", nil)
@@ -863,8 +894,8 @@ func (h *Handler) AdminUnlockPin(c *fiber.Ctx) error {
 // @Failure      401   {object}  response.envelope
 // @Router       /users/accepting-orders [put]
 func (h *Handler) UpdateAcceptingOrders(c *fiber.Ctx) error {
-	userClaims, ok := c.Locals("user").(*jwt.CustomClaims)
-	if !ok {
+	userClaims := jwt.GetClaims(c)
+	if userClaims == nil {
 		return response.Unauthorized(c, "tidak memiliki akses")
 	}
 
@@ -898,8 +929,8 @@ func (h *Handler) UpdateAcceptingOrders(c *fiber.Ctx) error {
 // @Failure      500   {object}  response.envelope
 // @Router       /admin/users [post]
 func (h *Handler) AdminCreate(c *fiber.Ctx) error {
-	adminClaims, ok := c.Locals("user").(*jwt.CustomClaims)
-	if !ok {
+	adminClaims := jwt.GetClaims(c)
+	if adminClaims == nil {
 		return response.Unauthorized(c, "tidak memiliki akses")
 	}
 
@@ -948,8 +979,8 @@ type UpdateFcmTokenRequest struct {
 // @Success      200   {object}  response.envelope
 // @Router       /users/fcm-token [put]
 func (h *Handler) UpdateFcmToken(c *fiber.Ctx) error {
-	userClaims, ok := c.Locals("user").(*jwt.CustomClaims)
-	if !ok {
+	userClaims := jwt.GetClaims(c)
+	if userClaims == nil {
 		return response.Unauthorized(c, "tidak memiliki akses")
 	}
 
@@ -984,8 +1015,8 @@ func (h *Handler) UpdateFcmToken(c *fiber.Ctx) error {
 // @Success      200  {object}  response.envelope{data=UserBankAccount}
 // @Router       /users/me/bank-account [get]
 func (h *Handler) GetMyBankAccount(c *fiber.Ctx) error {
-	claims, ok := c.Locals("user").(*jwt.CustomClaims)
-	if !ok {
+	claims := jwt.GetClaims(c)
+	if claims == nil {
 		return response.Unauthorized(c, "tidak memiliki akses")
 	}
 
@@ -1017,8 +1048,8 @@ type AdminRegisterBankAccountRequest struct {
 // @Success      200   {object}  response.envelope
 // @Router       /admin/users/{id}/bank-account [post]
 func (h *Handler) AdminRegisterBankAccount(c *fiber.Ctx) error {
-	adminClaims, ok := c.Locals("user").(*jwt.CustomClaims)
-	if !ok {
+	adminClaims := jwt.GetClaims(c)
+	if adminClaims == nil {
 		return response.Unauthorized(c, "tidak memiliki akses")
 	}
 

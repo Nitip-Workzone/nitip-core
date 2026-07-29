@@ -19,8 +19,10 @@ import (
 func Protected(db *bun.DB, r *cache.Redis) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		authHeader := c.Get("Authorization")
+		// Avoid leaking auth header value — only log presence
+		hasAuth := authHeader != ""
 		if config.App.AppEnv != "production" {
-			log.Printf("[AUTH_DEBUG] Incoming request: %s %s | AuthHeader: %s", c.Method(), c.Path(), authHeader)
+			log.Printf("[AUTH_DEBUG] %s %s hasAuth=%v", c.Method(), c.Path(), hasAuth)
 		}
 
 		tokenStr := ""
@@ -34,7 +36,7 @@ func Protected(db *bun.DB, r *cache.Redis) fiber.Handler {
 
 		if tokenStr == "" {
 			if config.App.AppEnv != "production" {
-				log.Printf("[AUTH_DEBUG] Denied: Token is empty")
+				log.Printf("[AUTH_DEBUG] Denied: Token is empty for %s %s", c.Method(), c.Path())
 			}
 			return response.Unauthorized(c, "token autentikasi tidak ditemukan atau tidak valid")
 		}
@@ -42,7 +44,7 @@ func Protected(db *bun.DB, r *cache.Redis) fiber.Handler {
 		claims, err := jwt.ParseToken(tokenStr)
 		if err != nil {
 			if config.App.AppEnv != "production" {
-				log.Printf("[AUTH_DEBUG] Denied: JWT Parse Error: %v", err)
+				log.Printf("[AUTH_DEBUG] Denied: JWT parse failed for %s %s: %v", c.Method(), c.Path(), err)
 			}
 			return response.Unauthorized(c, "token tidak valid atau sudah kedaluwarsa")
 		}

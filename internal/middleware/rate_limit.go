@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/codecoffy/nitip-core/internal/cache"
@@ -11,6 +12,15 @@ import (
 )
 
 func RateLimit(redis *cache.Redis, max int, duration time.Duration) fiber.Handler {
+	// If redis is nil, fallback to in-memory storage via fallback
+	var storage fiber.Storage
+	if redis != nil {
+		storage = &redisStorage{redis: redis}
+	} else {
+		storage = &fallbackMemoryStorage{
+			data: make(map[string]item),
+		}
+	}
 	return limiter.New(limiter.Config{
 		Max:        max,
 		Expiration: duration,
@@ -20,26 +30,42 @@ func RateLimit(redis *cache.Redis, max int, duration time.Duration) fiber.Handle
 		LimitReached: func(c *fiber.Ctx) error {
 			return response.Custom(c, 429, "Terlalu banyak permintaan. Silakan coba lagi nanti.", nil)
 		},
-		Storage: &redisStorage{redis: redis},
+		Storage: storage,
 	})
 }
 
-// redisStorage implements limiter.Storage for Fiber Limiter
+// ── Redis Storage with nil guard + timeout ─────
+
 type redisStorage struct {
 	redis *cache.Redis
 }
 
 func (s *redisStorage) Get(key string) ([]byte, error) {
-	val, err := s.redis.Get(context.Background(), key)
+	if s.redis == nil || s.redis.Client() == nil {
+		return nil, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	val, err := s.redis.Get(ctx, key)
 	return []byte(val), err
 }
 
 func (s *redisStorage) Set(key string, val []byte, exp time.Duration) error {
-	return s.redis.Set(context.Background(), key, string(val), exp)
+	if s.redis == nil || s.redis.Client() == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	return s.redis.Set(ctx, key, string(val), exp)
 }
 
 func (s *redisStorage) Delete(key string) error {
-	return s.redis.Del(context.Background(), key)
+	if s.redis == nil || s.redis.Client() == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	return s.redis.Del(ctx, key)
 }
 
 func (s *redisStorage) Reset() error {
@@ -47,5 +73,60 @@ func (s *redisStorage) Reset() error {
 }
 
 func (s *redisStorage) Close() error {
+	return nil
+}
+
+// ── Fallback in-memory storage when redis nil ──
+
+type item struct {
+	val []byte
+	exp time.Time
+}
+
+type fallbackMemoryStorage struct {
+	mu   sync.Mutex
+	data map[string]item
+}
+
+func (m *fallbackMemoryStorage) Get(key string) ([]byte, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	it, ok := m.data[key]
+	if !ok {
+		return nil, nil
+	}
+	if !it.exp.IsZero() && time.Now().After(it.exp) {
+		delete(m.data, key)
+		return nil, nil
+	}
+	return it.val, nil
+}
+
+func (m *fallbackMemoryStorage) Set(key string, val []byte, exp time.Duration) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var e time.Time
+	if exp > 0 {
+		e = time.Now().Add(exp)
+	}
+	m.data[key] = item{val: val, exp: e}
+	return nil
+}
+
+func (m *fallbackMemoryStorage) Delete(key string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.data, key)
+	return nil
+}
+
+func (m *fallbackMemoryStorage) Reset() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.data = make(map[string]item)
+	return nil
+}
+
+func (m *fallbackMemoryStorage) Close() error {
 	return nil
 }

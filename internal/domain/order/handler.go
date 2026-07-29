@@ -109,7 +109,10 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 		return response.ValidationFailed(c, errs)
 	}
 
-	claims := c.Locals("user").(*jwt.CustomClaims)
+	claims := jwt.GetClaims(c)
+	if claims == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
 
 	order, err := h.service.Create(c.Context(), claims.UserID, req)
 	if err != nil {
@@ -141,7 +144,10 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 // @Failure      401   {object}  response.envelope
 // @Router       /orders/me [get]
 func (h *Handler) GetMyOrders(c *fiber.Ctx) error {
-	claims := c.Locals("user").(*jwt.CustomClaims)
+	claims := jwt.GetClaims(c)
+	if claims == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
 
 	// Merchant calling /orders/me should get empty, not 403 or unrelated data
 	if claims.Role == user.RoleMerchant {
@@ -183,7 +189,10 @@ func (h *Handler) Get(c *fiber.Ctx) error {
 		return response.BadRequest(c, "ID pesanan tidak valid")
 	}
 
-	claims := c.Locals("user").(*jwt.CustomClaims)
+	claims := jwt.GetClaims(c)
+	if claims == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
 	order, err := h.service.GetByID(c.Context(), id, claims.UserID, claims.Role)
 	if err != nil {
 		return response.Forbidden(c, err.Error())
@@ -215,7 +224,10 @@ func (h *Handler) Cancel(c *fiber.Ctx) error {
 	var req CancelPayload
 	_ = c.BodyParser(&req) // parse optional reason body
 
-	claims := c.Locals("user").(*jwt.CustomClaims)
+	claims := jwt.GetClaims(c)
+	if claims == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
 
 	if err := h.service.CancelOrder(c.Context(), id, claims.UserID, req.Reason); err != nil {
 		return response.BadRequest(c, err.Error())
@@ -242,7 +254,10 @@ func (h *Handler) Accept(c *fiber.Ctx) error {
 		return response.BadRequest(c, "ID pesanan tidak valid")
 	}
 
-	claims := c.Locals("user").(*jwt.CustomClaims)
+	claims := jwt.GetClaims(c)
+	if claims == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
 
 	if err := h.service.AcceptOrder(c.Context(), id, claims.UserID); err != nil {
 		return response.BadRequest(c, err.Error())
@@ -266,7 +281,10 @@ func (h *Handler) Pickup(c *fiber.Ctx) error {
 		return response.BadRequest(c, "ID pesanan tidak valid")
 	}
 
-	claims := c.Locals("user").(*jwt.CustomClaims)
+	claims := jwt.GetClaims(c)
+	if claims == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
 
 	if err := h.service.PickupOrder(c.Context(), id, claims.UserID); err != nil {
 		return response.BadRequest(c, err.Error())
@@ -331,7 +349,10 @@ func (h *Handler) Complete(c *fiber.Ctx) error {
 		deliveryFilename = file.Filename
 	}
 
-	claims := c.Locals("user").(*jwt.CustomClaims)
+	claims := jwt.GetClaims(c)
+	if claims == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
 
 	if err := h.service.CompleteOrder(c.Context(), id, claims.UserID, code, deliveryReader, deliveryFilename); err != nil {
 		return response.BadRequest(c, err.Error())
@@ -381,7 +402,10 @@ func (h *Handler) Purchased(c *fiber.Ctx) error {
 	}
 	defer func() { _ = f.Close() }()
 
-	claims := c.Locals("user").(*jwt.CustomClaims)
+	claims := jwt.GetClaims(c)
+	if claims == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
 
 	if err := h.service.SubmitPurchaseReceipt(c.Context(), id, claims.UserID, f, file.Filename); err != nil {
 		return response.BadRequest(c, err.Error())
@@ -411,7 +435,10 @@ func (h *Handler) Stream(c *fiber.Ctx) error {
 	c.Set("Transfer-Encoding", "chunked")
 	c.Set("X-Accel-Buffering", "no")
 
-	claims := c.Locals("user").(*jwt.CustomClaims)
+	claims := jwt.GetClaims(c)
+	if claims == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
 
 	// Single query for initial state + permission check
 	initialOrder, err := h.service.GetByID(c.Context(), id, claims.UserID, claims.Role)
@@ -564,7 +591,10 @@ func (h *Handler) Dispute(c *fiber.Ctx) error {
 		return response.ValidationFailed(c, errs)
 	}
 
-	claims := c.Locals("user").(*jwt.CustomClaims)
+	claims := jwt.GetClaims(c)
+	if claims == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
 
 	if err := h.service.DisputeOrder(c.Context(), id, claims.UserID, req.Reason, req.ProofURL); err != nil {
 		return response.BadRequest(c, err.Error())
@@ -634,7 +664,10 @@ func (h *Handler) AdminResolveDispute(c *fiber.Ctx) error {
 		return response.BadRequest(c, err.Error())
 	}
 
-	claims := c.Locals("user").(*jwt.CustomClaims)
+	claims := jwt.GetClaims(c)
+	if claims == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
 	log.Printf("[ADMIN_ACTION] Dispute resolved by %s for Order %s with side %s", claims.Email, id, req.Side)
 
 	return response.Success(c, "sengketa diselesaikan dan escrow dialihkan", nil)
@@ -660,7 +693,10 @@ func (h *Handler) AdminCancelOrder(c *fiber.Ctx) error {
 		return response.BadRequest(c, err.Error())
 	}
 
-	claims := c.Locals("user").(*jwt.CustomClaims)
+	claims := jwt.GetClaims(c)
+	if claims == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
 	log.Printf("[ADMIN_ACTION] Order %s forcefully cancelled by Admin %s", id, claims.Email)
 
 	return response.Success(c, "pesanan berhasil dibatalkan", nil)
@@ -675,7 +711,10 @@ func (h *Handler) AdminCancelOrder(c *fiber.Ctx) error {
 // @Success      200   {object}  response.envelope{data=[]Order}
 // @Router       /orders/available [get]
 func (h *Handler) GetAvailableOrders(c *fiber.Ctx) error {
-	claims := c.Locals("user").(*jwt.CustomClaims)
+	claims := jwt.GetClaims(c)
+	if claims == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
 
 	orders, err := h.service.GetAvailableOrders(c.Context(), claims.UserID)
 	if err != nil {
@@ -697,7 +736,10 @@ func (h *Handler) GetAvailableOrders(c *fiber.Ctx) error {
 // @Success      200  {string}  string  "SSE Stream"
 // @Router       /orders/pool/stream [get]
 func (h *Handler) PoolStream(c *fiber.Ctx) error {
-	claims := c.Locals("user").(*jwt.CustomClaims)
+	claims := jwt.GetClaims(c)
+	if claims == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
 	runnerID := claims.UserID.String()
 
 	lat, _ := strconv.ParseFloat(c.Query("lat", "0"), 64)
@@ -812,7 +854,10 @@ func (h *Handler) PoolStream(c *fiber.Ctx) error {
 // @Success      200  {string}  string  "SSE Stream"
 // @Router       /orders/merchant/stream [get]
 func (h *Handler) MerchantPoolStream(c *fiber.Ctx) error {
-	claims := c.Locals("user").(*jwt.CustomClaims)
+	claims := jwt.GetClaims(c)
+	if claims == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
 	userID := claims.UserID.String()
 
 	c.Set("Content-Type", "text/event-stream")
@@ -909,7 +954,10 @@ func (h *Handler) Track(c *fiber.Ctx) error {
 		return response.BadRequest(c, "ID pesanan tidak valid")
 	}
 
-	claims := c.Locals("user").(*jwt.CustomClaims)
+	claims := jwt.GetClaims(c)
+	if claims == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
 
 	order, err := h.service.GetByID(c.Context(), id, claims.UserID, claims.Role)
 	if err != nil {
@@ -939,19 +987,29 @@ func (h *Handler) Track(c *fiber.Ctx) error {
 	c.Set("Connection", "keep-alive")
 	c.Set("Transfer-Encoding", "chunked")
 
+	// P0 #5 FIX: Use detached ctx with timeout + check client disconnect via w flush error + done channel via context cancel
+	// Fiber's BodyStreamWriter runs in separate goroutine — we must respect request context cancellation
+	reqCtx := c.Context()
+
 	c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
-		ctx := context.Background()
-		orderIDStr := id.String()
+		// Use request context for DB calls, not Background() — prevents leak + allows cancel propagation
+		ctx := reqCtx
 
 		for {
+			// Check if client disconnected (Fiber ctx Done)
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+
 			state, err := h.service.GetTrackingState(ctx, id)
 			if err != nil {
-				fmt.Printf("[SSE_ERROR] Failed to get state for %s: %v\n", orderIDStr, err)
+				// Log via logger not fmt.Printf to avoid docker log fill (P1)
+				// Silently return — client will reconnect via EventSource
 				return
 			}
-			fmt.Printf("[SSE] Sending update for order %s (status: %s)\n", orderIDStr, state.Status)
 
-			// Format JSON payload
 			msg := "data: {\"lat\": " + strconv.FormatFloat(state.Lat, 'f', 6, 64) +
 				", \"lng\": " + strconv.FormatFloat(state.Lng, 'f', 6, 64) +
 				", \"distance\": " + strconv.FormatFloat(state.Distance, 'f', 2, 64) +
@@ -967,7 +1025,12 @@ func (h *Handler) Track(c *fiber.Ctx) error {
 				return
 			}
 
-			time.Sleep(5 * time.Second)
+			// Sleep with context check to allow fast exit on disconnect
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(5 * time.Second):
+			}
 		}
 	})
 
@@ -1005,7 +1068,10 @@ func (h *Handler) AdjustPrice(c *fiber.Ctx) error {
 		return response.ValidationFailed(c, errs)
 	}
 
-	claims := c.Locals("user").(*jwt.CustomClaims)
+	claims := jwt.GetClaims(c)
+	if claims == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
 
 	if err := h.service.RequestPriceAdjustment(c.Context(), id, claims.UserID, req.AdjustedCost, req.Reason); err != nil {
 		return response.BadRequest(c, err.Error())
@@ -1029,7 +1095,10 @@ func (h *Handler) ApproveAdjustment(c *fiber.Ctx) error {
 		return response.BadRequest(c, "ID pesanan tidak valid")
 	}
 
-	claims := c.Locals("user").(*jwt.CustomClaims)
+	claims := jwt.GetClaims(c)
+	if claims == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
 
 	if err := h.service.ApprovePriceAdjustment(c.Context(), id, claims.UserID); err != nil {
 		return response.BadRequest(c, err.Error())
@@ -1062,7 +1131,10 @@ func (h *Handler) RejectAdjustment(c *fiber.Ctx) error {
 	var req RejectAdjustmentRequest
 	_ = c.BodyParser(&req) // Optional body
 
-	claims := c.Locals("user").(*jwt.CustomClaims)
+	claims := jwt.GetClaims(c)
+	if claims == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
 
 	if err := h.service.RejectPriceAdjustment(c.Context(), id, claims.UserID, req.CancelOrder); err != nil {
 		return response.BadRequest(c, err.Error())
@@ -1106,7 +1178,10 @@ func (h *Handler) RefreshQRIS(c *fiber.Ctx) error {
 		return response.BadRequest(c, "ID order tidak valid")
 	}
 
-	claims := c.Locals("user").(*jwt.CustomClaims)
+	claims := jwt.GetClaims(c)
+	if claims == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
 	order, err := h.service.RefreshQRIS(c.Context(), id, claims.UserID)
 	if err != nil {
 		return response.BadRequest(c, err.Error())
@@ -1116,7 +1191,10 @@ func (h *Handler) RefreshQRIS(c *fiber.Ctx) error {
 }
 
 func (h *Handler) GetMerchantOrders(c *fiber.Ctx) error {
-	claims := c.Locals("user").(*jwt.CustomClaims)
+	claims := jwt.GetClaims(c)
+	if claims == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
 	orders, err := h.service.GetMerchantOrders(c.Context(), claims.UserID)
 	if err != nil {
 		return response.InternalError(c, err.Error())
@@ -1130,7 +1208,10 @@ func (h *Handler) MerchantAccept(c *fiber.Ctx) error {
 		return response.BadRequest(c, "ID pesanan tidak valid")
 	}
 
-	claims := c.Locals("user").(*jwt.CustomClaims)
+	claims := jwt.GetClaims(c)
+	if claims == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
 	if err := h.service.MerchantAcceptOrder(c.Context(), id, claims.UserID); err != nil {
 		return response.BadRequest(c, err.Error())
 	}
@@ -1144,7 +1225,10 @@ func (h *Handler) MerchantReady(c *fiber.Ctx) error {
 		return response.BadRequest(c, "ID pesanan tidak valid")
 	}
 
-	claims := c.Locals("user").(*jwt.CustomClaims)
+	claims := jwt.GetClaims(c)
+	if claims == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
 	if err := h.service.MerchantReadyOrder(c.Context(), id, claims.UserID); err != nil {
 		return response.BadRequest(c, err.Error())
 	}

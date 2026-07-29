@@ -609,41 +609,138 @@ func (s *service) GetByID(ctx context.Context, id uuid.UUID, requestingUserID uu
 
 func (s *service) GetByRequester(ctx context.Context, requesterID uuid.UUID) ([]Order, error) {
 	orders, err := s.repo.FindByRequesterID(ctx, requesterID)
-	if err == nil {
-		for i := range orders {
-			s.populateRunnerInfo(ctx, &orders[i])
-			s.populateReviewInfo(ctx, &orders[i])
-			s.populatePaymentInfo(ctx, &orders[i])
-			s.signURLs(ctx, &orders[i])
-		}
+	if err != nil {
+		return orders, err
 	}
-	return orders, err
+	s.bulkPopulateOrders(ctx, orders)
+	return orders, nil
 }
 
 func (s *service) GetByRunner(ctx context.Context, runnerID uuid.UUID) ([]Order, error) {
 	orders, err := s.repo.FindByRunnerID(ctx, runnerID)
-	if err == nil {
-		for i := range orders {
-			s.populateRunnerInfo(ctx, &orders[i])
-			s.populateReviewInfo(ctx, &orders[i])
-			s.populatePaymentInfo(ctx, &orders[i])
-			s.signURLs(ctx, &orders[i])
-		}
+	if err != nil {
+		return orders, err
 	}
-	return orders, err
+	s.bulkPopulateOrders(ctx, orders)
+	return orders, nil
 }
 
 func (s *service) GetByUser(ctx context.Context, userID uuid.UUID, limit, offset int) ([]Order, error) {
 	orders, err := s.repo.FindByUserID(ctx, userID, limit, offset)
-	if err == nil {
-		for i := range orders {
-			s.populateRunnerInfo(ctx, &orders[i])
-			s.populateReviewInfo(ctx, &orders[i])
-			s.populatePaymentInfo(ctx, &orders[i])
-			s.signURLs(ctx, &orders[i])
+	if err != nil {
+		return orders, err
+	}
+	s.bulkPopulateOrders(ctx, orders)
+	return orders, nil
+}
+
+// bulkPopulateOrders P1 FIX: N+1 -> bulk fetch runners + reviews + signed URLs cached per request
+// Before: N=15 => 30 queries + 15 crypto presign. After: 3 queries + 15 cached presign with map
+func (s *service) bulkPopulateOrders(ctx context.Context, orders []Order) {
+	if len(orders) == 0 {
+		return
+	}
+	// Collect runner IDs unique
+	runnerIDSet := make(map[uuid.UUID]bool)
+	var runnerIDs []uuid.UUID
+	for _, o := range orders {
+		if o.RunnerID != nil && !runnerIDSet[*o.RunnerID] {
+			runnerIDSet[*o.RunnerID] = true
+			runnerIDs = append(runnerIDs, *o.RunnerID)
 		}
 	}
-	return orders, err
+	runnerMap := make(map[uuid.UUID]*user.User)
+	if len(runnerIDs) > 0 {
+		// use userSvc bulk FindByIDs
+		if users, err := s.userSvc.GetByIDs(ctx, runnerIDs); err == nil {
+			for i := range users {
+				runnerMap[users[i].ID] = &users[i]
+			}
+		}
+	}
+	// Bulk reviews WHERE order_id IN (...)
+	type reviewRow struct {
+		OrderID uuid.UUID `bun:"order_id"`
+		Rating  int       `bun:"runner_rating"`
+		Comment string    `bun:"runner_comment"`
+	}
+	var revRows []reviewRow
+	orderIDs := make([]uuid.UUID, len(orders))
+	for i, o := range orders {
+		orderIDs[i] = o.ID
+	}
+	_ = s.db.NewSelect().
+		Table("reviews").
+		Column("order_id", "runner_rating", "runner_comment").
+		Where("order_id IN (?)", bun.List(orderIDs)).
+		Where("runner_rating IS NOT NULL").
+		Scan(ctx, &revRows)
+	reviewMap := make(map[uuid.UUID]reviewRow)
+	for _, r := range revRows {
+		reviewMap[r.OrderID] = r
+	}
+	// Cache signed URLs per key per request to avoid duplicate HMAC
+	signedCache := make(map[string]string)
+
+	for i := range orders {
+		// runner info from bulk map
+		if orders[i].RunnerID != nil {
+			if ru, ok := runnerMap[*orders[i].RunnerID]; ok && ru != nil {
+				orders[i].RunnerName = ru.Name
+				orders[i].RunnerPhone = ru.WhatsappNumber
+				orders[i].RunnerLastLat = ru.LastLat
+				orders[i].RunnerLastLng = ru.LastLng
+				// try redis track override still per order (1 Redis GET) — low cost vs DB
+				if s.redis != nil {
+					if val, err := s.redis.Get(ctx, "runner:track:"+ru.ID.String()); err == nil && val != "" {
+						var lat, lng float64
+						var ts int64
+						if _, scanErr := fmt.Sscanf(val, "%f,%f,%d", &lat, &lng, &ts); scanErr == nil {
+							orders[i].RunnerLastLat = &lat
+							orders[i].RunnerLastLng = &lng
+						}
+					}
+				}
+			}
+		}
+		// review from bulk map
+		if rv, ok := reviewMap[orders[i].ID]; ok {
+			rating := rv.Rating
+			orders[i].FeedbackRating = &rating
+			orders[i].FeedbackComment = rv.Comment
+		}
+		// payment info (keep existing logic but avoid DB hit, uses cache)
+		s.populatePaymentInfo(ctx, &orders[i])
+		// sign URLs with per-request cache
+		s.signURLsCached(ctx, &orders[i], signedCache)
+	}
+}
+
+// signURLsCached version with cache map to avoid duplicate HMAC presign per request
+func (s *service) signURLsCached(ctx context.Context, o *Order, cache map[string]string) {
+	if o == nil {
+		return
+	}
+	sign := func(key string) string {
+		if v, ok := cache[key]; ok {
+			return v
+		}
+		sanitized := sanitizeStorageKey(key)
+		if signed, err := s.storage.SignedURL(ctx, sanitized, 1*time.Hour); err == nil {
+			cache[key] = signed
+			return signed
+		}
+		return key
+	}
+	if o.ReceiptImageURL != "" {
+		o.ReceiptImageURL = sign(o.ReceiptImageURL)
+	}
+	if o.DeliveryImageURL != "" {
+		o.DeliveryImageURL = sign(o.DeliveryImageURL)
+	}
+	if o.DisputeProofURL != "" {
+		o.DisputeProofURL = sign(o.DisputeProofURL)
+	}
 }
 
 func (s *service) AcceptOrder(ctx context.Context, orderID, runnerID uuid.UUID) error {
@@ -1823,17 +1920,9 @@ func (s *service) GetAvailableOrders(ctx context.Context, runnerID uuid.UUID) ([
 		params.IDs = uniqueIDs
 	}
 
-	fmt.Printf("[Matching] Runner %s searching orders. LastLoc: %f,%f. HasTrip: %v. AcceptingOrders: %v. Found %d IDs in Redis GEO.\n",
-		runnerID, params.RunnerLat, params.RunnerLng, params.HasActiveTrip, params.IsAcceptingOrders, len(params.IDs))
+	// P1: debug prints removed to avoid docker json-file 10m*3 fill — use logger if needed with sampling
 
 	orders, err := s.repo.FindAvailable(ctx, params)
-	if err == nil {
-		fmt.Printf("[Matching] Found %d matching orders in DB. Details:\n", len(orders))
-		for _, o := range orders {
-			fmt.Printf("  - Order %s: Status=%s, Payment=%s, Type=%s\n", o.ID, o.Status, o.PaymentStatus, o.OrderType)
-		}
-	}
-
 	return orders, err
 }
 
@@ -1938,7 +2027,8 @@ func (s *service) syncRedisGeoOrderPool(ctx context.Context) {
 	}
 
 	for idStr, o := range activeMap {
-		_ = s.redis.GeoAddOrder(ctx, idStr, o.PickupLng, o.PickupLat)
+		// FIX P0 #3 Geo swap bug: signature is (lat,lng), previous code passed (lng,lat) causing matching to break
+		_ = s.redis.GeoAddOrder(ctx, idStr, o.PickupLat, o.PickupLng)
 	}
 
 	log.Printf("[GEO-SWEEPER] Sinkronisasi Redis GEO selesai. Jumlah order aktif: %d", totalActive)
@@ -2387,16 +2477,20 @@ func (s *service) generateOrderQRIS(ctx context.Context, order *Order) (string, 
 		}
 
 		log.Printf("[MOCK-QRIS-ORDER] Order: %s, GrossAmt: %d", order.ID.String(), int64(grossAmt))
-		resp, err := http.Post(fmt.Sprintf("%s/api/qris/generate", pgUrl), "application/json", bytes.NewBuffer(body))
+		// P0 #10: http client timeout to prevent hang holding Fiber worker 5m
+		httpClient := &http.Client{Timeout: 10 * time.Second}
+		resp, err := httpClient.Post(fmt.Sprintf("%s/api/qris/generate", pgUrl), "application/json", bytes.NewBuffer(body))
 		if err != nil {
 			log.Printf("[MOCK-QRIS-ORDER-ERROR] Connection error: %v", err)
 			return "", fmt.Errorf("gagal menghubungi payment gateway: %v", err)
 		}
-		defer func() {
-			_ = resp.Body.Close()
-		}()
+		defer func() { _ = resp.Body.Close() }()
 
-		respBytes, _ := io.ReadAll(resp.Body)
+		respBytes, err := io.ReadAll(resp.Body)
+		if err != nil {
+			log.Printf("[MOCK-QRIS-ORDER-ERROR] Read error: %v", err)
+			return "", fmt.Errorf("gagal membaca respon payment gateway")
+		}
 		log.Printf("[MOCK-QRIS-ORDER-RESPONSE] Order: %s, Status: %s", order.ID.String(), resp.Status)
 
 		var qrisResp struct {
@@ -2431,7 +2525,12 @@ func (s *service) paymentWorker(ctx context.Context, id int) {
 			return
 		case job := <-s.paymentQueue:
 			err := s.processPayment(ctx, job.OrderID, job.Status)
-			job.ErrChan <- err
+			// P0 #6 FIX: non-blocking send to prevent goroutine leak when request timeout receiver gone
+			select {
+			case job.ErrChan <- err:
+			default:
+				log.Printf("[PAYMENT-WORKER] ErrChan full/blocked for order %s, dropping err: %v", job.OrderID, err)
+			}
 		}
 	}
 }

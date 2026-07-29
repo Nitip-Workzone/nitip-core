@@ -121,12 +121,16 @@ func (h *PoolHub) UnregisterSSE(clientID string) {
 		close(client.Done)
 	}
 
-	// Remove from cell buckets
+	// Remove from cell buckets — fix backing array leak retain pointer
 	for _, cell := range client.CellKeys {
 		clients := h.clientsByCell[cell]
 		for i, c := range clients {
 			if c.ID == clientID {
-				h.clientsByCell[cell] = append(clients[:i], clients[i+1:]...)
+				// avoid mem leak: copy + nil last
+				copy(clients[i:], clients[i+1:])
+				clients[len(clients)-1] = nil
+				clients = clients[:len(clients)-1]
+				h.clientsByCell[cell] = clients
 				break
 			}
 		}

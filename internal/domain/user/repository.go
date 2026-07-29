@@ -34,13 +34,14 @@ func NewRepository(db *bun.DB) Repository {
 
 func (r *repository) FindAll(ctx context.Context) ([]User, error) {
 	users := []User{}
-	err := r.db.NewSelect().Model(&users).WhereAllWithDeleted().Where("deleted_at IS NULL").Scan(ctx)
+	// P1 FIX: guard limit 100 to prevent OOM on 10k users (was unbounded)
+	err := r.db.NewSelect().Model(&users).WhereAllWithDeleted().Where("deleted_at IS NULL").Order("created_at DESC").Limit(100).Scan(ctx)
 	return users, err
 }
 
 func (r *repository) FindAllWithFilters(ctx context.Context, role string, isVerified, isSuspended *bool) ([]User, error) {
 	users := []User{}
-	q := r.db.NewSelect().Model(&users).Order("created_at DESC")
+	q := r.db.NewSelect().Model(&users).Order("created_at DESC").Limit(100)
 
 	if role != "" {
 		q = q.Where("role = ?", role)

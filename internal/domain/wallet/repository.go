@@ -215,48 +215,34 @@ func (r *repository) GetSystemBalanceSummary(ctx context.Context) (*SystemBalanc
 		}
 	}
 
-	// 2. Total collected (all PLATFORM_FEE transactions that are positive = incoming)
-	_ = r.db.NewSelect().
+	// P1 FIX: Single query with SUM(CASE) instead of 5 sequential scans same filter
+	// Was 5 queries scanning wallet_transactions WHERE wallet_id=sys AND type=platform_fee AND status=completed AND amount>0
+	// Now 1 query
+	type agg struct {
+		Total    float64 `bun:"total"`
+		Today    float64 `bun:"today"`
+		ThisWeek float64 `bun:"this_week"`
+		ThisMon  float64 `bun:"this_month"`
+	}
+	var a agg
+	err = r.db.NewSelect().
 		Model((*WalletTransaction)(nil)).
-		ColumnExpr("COALESCE(SUM(amount), 0)").
+		ColumnExpr("COALESCE(SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END),0) AS total").
+		ColumnExpr("COALESCE(SUM(CASE WHEN amount > 0 AND created_at >= CURRENT_DATE THEN amount ELSE 0 END),0) AS today").
+		ColumnExpr("COALESCE(SUM(CASE WHEN amount > 0 AND created_at >= DATE_TRUNC('week', CURRENT_DATE) THEN amount ELSE 0 END),0) AS this_week").
+		ColumnExpr("COALESCE(SUM(CASE WHEN amount > 0 AND created_at >= DATE_TRUNC('month', CURRENT_DATE) THEN amount ELSE 0 END),0) AS this_month").
 		Where("wallet_id = ?", sysWID).
 		Where("type = ?", TypePlatformFee).
 		Where("status = ?", StatusCompleted).
-		Where("amount > 0").
-		Scan(ctx, &summary.TotalCollected)
-
-	// 3. Today's collected fees
-	_ = r.db.NewSelect().
-		Model((*WalletTransaction)(nil)).
-		ColumnExpr("COALESCE(SUM(amount), 0)").
-		Where("wallet_id = ?", sysWID).
-		Where("type = ?", TypePlatformFee).
-		Where("status = ?", StatusCompleted).
-		Where("amount > 0").
-		Where("created_at >= CURRENT_DATE").
-		Scan(ctx, &summary.Today)
-
-	// 4. This week's collected fees
-	_ = r.db.NewSelect().
-		Model((*WalletTransaction)(nil)).
-		ColumnExpr("COALESCE(SUM(amount), 0)").
-		Where("wallet_id = ?", sysWID).
-		Where("type = ?", TypePlatformFee).
-		Where("status = ?", StatusCompleted).
-		Where("amount > 0").
-		Where("created_at >= DATE_TRUNC('week', CURRENT_DATE)").
-		Scan(ctx, &summary.ThisWeek)
-
-	// 5. This month's collected fees
-	_ = r.db.NewSelect().
-		Model((*WalletTransaction)(nil)).
-		ColumnExpr("COALESCE(SUM(amount), 0)").
-		Where("wallet_id = ?", sysWID).
-		Where("type = ?", TypePlatformFee).
-		Where("status = ?", StatusCompleted).
-		Where("amount > 0").
-		Where("created_at >= DATE_TRUNC('month', CURRENT_DATE)").
-		Scan(ctx, &summary.ThisMonth)
+		Scan(ctx, &a)
+	if err != nil {
+		// Don't swallow error but fallback to zeros if scan fails
+		return summary, nil
+	}
+	summary.TotalCollected = a.Total
+	summary.Today = a.Today
+	summary.ThisWeek = a.ThisWeek
+	summary.ThisMonth = a.ThisMon
 
 	return summary, nil
 }

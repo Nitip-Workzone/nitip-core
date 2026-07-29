@@ -49,7 +49,10 @@ func (h *Handler) RegisterRoutes(router fiber.Router) {
 // @Failure      400  {object}  response.envelope
 // @Router       /kyc/submit [post]
 func (h *Handler) Submit(c *fiber.Ctx) error {
-	claims := c.Locals("user").(*jwt.CustomClaims)
+	claims := jwt.GetClaims(c)
+	if claims == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
 
 	number := c.FormValue("id_card_number")
 	if number == "" {
@@ -116,7 +119,10 @@ func (h *Handler) Submit(c *fiber.Ctx) error {
 // @Failure      404  {object}  response.envelope
 // @Router       /kyc/me [get]
 func (h *Handler) GetMyStatus(c *fiber.Ctx) error {
-	claims := c.Locals("user").(*jwt.CustomClaims)
+	claims := jwt.GetClaims(c)
+	if claims == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
 
 	kyc, err := h.service.GetStatus(c.Context(), claims.UserID)
 	if err != nil {
@@ -178,7 +184,10 @@ func (h *Handler) Review(c *fiber.Ctx) error {
 		return response.BadRequest(c, "format permintaan tidak valid")
 	}
 
-	claims := c.Locals("user").(*jwt.CustomClaims)
+	claims := jwt.GetClaims(c)
+	if claims == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
 	if err := h.service.Review(c.Context(), id, claims.UserID, req.Approved, req.Note); err != nil {
 		return response.BadRequest(c, err.Error())
 	}

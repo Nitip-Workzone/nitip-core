@@ -100,7 +100,10 @@ func (h *Handler) ListMenuPublic(c *fiber.Ctx) error {
 }
 
 func (h *Handler) GetProfile(c *fiber.Ctx) error {
-	claims := c.Locals("user").(*jwt.CustomClaims)
+	claims := jwt.GetClaims(c)
+	if claims == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
 	m, err := h.service.GetMerchantByOwnerID(c.Context(), claims.UserID)
 	if err != nil {
 		return response.Success(c, "profil merchant tidak ditemukan untuk pengguna ini", nil)
@@ -118,7 +121,10 @@ type createProfileRequest struct {
 }
 
 func (h *Handler) CreateProfile(c *fiber.Ctx) error {
-	claims := c.Locals("user").(*jwt.CustomClaims)
+	claims := jwt.GetClaims(c)
+	if claims == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
 
 	// Check if profile already exists to prevent duplicate profiles
 	_, err := h.service.GetMerchantByOwnerID(c.Context(), claims.UserID)
@@ -167,7 +173,10 @@ type updateProfileRequest struct {
 }
 
 func (h *Handler) UpdateProfile(c *fiber.Ctx) error {
-	claims := c.Locals("user").(*jwt.CustomClaims)
+	claims := jwt.GetClaims(c)
+	if claims == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
 	m, err := h.service.GetMerchantByOwnerID(c.Context(), claims.UserID)
 	if err != nil {
 		return response.NotFound(c, "profil merchant tidak ditemukan")
@@ -196,7 +205,10 @@ type merchantUpdateStatusRequest struct {
 }
 
 func (h *Handler) UpdateStatus(c *fiber.Ctx) error {
-	claims := c.Locals("user").(*jwt.CustomClaims)
+	claims := jwt.GetClaims(c)
+	if claims == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
 	m, err := h.service.GetMerchantByOwnerID(c.Context(), claims.UserID)
 	if err != nil {
 		return response.NotFound(c, "profil merchant tidak ditemukan")
@@ -230,7 +242,10 @@ func (h *Handler) UpdateStatus(c *fiber.Ctx) error {
 }
 
 func (h *Handler) ListMenuMerchant(c *fiber.Ctx) error {
-	claims := c.Locals("user").(*jwt.CustomClaims)
+	claims := jwt.GetClaims(c)
+	if claims == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
 	m, err := h.service.GetMerchantByOwnerID(c.Context(), claims.UserID)
 	if err != nil {
 		return response.NotFound(c, "profil merchant tidak ditemukan")
@@ -254,7 +269,10 @@ type createMenuRequest struct {
 }
 
 func (h *Handler) CreateMenu(c *fiber.Ctx) error {
-	claims := c.Locals("user").(*jwt.CustomClaims)
+	claims := jwt.GetClaims(c)
+	if claims == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
 	m, err := h.service.GetMerchantByOwnerID(c.Context(), claims.UserID)
 	if err != nil {
 		return response.NotFound(c, "profil merchant tidak ditemukan")
@@ -285,7 +303,10 @@ type updateMenuRequest struct {
 }
 
 func (h *Handler) UpdateMenu(c *fiber.Ctx) error {
-	claims := c.Locals("user").(*jwt.CustomClaims)
+	claims := jwt.GetClaims(c)
+	if claims == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
 	m, err := h.service.GetMerchantByOwnerID(c.Context(), claims.UserID)
 	if err != nil {
 		return response.NotFound(c, "profil merchant tidak ditemukan")
@@ -323,7 +344,10 @@ func (h *Handler) UpdateMenu(c *fiber.Ctx) error {
 }
 
 func (h *Handler) DeleteMenu(c *fiber.Ctx) error {
-	claims := c.Locals("user").(*jwt.CustomClaims)
+	claims := jwt.GetClaims(c)
+	if claims == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
 	m, err := h.service.GetMerchantByOwnerID(c.Context(), claims.UserID)
 	if err != nil {
 		return response.NotFound(c, "profil merchant tidak ditemukan")
