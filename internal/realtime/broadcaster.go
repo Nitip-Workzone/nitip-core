@@ -20,14 +20,13 @@ func NewBroadcaster(hub *PoolHub, redis *cache.Redis, logger *zap.Logger) *Broad
 	return &Broadcaster{hub: hub, redis: redis, logger: logger}
 }
 
-// BroadcastNewOrder broadcasts new order to nearby cells
+// BroadcastNewOrder – new order must be instant for ALL runners, not just nearby cells
+// Low burden: BroadcastToAll is non-blocking, <1ms for 100 conns, 0 DB
 func (b *Broadcaster) BroadcastOrderCreated(orderID string, pickupLat, pickupLng float64, itemDetails string, merchantID *uuid.UUID, extra map[string]interface{}) {
 	if b.hub == nil {
 		return
 	}
 	start := time.Now()
-
-	cells := NeighborCells(pickupLat, pickupLng)
 
 	data := map[string]interface{}{
 		"order_id":   orderID,
@@ -49,9 +48,8 @@ func (b *Broadcaster) BroadcastOrderCreated(orderID string, pickupLat, pickupLng
 		Data:      data,
 	}
 
-	b.hub.BroadcastToCells(cells, ev)
-	// Also broadcast to global fallback so runners without precise location still get realtime (low burden)
-	b.hub.BroadcastToCell("global", ev)
+	// Strategy: instant for ALL – geo filtering done by GET /available fallback, but new order must appear <2s
+	b.hub.BroadcastToAll(ev)
 
 	// Also broadcast to merchant cells if merchant order
 	if merchantID != nil {
@@ -66,8 +64,8 @@ func (b *Broadcaster) BroadcastOrderCreated(orderID string, pickupLat, pickupLng
 	}
 
 	latency := time.Since(start).Milliseconds()
+	cells := NeighborCells(pickupLat, pickupLng)
 
-	// Redis counters - no Grafana needed
 	if b.redis != nil {
 		_, _ = b.redis.IncrCounter(context.Background(), "events:total")
 		_, _ = b.redis.IncrCounter(context.Background(), "orders:created")
