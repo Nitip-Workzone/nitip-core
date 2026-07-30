@@ -31,6 +31,7 @@ const (
 	ActionUserUnsuspend     = "USER_UNSUSPEND"
 	ActionUserVerify        = "USER_VERIFY"
 	ActionUserUpdateTrust   = "USER_UPDATE_TRUST"
+	ActionUserResetPassword = "USER_RESET_PASSWORD"
 	ActionOrderCreate       = "ORDER_CREATE"
 	ActionOrderAccept       = "ORDER_ACCEPT"
 	ActionOrderComplete     = "ORDER_COMPLETE"

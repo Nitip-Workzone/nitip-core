@@ -139,6 +139,9 @@ type Service interface {
 	// Bank Account Management
 	GetBankAccount(ctx context.Context, userID uuid.UUID) (*UserBankAccount, error)
 	AdminRegisterBankAccount(ctx context.Context, userID uuid.UUID, bankName, accountNo, accountName, adminPassword, totpCode string, adminID uuid.UUID) error
+
+	// Admin Password Reset
+	AdminResetPassword(ctx context.Context, targetUserID uuid.UUID, newPassword, adminPassword, totpCode string, adminID uuid.UUID) error
 }
 
 type service struct {
@@ -865,5 +868,61 @@ func (s *service) AdminRegisterBankAccount(ctx context.Context, userID uuid.UUID
 	}
 
 	s.auditSvc.Log(ctx, &adminID, "REGISTER_USER_BANK", "user_bank_accounts", userID.String(), nil, bankAccount, "", "")
+	return nil
+}
+
+func (s *service) AdminResetPassword(ctx context.Context, targetUserID uuid.UUID, newPassword, adminPassword, totpCode string, adminID uuid.UUID) error {
+	// Verify target user exists
+	targetUser, err := s.repo.FindByID(ctx, targetUserID)
+	if err != nil {
+		return errors.New("pengguna tidak ditemukan")
+	}
+
+	// Verify admin
+	admin, err := s.repo.FindByID(ctx, adminID)
+	if err != nil {
+		return errors.New("gagal menemukan akun admin")
+	}
+
+	if err := bcrypt.CompareHashAndPassword([]byte(admin.Password), []byte(adminPassword)); err != nil {
+		return errors.New("konfirmasi password admin salah")
+	}
+
+	if admin.TotpEnabled {
+		if admin.TotpSecret == nil || *admin.TotpSecret == "" {
+			return errors.New("TOTP terkonfigurasi tidak valid")
+		}
+		if !totp.Validate(totpCode, *admin.TotpSecret) {
+			return errors.New("kode TOTP admin tidak valid")
+		}
+	} else {
+		return errors.New("tindakan ini memerlukan autentikasi dua faktor (TOTP) diaktifkan pada akun admin Anda")
+	}
+
+	if len(newPassword) < 8 || len(newPassword) > 72 {
+		return errors.New("password baru harus 8-72 karakter")
+	}
+
+	hashed, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return errors.New("gagal mengenkripsi password baru")
+	}
+
+	now := time.Now()
+	targetUser.Password = string(hashed)
+	targetUser.TokenVersion++ // revoke all active sessions
+	targetUser.UpdatedAt = now
+
+	if err := s.repo.Update(ctx, targetUser); err != nil {
+		return errors.New("gagal mereset password pengguna")
+	}
+
+	if s.redis != nil {
+		cacheKey := fmt.Sprintf("user:session:v:%s", targetUserID.String())
+		_ = s.redis.Set(ctx, cacheKey, targetUser.TokenVersion, 24*time.Hour)
+	}
+
+	s.auditSvc.Log(ctx, &adminID, audit.ActionUserResetPassword, "user", targetUserID.String(), nil, map[string]interface{}{"reset_by_admin": adminID.String()}, "", "")
+	log.Printf("[ADMIN_ACTION] Admin %s reset password for User %s (%s)", adminID, targetUserID, targetUser.Email)
 	return nil
 }

@@ -64,6 +64,7 @@ func (h *Handler) RegisterRoutes(router fiber.Router) {
 	adminUser.Post("/:id/totp-disable", h.AdminDisableTOTP)
 	adminUser.Post("/:id/bank-account", h.AdminRegisterBankAccount)
 	adminUser.Get("/:id/bank-account", h.AdminGetBankAccount)
+	adminUser.Post("/:id/reset-password", h.AdminResetPassword)
 
 	// TOTP Management
 	g.Post("/totp/setup", middleware.Protected(h.db, h.redis), middleware.RateLimit(h.redis, 3, 1*time.Minute), h.SetupTOTP)
@@ -1074,6 +1075,50 @@ func (h *Handler) AdminRegisterBankAccount(c *fiber.Ctx) error {
 	}
 
 	return response.Success(c, "rekening pengguna berhasil didaftarkan oleh admin", nil)
+}
+
+type AdminResetPasswordRequest struct {
+	NewPassword   string `json:"new_password" validate:"required,min=8,max=72"`
+	AdminPassword string `json:"admin_password" validate:"required"`
+	TotpCode      string `json:"totp_code" validate:"required,len=6,numeric"`
+}
+
+// AdminResetPassword godoc
+// @Summary      [ADMIN] Reset user password
+// @Description  Reset a user's password. Highly restricted. Requires admin password + TOTP. Revokes all user sessions.
+// @Tags         [Admin] User Management
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id    path      string                     true  "User ID"
+// @Param        body  body      AdminResetPasswordRequest  true  "Reset details"
+// @Success      200   {object}  response.envelope
+// @Router       /admin/users/{id}/reset-password [post]
+func (h *Handler) AdminResetPassword(c *fiber.Ctx) error {
+	adminClaims := jwt.GetClaims(c)
+	if adminClaims == nil {
+		return response.Unauthorized(c, "tidak memiliki akses")
+	}
+
+	targetID, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return response.BadRequest(c, "ID user tidak valid")
+	}
+
+	var req AdminResetPasswordRequest
+	if err := c.BodyParser(&req); err != nil {
+		return response.BadRequest(c, "format permintaan tidak valid")
+	}
+
+	if errs := validator.Validate(req); errs != nil {
+		return response.ValidationFailed(c, errs)
+	}
+
+	if err := h.service.AdminResetPassword(c.Context(), targetID, req.NewPassword, req.AdminPassword, req.TotpCode, adminClaims.UserID); err != nil {
+		return response.BadRequest(c, err.Error())
+	}
+
+	return response.Success(c, "password pengguna berhasil direset oleh admin", nil)
 }
 
 // AdminGetBankAccount godoc
