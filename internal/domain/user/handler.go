@@ -1023,7 +1023,8 @@ func (h *Handler) GetMyBankAccount(c *fiber.Ctx) error {
 
 	uba, err := h.service.GetBankAccount(c.Context(), claims.UserID)
 	if err != nil {
-		return response.NotFound(c, "rekening belum didaftarkan")
+		// Do not return 404 - allow client to handle empty state with 200
+		return response.Success(c, "rekening belum didaftarkan", nil)
 	}
 
 	return response.Success(c, "rekening berhasil diambil", uba)
@@ -1092,7 +1093,8 @@ func (h *Handler) AdminGetBankAccount(c *fiber.Ctx) error {
 
 	uba, err := h.service.GetBankAccount(c.Context(), targetID)
 	if err != nil {
-		return response.NotFound(c, "rekening pengguna belum didaftarkan")
+		// Return 200 with nil data so UI can display empty state without error toast / red Network entry
+		return response.Success(c, "rekening pengguna belum didaftarkan", nil)
 	}
 
 	return response.Success(c, "rekening pengguna berhasil diambil", uba)
