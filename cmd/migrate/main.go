@@ -39,12 +39,13 @@ func main() {
 	}
 
 	if err != nil {
-		log.Fatalf("failed to open db: %v", err)
+		// SECURITY: never log DSN with password — use SafeDSN
+		log.Fatalf("failed to open db (dsn: %s): %v", cfg.SafeDSN(), sanitizeDBError(err))
 	}
 	defer func() { _ = db.Close() }()
 
 	if err := db.Ping(); err != nil {
-		log.Fatalf("db ping failed: %v", err)
+		log.Fatalf("db ping failed (dsn: %s): %v", cfg.SafeDSN(), sanitizeDBError(err))
 	}
 
 	goose.SetDialect(driver) //nolint:errcheck
@@ -64,9 +65,35 @@ func main() {
 	default:
 		// up, down, status, reset, version, fix, validate ...
 		if err := goose.RunContext(context.Background(), command, db, migrationsDir); err != nil {
-			log.Fatalf("migrate %s failed: %v", command, err)
+			log.Fatalf("migrate %s failed (dsn: %s): %v", command, cfg.SafeDSN(), sanitizeDBError(err))
 		}
 	}
 
 	fmt.Printf("migrate %s: done\n", command)
+}
+
+func sanitizeDBError(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := err.Error()
+	if len(msg) > 300 {
+		msg = msg[:300] + "... (truncated)"
+	}
+	if len(msg) >= 10 {
+		for i := 0; i <= len(msg)-10; i++ {
+			if msg[i:i+10] == "postgres:/" {
+				return "connection failed (credentials redacted for security)"
+			}
+		}
+	}
+	if len(msg) >= 3 {
+		for i := 0; i <= len(msg)-3; i++ {
+			if msg[i:i+3] == "://" {
+				// contains DSN-like string
+				return "connection failed (credentials redacted for security)"
+			}
+		}
+	}
+	return msg
 }

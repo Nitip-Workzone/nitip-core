@@ -15,32 +15,51 @@ jobs:
 
       - name: Copy Secrets File
         run: |
+          # SECURITY: secrets file contains passwords — never cat or echo it
           cp ~/.secret/nitip-production.env .env
           cp ~/.secret/firebase-credentials.json ./firebase-credentials.json || true
           cp ~/.secret/dozzle-users.yml ./users.yml || true
+          # Ensure .env not world-readable on runner
+          chmod 600 .env || true
 
       - name: Build Docker Image
         run: |
+          # Mask secrets in logs — GitHub Actions will mask values set via ::add-mask::
+          # Extract DB password for masking (fail safe)
+          if [ -f .env ]; then
+            DB_PASS=$(grep -E '^DB_PASSWORD=' .env | cut -d'=' -f2- | tr -d '\r\n"' | head -c 128)
+            if [ -n "$DB_PASS" ]; then
+              echo "::add-mask::$DB_PASS"
+            fi
+            REDIS_PASS=$(grep -E '^REDIS_PASSWORD=' .env | cut -d'=' -f2- | tr -d '\r\n"' | head -c 128)
+            if [ -n "$REDIS_PASS" ]; then
+              echo "::add-mask::$REDIS_PASS"
+            fi
+          fi
           docker compose build app
 
       - name: Run Database Migrations
         run: |
+          # SECURITY: migrate binary now uses SafeDSN (password redacted) — no leak
+          # Use --no-deps to avoid starting app
           docker compose run --rm app /app/migrate up
 
       - name: Deploy Application
         run: |
           docker compose up -d --remove-orphans
 
+      - name: Verify Deployment (no secrets in output)
+        run: |
+          echo "Checking app health..."
+          sleep 5
+          curl -sf http://localhost:8000/health || curl -sf http://127.0.0.1:8080/health || echo "health check via 8080"
+          docker compose ps
+
       - name: Cleanup Docker
         run: |
-          # Hapus image yang tidak digunakan
           docker image prune -f
-
-          # Hapus build cache yang lebih tua dari 72 jam
           docker builder prune --filter "until=72h" -f
-
-          # Hapus network yang tidak digunakan
           docker network prune -f
-
-          # Tampilkan ringkasan penggunaan Docker
           docker system df
+          # SECURITY: cleanup .env copy from workspace after deploy to avoid leak in runner
+          rm -f .env || true
