@@ -63,6 +63,7 @@ func (h *Handler) RegisterRoutes(router fiber.Router) {
 	adminUser.Post("/:id/unlock-pin", h.AdminUnlockPin)
 	adminUser.Post("/:id/totp-disable", h.AdminDisableTOTP)
 	adminUser.Post("/:id/bank-account", h.AdminRegisterBankAccount)
+	adminUser.Get("/:id/bank-account", h.AdminGetBankAccount)
 
 	// TOTP Management
 	g.Post("/totp/setup", middleware.Protected(h.db, h.redis), middleware.RateLimit(h.redis, 3, 1*time.Minute), h.SetupTOTP)
@@ -1072,4 +1073,27 @@ func (h *Handler) AdminRegisterBankAccount(c *fiber.Ctx) error {
 	}
 
 	return response.Success(c, "rekening pengguna berhasil didaftarkan oleh admin", nil)
+}
+
+// AdminGetBankAccount godoc
+// @Summary      [ADMIN] Get user bank account
+// @Description  Get a user's registered bank account details by their ID.
+// @Tags         [Admin] User Management
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id    path      string  true  "User ID"
+// @Success      200   {object}  response.envelope{data=UserBankAccount}
+// @Router       /admin/users/{id}/bank-account [get]
+func (h *Handler) AdminGetBankAccount(c *fiber.Ctx) error {
+	targetID, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return response.BadRequest(c, "ID user tidak valid")
+	}
+
+	uba, err := h.service.GetBankAccount(c.Context(), targetID)
+	if err != nil {
+		return response.NotFound(c, "rekening pengguna belum didaftarkan")
+	}
+
+	return response.Success(c, "rekening pengguna berhasil diambil", uba)
 }
