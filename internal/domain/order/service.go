@@ -2663,7 +2663,11 @@ func (s *service) GetMerchantOrders(ctx context.Context, ownerID uuid.UUID) ([]O
 		return nil, err
 	}
 	var orders []Order
-	// FIX merchant hilang saat menunggu runner: include merchant_accepted + limit 100 + allow unpaid QRIS juga terlihat di merchant
+	// FIX merchant hilang:
+	// - include merchant_accepted (waiting runner) — was orphan
+	// - completed was hidden because payment_status=released not escrow: allow released/refunded/unpaid/escrow + cod
+	// - merchant should see all payment_status for history, so whitelist all relevant payment_status
+	// - limit 100 to prevent OOM
 	err = s.db.NewSelect().
 		Model(&orders).
 		Where("merchant_id = ?", merch.ID).
@@ -2677,7 +2681,12 @@ func (s *service) GetMerchantOrders(ctx context.Context, ownerID uuid.UUID) ([]O
 			StatusDelivering,
 			StatusCompleted,
 		})).
-		Where("payment_status = ? OR payment_method = ? OR payment_status = ?", PaymentEscrow, MethodCOD, PaymentUnpaid).
+		Where("payment_status IN (?) OR payment_method = ?", bun.List([]string{
+			PaymentEscrow,   // masih escrow (belum release)
+			PaymentReleased, // sudah selesai & dana release — ini yang bikin completed hilang sebelumnya
+			PaymentRefunded, // refunded tetap terlihat
+			PaymentUnpaid,   // QRIS unpaid biar merchant lihat
+		}), MethodCOD).
 		Order("created_at DESC").
 		Limit(100).
 		Scan(ctx)
