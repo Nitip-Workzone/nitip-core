@@ -192,3 +192,4 @@ All query code remains the same — bun handles dialect automatically.
 | POST | `/auth/login` | Login (email + password) |
 | POST | `/auth/refresh` | Refresh access token |
 | POST | `/auth/logout` | Logout (invalidate session) | 
+ 
