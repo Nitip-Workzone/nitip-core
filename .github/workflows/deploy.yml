@@ -41,8 +41,29 @@ jobs:
       - name: Run Database Migrations
         run: |
           # SECURITY: migrate binary now uses SafeDSN (password redacted) — no leak
-          # Use --no-deps to avoid starting app
-          docker compose run --rm app /app/migrate up
+          # .env is injected via env_file as env vars, not as file inside container, so "file not found" log is OK (now silenced in prod)
+          docker compose up -d postgres redis
+          echo "Waiting for postgres healthy..."
+          # Use DB_USER from .env or fallback postgres
+          DB_USER_ENV=$(grep -E '^DB_USER=' .env | cut -d'=' -f2- | tr -d '\r\n"' | xargs)
+          DB_NAME_ENV=$(grep -E '^DB_NAME=' .env | cut -d'=' -f2- | tr -d '\r\n"' | xargs)
+          if [ -z "$DB_USER_ENV" ]; then DB_USER_ENV=postgres; fi
+          if [ -z "$DB_NAME_ENV" ]; then DB_NAME_ENV=nitip; fi
+          timeout 60 bash -c "until docker compose exec -T postgres pg_isready -U $DB_USER_ENV -d $DB_NAME_ENV; do sleep 2; done" || {
+            echo "Postgres not healthy, trying with postgres user fallback..."
+            timeout 60 bash -c 'until docker compose exec -T postgres pg_isready -U postgres -d nitip; do sleep 2; done' || true
+          }
+          # If password auth fails, it means DB volume has old password — need to sync
+          echo "Attempting migration (safe DSN redacted)..."
+          if ! docker compose run --rm app /app/migrate up; then
+            echo "Migration failed, checking if password mismatch (common when changing DB_PASSWORD in .env without ALTER USER)..."
+            echo "Attempting to fix: if old volume has password 'postgres', try updating postgres user password to match .env"
+            # Try to connect with POSTGRES_PASSWORD env from compose file
+            # If you changed DB_PASSWORD in .env secrets but not in DB, you must ALTER USER manually:
+            # docker compose exec postgres psql -U postgres -d $DB_NAME_ENV -c "ALTER USER \"$DB_USER_ENV\" WITH PASSWORD 'NEW_PASS';"
+            echo "Hint: SSH to prod and run: docker compose exec postgres psql -U postgres -c \"ALTER USER \\\"$DB_USER_ENV\\\" WITH PASSWORD 'your_new_password';\""
+            exit 1
+          fi
 
       - name: Deploy Application
         run: |

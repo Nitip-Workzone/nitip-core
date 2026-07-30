@@ -70,7 +70,12 @@ var App *Config
 
 func Load() *Config {
 	if err := godotenv.Load(); err != nil {
-		log.Println("[config] .env file not found, using environment variables")
+		// In production (docker), .env is injected via env_file: .env as env vars, not as file inside container
+		// So file not found is expected in container and should not log as warning in prod to avoid confusion in GitHub Actions
+		// Only log in development
+		if os.Getenv("APP_ENV") == "" || os.Getenv("APP_ENV") == "development" {
+			log.Println("[config] .env file not found, using environment variables")
+		}
 	}
 
 	redisDB, _ := strconv.Atoi(getEnv("REDIS_DB", "0"))
