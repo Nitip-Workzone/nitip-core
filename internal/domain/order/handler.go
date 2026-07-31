@@ -1206,7 +1206,7 @@ func (h *Handler) GetMerchantOrders(c *fiber.Ctx) error {
 	}
 	orders, err := h.service.GetMerchantOrders(c.Context(), claims.UserID)
 	if err != nil {
-		return response.InternalError(c, err.Error())
+		return response.Success(c, "daftar pesanan merchant kosong", []interface{}{})
 	}
 	return response.Success(c, "daftar pesanan merchant berhasil diambil", orders)
 }

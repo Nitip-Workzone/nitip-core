@@ -248,7 +248,7 @@ func (h *Handler) ListMenuMerchant(c *fiber.Ctx) error {
 	}
 	m, err := h.service.GetMerchantByOwnerID(c.Context(), claims.UserID)
 	if err != nil {
-		return response.NotFound(c, "profil merchant tidak ditemukan")
+		return response.Success(c, "profil merchant belum dikonfigurasi", []interface{}{})
 	}
 
 	menus, err := h.service.ListMenusByMerchantID(c.Context(), m.ID, false)
