@@ -22,6 +22,7 @@ import (
 	notificationDomain "github.com/codecoffy/nitip-core/internal/domain/notification"
 	"github.com/codecoffy/nitip-core/internal/domain/user"
 	"github.com/codecoffy/nitip-core/internal/notification"
+	"github.com/codecoffy/nitip-core/internal/utils"
 	"github.com/google/uuid"
 	"github.com/midtrans/midtrans-go"
 	"github.com/midtrans/midtrans-go/coreapi"
@@ -46,7 +47,7 @@ type Service interface {
 
 	TopUp(ctx context.Context, userID uuid.UUID, amount float64, reference string) (*WalletTransaction, error)
 	InitiateTopUp(ctx context.Context, userID uuid.UUID, amount float64) (*WalletTransaction, error)
-	FinalizeTopUp(ctx context.Context, reference string) (*WalletTransaction, error)
+	FinalizeTopUp(ctx context.Context, reference string, notificationID string) (*WalletTransaction, error)
 	GetWithdrawalChannels(ctx context.Context) ([]WithdrawalChannel, error)
 	InquiryAccount(ctx context.Context, req InquiryAccountRequest) (*InquiryAccountResponse, error)
 	RequestWithdrawal(ctx context.Context, userID uuid.UUID, amount float64, channelID *uuid.UUID, pin string, destMetadata map[string]interface{}) (*WalletTransaction, error)
@@ -160,110 +161,122 @@ func (s *service) InitiateTopUp(ctx context.Context, userID uuid.UUID, amount fl
 	grossAmt := math.Ceil(amount / 0.993)
 	pgFee := grossAmt - amount
 
-	if config.App.MidtransServerKey != "" && !config.App.UseMockPayment {
-		reference = "TOPUP-" + uuid.New().String()[:8]
+	if config.App.UsePaymentGateway {
+		if config.App.MidtransServerKey != "" && !config.App.UseMockPayment {
+			reference = "TOPUP-" + uuid.New().String()[:8]
 
-		// Get user info for Midtrans payload
-		userObj, err := s.userSvc.GetByID(ctx, userID, userID)
-		var userEmail string
-		var userName string
-		if err == nil && userObj != nil {
-			userEmail = userObj.Email
-			userName = userObj.Name
-		}
-
-		midtransEnv := midtrans.Sandbox
-		if config.App.MidtransIsProduction {
-			midtransEnv = midtrans.Production
-		}
-
-		var client coreapi.Client
-		client.New(config.App.MidtransServerKey, midtransEnv)
-
-		req := &coreapi.ChargeReq{
-			PaymentType: coreapi.PaymentTypeQris,
-			TransactionDetails: midtrans.TransactionDetails{
-				OrderID:  reference,
-				GrossAmt: int64(grossAmt),
-			},
-			CustomerDetails: &midtrans.CustomerDetails{
-				FName: userName,
-				Email: userEmail,
-			},
-			Qris: &coreapi.QrisDetails{
-				Acquirer: "gopay",
-			},
-		}
-
-		reqJSON, _ := json.Marshal(req)
-		log.Printf("[MIDTRANS-CHARGE-REQUEST] Payload: %s", string(reqJSON))
-		chargeResp, midtransErr := client.ChargeTransaction(req)
-		if chargeResp != nil {
-			respJSON, _ := json.Marshal(chargeResp)
-			log.Printf("[MIDTRANS-CHARGE-RESPONSE] Body: %s", string(respJSON))
-		}
-		if !isMidtransErrorNil(midtransErr) {
-			log.Printf("[MIDTRANS-CHARGE-ERROR] StatusCode: %d, Message: %s", midtransErr.StatusCode, midtransErr.Message)
-			if midtransErr.StatusCode == 402 {
-				return nil, errors.New("saluran pembayaran GoPay belum diaktifkan pada akun Midtrans Sandbox Anda, silakan aktifkan terlebih dahulu di dashboard Midtrans")
+			// Get user info for Midtrans payload
+			userObj, err := s.userSvc.GetByID(ctx, userID, userID)
+			var userEmail string
+			var userName string
+			if err == nil && userObj != nil {
+				userEmail = userObj.Email
+				userName = userObj.Name
 			}
-			return nil, errors.New("gagal membuat kode pembayaran GoPay/QRIS, silakan coba lagi beberapa saat lagi")
-		}
 
-		qrString = chargeResp.QRString
-		for _, action := range chargeResp.Actions {
-			switch action.Name {
-			case "generate-qr-code":
-				if qrString == "" {
-					qrString = action.URL
+			midtransEnv := midtrans.Sandbox
+			if config.App.MidtransIsProduction {
+				midtransEnv = midtrans.Production
+			}
+
+			var client coreapi.Client
+			client.New(config.App.MidtransServerKey, midtransEnv)
+
+			req := &coreapi.ChargeReq{
+				PaymentType: coreapi.PaymentTypeQris,
+				TransactionDetails: midtrans.TransactionDetails{
+					OrderID:  reference,
+					GrossAmt: int64(grossAmt),
+				},
+				CustomerDetails: &midtrans.CustomerDetails{
+					FName: userName,
+					Email: userEmail,
+				},
+				Qris: &coreapi.QrisDetails{
+					Acquirer: "gopay",
+				},
+			}
+
+			reqJSON, _ := json.Marshal(req)
+			log.Printf("[MIDTRANS-CHARGE-REQUEST] Payload: %s", string(reqJSON))
+			chargeResp, midtransErr := client.ChargeTransaction(req)
+			if chargeResp != nil {
+				respJSON, _ := json.Marshal(chargeResp)
+				log.Printf("[MIDTRANS-CHARGE-RESPONSE] Body: %s", string(respJSON))
+			}
+			if !isMidtransErrorNil(midtransErr) {
+				log.Printf("[MIDTRANS-CHARGE-ERROR] StatusCode: %d, Message: %s", midtransErr.StatusCode, midtransErr.Message)
+				if midtransErr.StatusCode == 402 {
+					return nil, errors.New("saluran pembayaran GoPay belum diaktifkan pada akun Midtrans Sandbox Anda, silakan aktifkan terlebih dahulu di dashboard Midtrans")
 				}
-			case "deeplink-redirect":
-				deeplinkString = action.URL
+				return nil, errors.New("gagal membuat kode pembayaran GoPay/QRIS, silakan coba lagi beberapa saat lagi")
 			}
-		}
-		if qrString == "" && deeplinkString == "" && len(chargeResp.Actions) > 0 {
-			qrString = chargeResp.Actions[0].URL
+
+			qrString = chargeResp.QRString
+			for _, action := range chargeResp.Actions {
+				switch action.Name {
+				case "generate-qr-code":
+					if qrString == "" {
+						qrString = action.URL
+					}
+				case "deeplink-redirect":
+					deeplinkString = action.URL
+				}
+			}
+			if qrString == "" && deeplinkString == "" && len(chargeResp.Actions) > 0 {
+				qrString = chargeResp.Actions[0].URL
+			}
+		} else {
+			// FALLBACK to mock-qris
+			reference = "MOCK-" + uuid.New().String()[:8]
+
+			payload := map[string]interface{}{
+				"reference_id": reference,
+				"amount":       int64(grossAmt),
+			}
+			body, _ := json.Marshal(payload)
+
+			pgUrl := os.Getenv("PAYMENT_GATEWAY_URL")
+			if pgUrl == "" {
+				pgUrl = "http://localhost:4000"
+			}
+
+			log.Printf("[MOCK-QRIS-CHARGE-REQUEST] URL: %s/api/qris/generate, Payload: %s", pgUrl, string(body))
+			httpClient := &http.Client{Timeout: 10 * time.Second}
+			resp, err := httpClient.Post(fmt.Sprintf("%s/api/qris/generate", pgUrl), "application/json", bytes.NewBuffer(body))
+			if err != nil {
+				log.Printf("[MOCK-QRIS-CHARGE-ERROR] Connection error: %v", err)
+				return nil, fmt.Errorf("gagal menghubungi payment gateway: %v", err)
+			}
+			defer func() { _ = resp.Body.Close() }()
+
+			// P0 FIX: LimitReader 1MB to prevent OOM if PG returns huge body
+			respBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+			log.Printf("[MOCK-QRIS-CHARGE-RESPONSE] Status: %s, Body: %s", resp.Status, string(respBytes))
+
+			var qrisResp struct {
+				Status     string `json:"status"`
+				TrxID      string `json:"trx_id"`
+				QrisString string `json:"qris_string"`
+			}
+			if err := json.Unmarshal(respBytes, &qrisResp); err != nil {
+				log.Printf("[MOCK-QRIS-CHARGE-ERROR] Parse error: %v", err)
+				return nil, fmt.Errorf("gagal membaca respon payment gateway")
+			}
+
+			reference = qrisResp.TrxID
+			qrString = qrisResp.QrisString
 		}
 	} else {
-		// FALLBACK to mock-qris
-		reference = "MOCK-" + uuid.New().String()[:8]
-
-		payload := map[string]interface{}{
-			"reference_id": reference,
-			"amount":       int64(grossAmt),
-		}
-		body, _ := json.Marshal(payload)
-
-		pgUrl := os.Getenv("PAYMENT_GATEWAY_URL")
-		if pgUrl == "" {
-			pgUrl = "http://localhost:4000"
-		}
-
-		log.Printf("[MOCK-QRIS-CHARGE-REQUEST] URL: %s/api/qris/generate, Payload: %s", pgUrl, string(body))
-		httpClient := &http.Client{Timeout: 10 * time.Second}
-		resp, err := httpClient.Post(fmt.Sprintf("%s/api/qris/generate", pgUrl), "application/json", bytes.NewBuffer(body))
+		// Generate dynamic QRIS locally from static template
+		reference = "TOPUP-QRIS-" + uuid.New().String()[:8]
+		var err error
+		qrString, err = utils.ConvertStaticToDynamicQRIS(config.App.StaticQrisTemplate, grossAmt)
 		if err != nil {
-			log.Printf("[MOCK-QRIS-CHARGE-ERROR] Connection error: %v", err)
-			return nil, fmt.Errorf("gagal menghubungi payment gateway: %v", err)
+			log.Printf("[LOCAL-QRIS-TOPUP-ERROR] Failed to convert static QRIS: %v", err)
+			return nil, fmt.Errorf("gagal membuat kode pembayaran QRIS secara mandiri: %v", err)
 		}
-		defer func() { _ = resp.Body.Close() }()
-
-		// P0 FIX: LimitReader 1MB to prevent OOM if PG returns huge body
-		respBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-		log.Printf("[MOCK-QRIS-CHARGE-RESPONSE] Status: %s, Body: %s", resp.Status, string(respBytes))
-
-		var qrisResp struct {
-			Status     string `json:"status"`
-			TrxID      string `json:"trx_id"`
-			QrisString string `json:"qris_string"`
-		}
-		if err := json.Unmarshal(respBytes, &qrisResp); err != nil {
-			log.Printf("[MOCK-QRIS-CHARGE-ERROR] Parse error: %v", err)
-			return nil, fmt.Errorf("gagal membaca respon payment gateway")
-		}
-
-		reference = qrisResp.TrxID
-		qrString = qrisResp.QrisString
+		log.Printf("[LOCAL-QRIS-TOPUP] Generated dynamic QRIS locally for wallet top-up, Ref: %s, GrossAmt: %f", reference, grossAmt)
 	}
 
 	wtx := &WalletTransaction{
@@ -285,7 +298,7 @@ func (s *service) InitiateTopUp(ctx context.Context, userID uuid.UUID, amount fl
 	return wtx, nil
 }
 
-func (s *service) FinalizeTopUp(ctx context.Context, reference string) (*WalletTransaction, error) {
+func (s *service) FinalizeTopUp(ctx context.Context, reference string, notificationID string) (*WalletTransaction, error) {
 	var wtx *WalletTransaction
 	err := s.repo.RunInTx(ctx, func(ctx context.Context, tx bun.Tx) error {
 		var err error
@@ -301,14 +314,32 @@ func (s *service) FinalizeTopUp(ctx context.Context, reference string) (*WalletT
 			return errors.New("transaksi tidak valid untuk finalisasi atau sudah diproses")
 		}
 
-		// 1. Update status
-		if err := s.repo.UpdateTransactionStatus(ctx, tx, wtx.ID, StatusCompleted); err != nil {
+		// 1. Update status using check-and-set to prevent race conditions (double credit)
+		res, err := tx.NewUpdate().Model((*WalletTransaction)(nil)).
+			Set("status = ?", StatusCompleted).
+			Where("id = ?", wtx.ID).
+			Where("status = ?", StatusPending).
+			Exec(ctx)
+		if err != nil {
 			return err
+		}
+		rowsAffected, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if rowsAffected == 0 {
+			return errors.New("transaksi top-up sudah diproses atau tidak valid")
 		}
 
 		// 2. Update balance
 		if err := s.repo.UpdateWalletBalance(ctx, tx, wtx.WalletID, wtx.Amount); err != nil {
 			return err
+		}
+
+		// 3. Register notification_id in Redis if provided to prevent future listener duplication
+		if notificationID != "" && s.redis != nil {
+			cacheKey := fmt.Sprintf("payment_listener:processed:%s", notificationID)
+			_ = s.redis.Set(ctx, cacheKey, "processed", 24*time.Hour)
 		}
 
 		return nil

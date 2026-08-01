@@ -51,6 +51,8 @@ type Config struct {
 	MidtransClientKey    string
 	MidtransIsProduction bool
 	UseMockPayment       bool
+	UsePaymentGateway    bool
+	StaticQrisTemplate   string
 
 	// Webhook Security
 	WebhookCallbackToken string
@@ -121,6 +123,8 @@ func Load() *Config {
 		MidtransClientKey:    getEnv("MIDTRANS_CLIENT_KEY", ""),
 		MidtransIsProduction: getEnv("MIDTRANS_IS_PRODUCTION", "false") == "true",
 		UseMockPayment:       getEnv("USE_MOCK_PAYMENT", "true") == "true",
+		UsePaymentGateway:    getEnv("USE_PAYMENT_GATEWAY", "false") == "true",
+		StaticQrisTemplate:   getEnv("STATIC_QRIS_TEMPLATE", "00020101021126690017ID.CO.MANDIRI.WWW01189360000800000000000215ID10265565072790303A015204581253033605802ID5912KEDAI KRIMMI6007JAKARTA6105123456304F2E7"),
 
 		// Webhook Security
 		WebhookCallbackToken: getEnv("WEBHOOK_CALLBACK_TOKEN", ""),

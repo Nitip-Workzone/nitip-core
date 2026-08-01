@@ -504,13 +504,20 @@ func (h *Handler) Stream(c *fiber.Ctx) error {
 	return nil
 }
 
+type AdminPayRequest struct {
+	NotificationID string `json:"notification_id"`
+	Reason         string `json:"reason"`
+}
+
 // PayStub godoc
-// @Summary      Simulate order payment
-// @Description  Stub endpoint to simulate payment Gateway callback setting order to escrow
+// @Summary      Simulate order payment / Confirm payment manually
+// @Description  Allows admin to mark order as paid manually, optionally registering notification_id to prevent duplicate webhook processing
 // @Tags         [Admin] Order Management
+// @Accept       json
 // @Produce      json
 // @Security     BearerAuth
 // @Param        id   path  string  true  "Order UUID"  Format(uuid)
+// @Param        body body  AdminPayRequest false "Payment details"
 // @Success      200   {object}  response.envelope
 // @Router       /admin/orders/{id}/pay [post]
 func (h *Handler) PayStub(c *fiber.Ctx) error {
@@ -519,14 +526,30 @@ func (h *Handler) PayStub(c *fiber.Ctx) error {
 		return response.BadRequest(c, "ID pesanan tidak valid")
 	}
 
-	// For MVP, literally just call service to update payment status to escrow/paid
-	// This would normally be executed by a Midtrans webhook handler
-	err = h.service.UpdatePaymentStatus(c.Context(), id, PaymentEscrow)
-	if err != nil {
-		return response.InternalError(c, "gagal memperbarui pembayaran")
+	var req AdminPayRequest
+	_ = c.BodyParser(&req) // parse optional body
+
+	if req.NotificationID != "" && h.redis != nil {
+		cacheKey := fmt.Sprintf("payment_listener:processed:%s", req.NotificationID)
+		exists, err := h.redis.Exists(c.Context(), cacheKey)
+		if err == nil && exists {
+			return response.BadRequest(c, "notifikasi/referensi pembayaran ini sudah pernah diproses")
+		}
 	}
 
-	return response.Success(c, "simulasi pembayaran berhasil", nil)
+	// Call service to update payment status to escrow/paid
+	err = h.service.UpdatePaymentStatus(c.Context(), id, PaymentEscrow)
+	if err != nil {
+		return response.BadRequest(c, fmt.Sprintf("gagal memperbarui pembayaran: %v", err))
+	}
+
+	// Register notification_id in Redis if provided
+	if req.NotificationID != "" && h.redis != nil {
+		cacheKey := fmt.Sprintf("payment_listener:processed:%s", req.NotificationID)
+		_ = h.redis.Set(c.Context(), cacheKey, "processed", 24*time.Hour)
+	}
+
+	return response.Success(c, "konfirmasi pembayaran manual berhasil", nil)
 }
 
 // AdminListOrders godoc

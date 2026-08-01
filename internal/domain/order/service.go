@@ -21,6 +21,7 @@ import (
 
 	"github.com/codecoffy/nitip-core/config"
 	"github.com/codecoffy/nitip-core/internal/cache"
+	"github.com/codecoffy/nitip-core/internal/utils"
 	"github.com/codecoffy/nitip-core/internal/domain/audit"
 	systemconfig "github.com/codecoffy/nitip-core/internal/domain/config"
 	"github.com/codecoffy/nitip-core/internal/domain/merchant"
@@ -2488,102 +2489,113 @@ func (s *service) generateOrderQRIS(ctx context.Context, order *Order) (string, 
 	order.PGFee = pgFee
 	order.TotalPayment = grossAmt
 
-	if config.App.MidtransServerKey != "" && !config.App.UseMockPayment {
-		userObj, err := s.userSvc.GetByID(ctx, order.RequesterID, order.RequesterID)
-		var userEmail string
-		var userName string
-		if err == nil && userObj != nil {
-			userEmail = userObj.Email
-			userName = userObj.Name
-		}
+	if config.App.UsePaymentGateway {
+		if config.App.MidtransServerKey != "" && !config.App.UseMockPayment {
+			userObj, err := s.userSvc.GetByID(ctx, order.RequesterID, order.RequesterID)
+			var userEmail string
+			var userName string
+			if err == nil && userObj != nil {
+				userEmail = userObj.Email
+				userName = userObj.Name
+			}
 
-		midtransEnv := midtrans.Sandbox
-		if config.App.MidtransIsProduction {
-			midtransEnv = midtrans.Production
-		}
+			midtransEnv := midtrans.Sandbox
+			if config.App.MidtransIsProduction {
+				midtransEnv = midtrans.Production
+			}
 
-		var client coreapi.Client
-		client.New(config.App.MidtransServerKey, midtransEnv)
+			var client coreapi.Client
+			client.New(config.App.MidtransServerKey, midtransEnv)
 
-		req := &coreapi.ChargeReq{
-			PaymentType: coreapi.PaymentTypeQris,
-			TransactionDetails: midtrans.TransactionDetails{
-				OrderID:  reference,
-				GrossAmt: int64(grossAmt),
-			},
-			CustomerDetails: &midtrans.CustomerDetails{
-				FName: userName,
-				Email: userEmail,
-			},
-			Qris: &coreapi.QrisDetails{
-				Acquirer: "gopay",
-			},
-		}
+			req := &coreapi.ChargeReq{
+				PaymentType: coreapi.PaymentTypeQris,
+				TransactionDetails: midtrans.TransactionDetails{
+					OrderID:  reference,
+					GrossAmt: int64(grossAmt),
+				},
+				CustomerDetails: &midtrans.CustomerDetails{
+					FName: userName,
+					Email: userEmail,
+				},
+				Qris: &coreapi.QrisDetails{
+					Acquirer: "gopay",
+				},
+			}
 
-		reqJSON, _ := json.Marshal(req)
-		log.Printf("[MIDTRANS-ORDER-CHARGE] Order: %s | Payload: %s", order.ID.String(), string(reqJSON))
-		chargeResp, midtransErr := client.ChargeTransaction(req)
-		if chargeResp != nil {
-			log.Printf("[MIDTRANS-ORDER-RESPONSE] Order: %s, Status: %s", order.ID.String(), chargeResp.TransactionStatus)
-		}
-		if midtransErr != nil {
-			log.Printf("[MIDTRANS-ORDER-ERROR] Order: %s, StatusCode: %d, Message: %s", order.ID.String(), midtransErr.StatusCode, midtransErr.Message)
-			return "", errors.New("gagal membuat kode pembayaran GoPay/QRIS dari Midtrans")
-		}
+			reqJSON, _ := json.Marshal(req)
+			log.Printf("[MIDTRANS-ORDER-CHARGE] Order: %s | Payload: %s", order.ID.String(), string(reqJSON))
+			chargeResp, midtransErr := client.ChargeTransaction(req)
+			if chargeResp != nil {
+				log.Printf("[MIDTRANS-ORDER-RESPONSE] Order: %s, Status: %s", order.ID.String(), chargeResp.TransactionStatus)
+			}
+			if midtransErr != nil {
+				log.Printf("[MIDTRANS-ORDER-ERROR] Order: %s, StatusCode: %d, Message: %s", order.ID.String(), midtransErr.StatusCode, midtransErr.Message)
+				return "", errors.New("gagal membuat kode pembayaran GoPay/QRIS dari Midtrans")
+			}
 
-		qrString = chargeResp.QRString
-		for _, action := range chargeResp.Actions {
-			switch action.Name {
-			case "generate-qr-code":
-				if qrString == "" {
-					qrString = action.URL
+			qrString = chargeResp.QRString
+			for _, action := range chargeResp.Actions {
+				switch action.Name {
+				case "generate-qr-code":
+					if qrString == "" {
+						qrString = action.URL
+					}
 				}
 			}
-		}
-		if qrString == "" && len(chargeResp.Actions) > 0 {
-			qrString = chargeResp.Actions[0].URL
+			if qrString == "" && len(chargeResp.Actions) > 0 {
+				qrString = chargeResp.Actions[0].URL
+			}
+		} else {
+			// Fallback to mock-qris
+			payload := map[string]interface{}{
+				"reference_id": reference,
+				"amount":       int64(grossAmt),
+			}
+			body, _ := json.Marshal(payload)
+
+			pgUrl := os.Getenv("PAYMENT_GATEWAY_URL")
+			if pgUrl == "" {
+				pgUrl = "http://localhost:4000"
+			}
+
+			log.Printf("[MOCK-QRIS-ORDER] Order: %s, GrossAmt: %d", order.ID.String(), int64(grossAmt))
+			// P0 #10: http client timeout to prevent hang holding Fiber worker 5m
+			httpClient := &http.Client{Timeout: 10 * time.Second}
+			resp, err := httpClient.Post(fmt.Sprintf("%s/api/qris/generate", pgUrl), "application/json", bytes.NewBuffer(body))
+			if err != nil {
+				log.Printf("[MOCK-QRIS-ORDER-ERROR] Connection error: %v", err)
+				return "", fmt.Errorf("gagal menghubungi payment gateway: %v", err)
+			}
+			defer func() { _ = resp.Body.Close() }()
+
+			respBytes, err := io.ReadAll(resp.Body)
+			if err != nil {
+				log.Printf("[MOCK-QRIS-ORDER-ERROR] Read error: %v", err)
+				return "", fmt.Errorf("gagal membaca respon payment gateway")
+			}
+			log.Printf("[MOCK-QRIS-ORDER-RESPONSE] Order: %s, Status: %s", order.ID.String(), resp.Status)
+
+			var qrisResp struct {
+				Status     string `json:"status"`
+				TrxID      string `json:"trx_id"`
+				QrisString string `json:"qris_string"`
+			}
+			if err := json.Unmarshal(respBytes, &qrisResp); err != nil {
+				log.Printf("[MOCK-QRIS-ORDER-ERROR] Parse error: %v", err)
+				return "", fmt.Errorf("gagal membaca respon payment gateway")
+			}
+
+			qrString = qrisResp.QrisString
 		}
 	} else {
-		// Fallback to mock-qris
-		payload := map[string]interface{}{
-			"reference_id": reference,
-			"amount":       int64(grossAmt),
-		}
-		body, _ := json.Marshal(payload)
-
-		pgUrl := os.Getenv("PAYMENT_GATEWAY_URL")
-		if pgUrl == "" {
-			pgUrl = "http://localhost:4000"
-		}
-
-		log.Printf("[MOCK-QRIS-ORDER] Order: %s, GrossAmt: %d", order.ID.String(), int64(grossAmt))
-		// P0 #10: http client timeout to prevent hang holding Fiber worker 5m
-		httpClient := &http.Client{Timeout: 10 * time.Second}
-		resp, err := httpClient.Post(fmt.Sprintf("%s/api/qris/generate", pgUrl), "application/json", bytes.NewBuffer(body))
+		// Generate dynamic QRIS locally from static template
+		var err error
+		qrString, err = utils.ConvertStaticToDynamicQRIS(config.App.StaticQrisTemplate, grossAmt)
 		if err != nil {
-			log.Printf("[MOCK-QRIS-ORDER-ERROR] Connection error: %v", err)
-			return "", fmt.Errorf("gagal menghubungi payment gateway: %v", err)
+			log.Printf("[LOCAL-QRIS-ORDER-ERROR] Failed to convert static QRIS: %v", err)
+			return "", fmt.Errorf("gagal membuat kode pembayaran QRIS secara mandiri: %v", err)
 		}
-		defer func() { _ = resp.Body.Close() }()
-
-		respBytes, err := io.ReadAll(resp.Body)
-		if err != nil {
-			log.Printf("[MOCK-QRIS-ORDER-ERROR] Read error: %v", err)
-			return "", fmt.Errorf("gagal membaca respon payment gateway")
-		}
-		log.Printf("[MOCK-QRIS-ORDER-RESPONSE] Order: %s, Status: %s", order.ID.String(), resp.Status)
-
-		var qrisResp struct {
-			Status     string `json:"status"`
-			TrxID      string `json:"trx_id"`
-			QrisString string `json:"qris_string"`
-		}
-		if err := json.Unmarshal(respBytes, &qrisResp); err != nil {
-			log.Printf("[MOCK-QRIS-ORDER-ERROR] Parse error: %v", err)
-			return "", fmt.Errorf("gagal membaca respon payment gateway")
-		}
-
-		qrString = qrisResp.QrisString
+		log.Printf("[LOCAL-QRIS-ORDER] Generated dynamic QRIS locally for order: %s, GrossAmt: %f", order.ID.String(), grossAmt)
 	}
 
 	return qrString, nil
