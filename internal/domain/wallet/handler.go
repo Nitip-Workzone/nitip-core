@@ -15,6 +15,7 @@ import (
 
 	"github.com/codecoffy/nitip-core/config"
 	"github.com/codecoffy/nitip-core/internal/cache"
+	"github.com/codecoffy/nitip-core/internal/domain/audit"
 	"github.com/codecoffy/nitip-core/internal/domain/auth"
 	"github.com/codecoffy/nitip-core/internal/domain/user"
 	"github.com/codecoffy/nitip-core/internal/middleware"
@@ -217,6 +218,7 @@ func (h *Handler) SimulateSuccess(c *fiber.Ctx) error {
 
 type AdminFinalizeTopUpRequest struct {
 	NotificationID string `json:"notification_id"`
+	Reason         string `json:"reason"`
 }
 
 // AdminFinalizeTopUp godoc
@@ -254,11 +256,25 @@ func (h *Handler) AdminFinalizeTopUp(c *fiber.Ctx) error {
 	}
 
 	claims := jwt.GetClaims(c)
-	var actorEmail string
+	actorEmail := "Unknown Admin"
+	var actorID *uuid.UUID
 	if claims != nil {
 		actorEmail = claims.Email
+		actorID = &claims.UserID
 	}
-	log.Printf("[ADMIN_ACTION] Topup %s manually finalized by Admin %s", reference, actorEmail)
+	log.Printf("[ADMIN_ACTION] Topup %s manually finalized by Admin %s with reason/remark: %s", reference, actorEmail, req.Reason)
+
+	// Write to audit_logs
+	auditLog := &audit.AuditLog{
+		UserID:     actorID,
+		Action:     "MANUAL_TOPUP_FINALIZE",
+		Resource:   "topup",
+		ResourceID: reference,
+		NewValues:  map[string]interface{}{"status": "completed", "notification_id": req.NotificationID, "reason": req.Reason},
+		IPAddress:  c.IP(),
+		UserAgent:  c.Get("User-Agent"),
+	}
+	_, _ = h.db.NewInsert().Model(auditLog).Exec(c.Context())
 
 	return response.Success(c, "top-up berhasil difinalisasi secara manual", wtx)
 }
@@ -305,11 +321,18 @@ func (h *Handler) AdminListTopUps(c *fiber.Ctx) error {
 // @Param        reference  path  string  true  "Transaction reference code"
 // @Success      200 {object}  response.envelope
 // @Router       /admin/wallets/topup/{reference}/cancel [post]
+type AdminCancelTopUpRequest struct {
+	Reason string `json:"reason"`
+}
+
 func (h *Handler) AdminCancelTopUp(c *fiber.Ctx) error {
 	reference := c.Params("reference")
 	if reference == "" {
 		return response.BadRequest(c, "referensi tidak valid")
 	}
+
+	var req AdminCancelTopUpRequest
+	_ = c.BodyParser(&req)
 
 	var wtx WalletTransaction
 	err := h.db.NewSelect().
@@ -330,7 +353,6 @@ func (h *Handler) AdminCancelTopUp(c *fiber.Ctx) error {
 	_, err = h.db.NewUpdate().
 		Model(&wtx).
 		Set("status = ?", StatusFailed).
-		Set("updated_at = ?", time.Now()).
 		Where("id = ?", wtx.ID).
 		Exec(c.Context())
 	if err != nil {
@@ -340,10 +362,24 @@ func (h *Handler) AdminCancelTopUp(c *fiber.Ctx) error {
 
 	claims := jwt.GetClaims(c)
 	actorEmail := "Unknown Admin"
+	var actorID *uuid.UUID
 	if claims != nil {
 		actorEmail = claims.Email
+		actorID = &claims.UserID
 	}
-	log.Printf("[ADMIN_ACTION] Topup %s manually cancelled/failed by Admin %s", reference, actorEmail)
+	log.Printf("[ADMIN_ACTION] Topup %s manually cancelled/failed by Admin %s with reason/remark: %s", reference, actorEmail, req.Reason)
+
+	// Write to audit_logs
+	auditLog := &audit.AuditLog{
+		UserID:     actorID,
+		Action:     "MANUAL_TOPUP_CANCEL",
+		Resource:   "topup",
+		ResourceID: reference,
+		NewValues:  map[string]interface{}{"status": "failed", "reason": req.Reason},
+		IPAddress:  c.IP(),
+		UserAgent:  c.Get("User-Agent"),
+	}
+	_, _ = h.db.NewInsert().Model(auditLog).Exec(c.Context())
 
 	return response.Success(c, "transaksi top-up berhasil dibatalkan", nil)
 }

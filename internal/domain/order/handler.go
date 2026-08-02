@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/codecoffy/nitip-core/internal/cache"
+	"github.com/codecoffy/nitip-core/internal/domain/audit"
 	"github.com/codecoffy/nitip-core/internal/domain/user"
 	"github.com/codecoffy/nitip-core/internal/middleware"
 	"github.com/codecoffy/nitip-core/internal/realtime"
@@ -549,6 +550,27 @@ func (h *Handler) PayStub(c *fiber.Ctx) error {
 		_ = h.redis.Set(c.Context(), cacheKey, "processed", 24*time.Hour)
 	}
 
+	claims := jwt.GetClaims(c)
+	actorEmail := "Unknown Admin"
+	var actorID *uuid.UUID
+	if claims != nil {
+		actorEmail = claims.Email
+		actorID = &claims.UserID
+	}
+	log.Printf("[ADMIN_ACTION] Order %s manually paid by Admin %s with reason/remark: %s", id, actorEmail, req.Reason)
+
+	// Write to audit_logs
+	auditLog := &audit.AuditLog{
+		UserID:     actorID,
+		Action:     "MANUAL_ORDER_PAY",
+		Resource:   "order",
+		ResourceID: id.String(),
+		NewValues:  map[string]interface{}{"status": "paid", "notification_id": req.NotificationID, "reason": req.Reason},
+		IPAddress:  c.IP(),
+		UserAgent:  c.Get("User-Agent"),
+	}
+	_, _ = h.db.NewInsert().Model(auditLog).Exec(c.Context())
+
 	return response.Success(c, "konfirmasi pembayaran manual berhasil", nil)
 }
 
@@ -706,21 +728,43 @@ func (h *Handler) AdminResolveDispute(c *fiber.Ctx) error {
 // @Success      200  {object}  response.envelope
 // @Failure      400  {object}  response.envelope
 // @Router       /admin/orders/{id}/cancel [post]
+type AdminCancelOrderRequest struct {
+	Reason string `json:"reason"`
+}
+
 func (h *Handler) AdminCancelOrder(c *fiber.Ctx) error {
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {
 		return response.BadRequest(c, "ID pesanan tidak valid")
 	}
 
+	var req AdminCancelOrderRequest
+	_ = c.BodyParser(&req)
+
 	if err := h.service.ForceCancelOrder(c.Context(), id); err != nil {
 		return response.BadRequest(c, err.Error())
 	}
 
 	claims := jwt.GetClaims(c)
-	if claims == nil {
-		return response.Unauthorized(c, "sesi tidak valid")
+	actorEmail := "Unknown Admin"
+	var actorID *uuid.UUID
+	if claims != nil {
+		actorEmail = claims.Email
+		actorID = &claims.UserID
 	}
-	log.Printf("[ADMIN_ACTION] Order %s forcefully cancelled by Admin %s", id, claims.Email)
+	log.Printf("[ADMIN_ACTION] Order %s forcefully cancelled by Admin %s with reason/remark: %s", id, actorEmail, req.Reason)
+
+	// Write to audit_logs
+	auditLog := &audit.AuditLog{
+		UserID:     actorID,
+		Action:     audit.ActionOrderCancel,
+		Resource:   "order",
+		ResourceID: id.String(),
+		NewValues:  map[string]interface{}{"status": "cancelled", "reason": req.Reason},
+		IPAddress:  c.IP(),
+		UserAgent:  c.Get("User-Agent"),
+	}
+	_, _ = h.db.NewInsert().Model(auditLog).Exec(c.Context())
 
 	return response.Success(c, "pesanan berhasil dibatalkan", nil)
 }
