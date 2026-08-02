@@ -50,8 +50,10 @@ func (h *Handler) RegisterRoutes(router fiber.Router) {
 	admin := router.Group("/admin/wallets", middleware.Protected(h.db, h.redis), middleware.Role(user.RoleAdmin))
 	admin.Get("/system-balance", h.AdminGetSystemBalance)
 	admin.Get("/withdrawals", h.AdminListWithdrawals)
+	admin.Get("/topups", h.AdminListTopUps)
 	admin.Post("/topup/simulate-success", h.SimulateSuccess)
 	admin.Post("/topup/:reference/finalize", h.AdminFinalizeTopUp)
+	admin.Post("/topup/:reference/cancel", h.AdminCancelTopUp)
 	admin.Post("/withdrawals/simulate-success", h.SimulateSuccess) // Also allow admin to simulate
 	admin.Post("/withdrawals/:id/approve", h.AdminApproveWithdrawal)
 
@@ -259,6 +261,87 @@ func (h *Handler) AdminFinalizeTopUp(c *fiber.Ctx) error {
 	log.Printf("[ADMIN_ACTION] Topup %s manually finalized by Admin %s", reference, actorEmail)
 
 	return response.Success(c, "top-up berhasil difinalisasi secara manual", wtx)
+}
+
+// AdminListTopUps godoc
+// @Summary      [ADMIN] List all wallet top-ups
+// @Description  Retrieve all top-up transactions globally
+// @Tags         [Admin] Finance
+// @Produce      json
+// @Security     BearerAuth
+// @Param        status  query   string  false  "Status filter"
+// @Success      200  {object}  response.envelope{data=[]WalletTransaction}
+// @Router       /admin/wallets/topups [get]
+func (h *Handler) AdminListTopUps(c *fiber.Ctx) error {
+	var txs []WalletTransaction
+
+	q := h.db.NewSelect().
+		Model(&txs).
+		Where("type = ?", TypeTopUp)
+
+	status := c.Query("status")
+	if status != "" {
+		q.Where("status = ?", status)
+	}
+
+	err := q.Order("created_at DESC").
+		Limit(100).
+		Scan(c.Context())
+
+	if err != nil {
+		return response.InternalError(c, err.Error())
+	}
+
+	return response.Success(c, "daftar top-up berhasil diambil", txs)
+}
+
+// AdminCancelTopUp godoc
+// @Summary      [ADMIN] Cancel/Fail a pending top-up
+// @Description  Mark a pending top-up transaction as failed
+// @Tags         [Admin] Finance
+// @Produce      json
+// @Security     BearerAuth
+// @Param        reference  path  string  true  "Transaction reference code"
+// @Success      200 {object}  response.envelope
+// @Router       /admin/wallets/topup/{reference}/cancel [post]
+func (h *Handler) AdminCancelTopUp(c *fiber.Ctx) error {
+	reference := c.Params("reference")
+	if reference == "" {
+		return response.BadRequest(c, "referensi tidak valid")
+	}
+
+	var wtx WalletTransaction
+	err := h.db.NewSelect().
+		Model(&wtx).
+		Where("reference = ?", reference).
+		Scan(c.Context())
+	if err != nil {
+		return response.BadRequest(c, "transaksi tidak ditemukan")
+	}
+
+	if wtx.Status != StatusPending {
+		return response.BadRequest(c, "hanya transaksi pending yang dapat dibatalkan")
+	}
+
+	// Update status to failed
+	_, err = h.db.NewUpdate().
+		Model(&wtx).
+		Set("status = ?", StatusFailed).
+		Set("updated_at = ?", time.Now()).
+		Where("id = ?", wtx.ID).
+		Exec(c.Context())
+	if err != nil {
+		return response.InternalError(c, "gagal memperbarui status transaksi")
+	}
+
+	claims := jwt.GetClaims(c)
+	actorEmail := "Unknown Admin"
+	if claims != nil {
+		actorEmail = claims.Email
+	}
+	log.Printf("[ADMIN_ACTION] Topup %s manually cancelled/failed by Admin %s", reference, actorEmail)
+
+	return response.Success(c, "transaksi top-up berhasil dibatalkan", nil)
 }
 
 // GetWithdrawalChannels godoc
