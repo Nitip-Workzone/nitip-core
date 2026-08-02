@@ -289,6 +289,7 @@ func (h *Handler) AdminListTopUps(c *fiber.Ctx) error {
 		Scan(c.Context())
 
 	if err != nil {
+		log.Printf("[ADMIN_ACTION_ERROR] Failed to list topups from DB: %v", err)
 		return response.InternalError(c, err.Error())
 	}
 
@@ -316,10 +317,12 @@ func (h *Handler) AdminCancelTopUp(c *fiber.Ctx) error {
 		Where("reference = ?", reference).
 		Scan(c.Context())
 	if err != nil {
+		log.Printf("[ADMIN_ACTION_ERROR] Cancel topup %s: failed to find transaction in DB: %v", reference, err)
 		return response.BadRequest(c, "transaksi tidak ditemukan")
 	}
 
 	if wtx.Status != StatusPending {
+		log.Printf("[ADMIN_ACTION_ERROR] Cancel topup %s: transaction is in state %s, not pending", reference, wtx.Status)
 		return response.BadRequest(c, "hanya transaksi pending yang dapat dibatalkan")
 	}
 
@@ -331,6 +334,7 @@ func (h *Handler) AdminCancelTopUp(c *fiber.Ctx) error {
 		Where("id = ?", wtx.ID).
 		Exec(c.Context())
 	if err != nil {
+		log.Printf("[ADMIN_ACTION_ERROR] Cancel topup %s: failed to update status to failed in DB: %v", reference, err)
 		return response.InternalError(c, "gagal memperbarui status transaksi")
 	}
 
