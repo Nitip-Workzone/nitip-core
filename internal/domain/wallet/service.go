@@ -821,9 +821,31 @@ func (s *service) ReleaseMerchantEscrow(ctx context.Context, db bun.IDB, runnerI
 		return err
 	}
 
-	// 1. Give Merchant their portion (Food price)
+	// Calculate tiered merchant commission
+	t1Limit, _ := strconv.ParseFloat(s.configSvc.GetValue(ctx, "merchant_fee_tier1_limit", "50000"), 64)
+	t2Limit, _ := strconv.ParseFloat(s.configSvc.GetValue(ctx, "merchant_fee_tier2_limit", "100000"), 64)
+	t1Amount, _ := strconv.ParseFloat(s.configSvc.GetValue(ctx, "merchant_fee_tier1_amount", "1000"), 64)
+	t2Amount, _ := strconv.ParseFloat(s.configSvc.GetValue(ctx, "merchant_fee_tier2_amount", "3000"), 64)
+	t3Amount, _ := strconv.ParseFloat(s.configSvc.GetValue(ctx, "merchant_fee_tier3_amount", "5000"), 64)
+
+	var merchantCommission float64
+	if foodAmount < t1Limit {
+		merchantCommission = t1Amount
+	} else if foodAmount <= t2Limit {
+		merchantCommission = t2Amount
+	} else {
+		merchantCommission = t3Amount
+	}
+
+	if merchantCommission > foodAmount {
+		merchantCommission = foodAmount
+	}
+
+	merchantGets := foodAmount - merchantCommission
+
+	// 1. Give Merchant their portion (Food price minus commission)
 	if foodAmount > 0 {
-		if err := s.repo.UpdateWalletBalance(ctx, db, wMerchant.ID, foodAmount); err != nil {
+		if err := s.repo.UpdateWalletBalance(ctx, db, wMerchant.ID, merchantGets); err != nil {
 			return err
 		}
 		wtxMerchant := &WalletTransaction{
@@ -831,11 +853,30 @@ func (s *service) ReleaseMerchantEscrow(ctx context.Context, db bun.IDB, runnerI
 			WalletID: wMerchant.ID,
 			OrderID:  &orderID,
 			Type:     TypeEscrowRelease,
-			Amount:   foodAmount,
+			Amount:   merchantGets,
 			Status:   StatusCompleted,
 		}
 		if err := s.repo.CreateTransaction(ctx, db, wtxMerchant); err != nil {
 			return err
+		}
+
+		// Record the merchant commission as a separate transaction in System Wallet
+		if merchantCommission > 0 {
+			if err := s.repo.UpdateWalletBalance(ctx, db, sysWID, merchantCommission); err != nil {
+				return err
+			}
+			commissionTx := &WalletTransaction{
+				ID:        uuid.New(),
+				WalletID:  sysWID,
+				OrderID:   &orderID,
+				Type:      TypePlatformFee,
+				Amount:    merchantCommission,
+				Reference: fmt.Sprintf("MERCH-FEE-%s", orderID.String()[:8]),
+				Status:    StatusCompleted,
+			}
+			if err := s.repo.CreateTransaction(ctx, db, commissionTx); err != nil {
+				return err
+			}
 		}
 	}
 
