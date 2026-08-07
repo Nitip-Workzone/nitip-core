@@ -39,8 +39,8 @@ func (h *Handler) Grant(c *fiber.Ctx) error {
 	timestamp := c.Get("X-Timestamp")
 	signature := c.Get("X-Signature")
 
-	if apiKey == "" || timestamp == "" || signature == "" {
-		return response.Unauthorized(c, "header wajib tidak lengkap: X-API-Key, X-Timestamp, X-Signature")
+	if apiKey == "" || timestamp == "" {
+		return response.Unauthorized(c, "header wajib tidak lengkap: X-API-Key, X-Timestamp")
 	}
 
 	// Verify HMAC signature (API secret is never sent over the wire)

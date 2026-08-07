@@ -776,10 +776,15 @@ func (h *Handler) WebhookPaymentListener(c *fiber.Ctx) error {
 	}
 
 	authSvc := auth.NewService(h.db)
-	_, err := authSvc.ValidateHMAC(c.Context(), apiKey, timestamp, signature, string(c.Body()))
+	client, err := authSvc.ValidateHMAC(c.Context(), apiKey, timestamp, signature, string(c.Body()))
 	if err != nil {
 		log.Printf("[PAYMENT_LISTENER_WEBHOOK] HMAC Validation Failed: %v", err)
 		return response.Unauthorized(c, err.Error())
+	}
+
+	if client.Platform != "listener" {
+		log.Printf("[PAYMENT_LISTENER_WEBHOOK] Forbidden client platform attempt: %s", client.Platform)
+		return response.Forbidden(c, "akses ditolak: hanya listener yang diizinkan")
 	}
 
 	var payload WebhookPaymentListenerPayload
