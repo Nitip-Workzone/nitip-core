@@ -14,7 +14,7 @@ export
 
 .PHONY: help run dev build clean \
         migrate-up migrate-down migrate-status migrate-create migrate-reset migrate-fix \
-        test test-coverage lint tidy install-tools swagger \
+        test test-domain test-coverage mocks lint tidy install-tools swagger \
         docker-up docker-down docker-logs ngrok
 
 ## help: Show this help
@@ -114,10 +114,28 @@ endif
 test:
 	go test ./... -v -race
 
+## test-domain pkg=<pkg_name>: Run tests for a specific domain package (e.g. make test-domain pkg=wallet)
+test-domain:
+ifndef pkg
+	$(error ❌  usage: make test-domain pkg=wallet)
+endif
+	go test ./internal/domain/$(pkg)/... -v -race
+
 ## test-coverage: Run tests and open HTML coverage report
 test-coverage:
 	go test ./... -coverprofile=coverage.out
 	go tool cover -html=coverage.out
+
+## mocks: Automatically generate mock files for all interfaces using mockery
+mocks:
+	@which mockery > /dev/null 2>&1 || go install github.com/vektra/mockery/v2@latest
+	@rm -rf ./internal/mocks
+	@rm -rf ./internal/domain/wallet/mocks
+	@rm -rf ./internal/domain/auth/mocks
+	@rm -rf ./internal/domain/config/mocks
+	mockery --dir=./internal/domain/wallet --all --output=./internal/domain/wallet/mocks --case=underscore --recursive=false
+	mockery --dir=./internal/domain/auth --all --output=./internal/domain/auth/mocks --case=underscore --recursive=false
+	mockery --dir=./internal/domain/config --all --output=./internal/domain/config/mocks --case=underscore --recursive=false
 
 ## admin-list: List all system configs
 admin-list:

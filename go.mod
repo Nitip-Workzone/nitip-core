@@ -5,6 +5,8 @@ go 1.25.0
 require (
 	cloud.google.com/go/storage v1.56.0
 	firebase.google.com/go/v4 v4.19.0
+	github.com/DATA-DOG/go-sqlmock v1.5.2
+	github.com/alicebob/miniredis/v2 v2.38.0
 	github.com/go-playground/validator/v10 v10.30.1
 	github.com/go-sql-driver/mysql v1.9.3
 	github.com/gofiber/fiber/v2 v2.52.12
@@ -20,6 +22,7 @@ require (
 	github.com/pressly/goose/v3 v3.22.1
 	github.com/redis/go-redis/v9 v9.18.0
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
+	github.com/stretchr/testify v1.11.1
 	github.com/swaggo/swag v1.16.6
 	github.com/tencentyun/cos-go-sdk-v5 v0.7.74
 	github.com/uptrace/bun v1.2.18
@@ -56,6 +59,7 @@ require (
 	github.com/clbanning/mxj v1.8.4 // indirect
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
 	github.com/cncf/xds/go v0.0.0-20251210132809-ee656c7534f5 // indirect
+	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/envoyproxy/go-control-plane/envoy v1.36.0 // indirect
@@ -96,11 +100,13 @@ require (
 	github.com/mozillazg/go-httpheader v0.2.1 // indirect
 	github.com/philhofer/fwd v1.2.0 // indirect
 	github.com/planetscale/vtprotobuf v0.6.1-0.20240319094008-0393e58bdf10 // indirect
+	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/puzpuzpuz/xsync/v3 v3.5.1 // indirect
 	github.com/rs/xid v1.6.0 // indirect
 	github.com/savsgio/gotils v0.0.0-20230208104028-c358bd845dee // indirect
 	github.com/sethvargo/go-retry v0.3.0 // indirect
 	github.com/spiffe/go-spiffe/v2 v2.6.0 // indirect
+	github.com/stretchr/objx v0.5.2 // indirect
 	github.com/swaggo/files/v2 v2.0.2 // indirect
 	github.com/tinylib/msgp v1.6.1 // indirect
 	github.com/tmthrgd/go-hex v0.0.0-20190904060850-447a3041c3bc // indirect
@@ -108,6 +114,7 @@ require (
 	github.com/valyala/fasthttp v1.70.0 // indirect
 	github.com/vmihailenco/msgpack/v5 v5.4.1 // indirect
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
+	github.com/yuin/gopher-lua v1.1.1 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/detectors/gcp v1.39.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.61.0 // indirect
@@ -135,5 +142,6 @@ require (
 	google.golang.org/grpc v1.79.1 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
+	gopkg.in/yaml.v3 v3.0.1 // indirect
 	mellium.im/sasl v0.3.2 // indirect
 )
