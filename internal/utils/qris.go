@@ -41,8 +41,11 @@ func ConvertStaticToDynamicQRIS(staticQRIS string, amount float64) (string, erro
 		i += 4 + length
 	}
 
-	// 1. Update/Insert Tag 01 (Point of Initiation Method) to "12" (Dynamic)
-	tags["01"] = "12"
+	// 1. Keep Tag 01 (Point of Initiation Method) as "11" (Static) instead of forcing "12" (Dynamic).
+	// Forcing it to "12" causes several bank apps (like Mandiri Livin' or BCA Mobile) to fail
+	// because they expect the merchant to have a dynamic terminal registration in their backend.
+	// The pre-filled amount (Tag 54) works perfectly fine even with "11".
+	tags["01"] = "11"
 	hasTag01 := false
 	for _, k := range keysOrder {
 		if k == "01" {
