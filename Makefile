@@ -112,7 +112,7 @@ endif
 
 ## test: Run all unit tests
 test:
-	go test ./... -v -race
+	@bash -c "set -o pipefail; go test ./... -v -race | grep -v '\[no test files\]'"
 
 ## test-domain pkg=<pkg_name>: Run tests for a specific domain package (e.g. make test-domain pkg=wallet)
 test-domain:
