@@ -223,6 +223,36 @@ func (_m *Service) GetTransactionStatus(ctx context.Context, reference string) (
 	return r0, r1
 }
 
+// GetTransactionByID provides a mock function with given fields: ctx, id
+func (_m *Service) GetTransactionByID(ctx context.Context, id uuid.UUID) (*wallet.WalletTransaction, error) {
+	ret := _m.Called(ctx, id)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetTransactionByID")
+	}
+
+	var r0 *wallet.WalletTransaction
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, uuid.UUID) (*wallet.WalletTransaction, error)); ok {
+		return rf(ctx, id)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, uuid.UUID) *wallet.WalletTransaction); ok {
+		r0 = rf(ctx, id)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*wallet.WalletTransaction)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, uuid.UUID) error); ok {
+		r1 = rf(ctx, id)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
 // GetTransactions provides a mock function with given fields: ctx, userID, limit, offset
 func (_m *Service) GetTransactions(ctx context.Context, userID uuid.UUID, limit int, offset int) ([]wallet.WalletTransaction, error) {
 	ret := _m.Called(ctx, userID, limit, offset)

@@ -67,6 +67,7 @@ type Service interface {
 	ApproveWithdrawal(ctx context.Context, txID, actorID uuid.UUID) error
 	GetTransactionStatus(ctx context.Context, reference string) (*WalletTransaction, error)
 	GetSystemBalanceSummary(ctx context.Context) (*SystemBalanceSummary, error)
+	GetTransactionByID(ctx context.Context, id uuid.UUID) (*WalletTransaction, error)
 
 	// Recovery
 	RecoverPendingWithdrawals(ctx context.Context) error
@@ -1000,6 +1001,10 @@ func (s *service) DeductCODPlatformFee(ctx context.Context, db bun.IDB, runnerID
 
 func (s *service) GetPendingWithdrawals(ctx context.Context, limit, offset int) ([]WalletTransaction, error) {
 	return s.repo.GetPendingWithdrawals(ctx, s.db, limit, offset)
+}
+
+func (s *service) GetTransactionByID(ctx context.Context, id uuid.UUID) (*WalletTransaction, error) {
+	return s.repo.GetTransactionByID(ctx, s.db, id)
 }
 
 func (s *service) ApproveWithdrawal(ctx context.Context, txID, actorID uuid.UUID) error {

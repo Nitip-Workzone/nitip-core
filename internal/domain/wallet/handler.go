@@ -47,6 +47,7 @@ func (h *Handler) RegisterRoutes(router fiber.Router) {
 	wallets.Get("/withdrawal-channels", h.GetWithdrawalChannels)
 	wallets.Post("/withdraw/inquiry", h.Inquiry)
 	wallets.Post("/withdraw", middleware.RateLimit(h.redis, 3, 1*time.Minute), h.Withdraw)
+	wallets.Post("/withdrawals/:id/cancel", h.CancelWithdrawal)
 
 	admin := router.Group("/admin/wallets", middleware.Protected(h.db, h.redis), middleware.Role(user.RoleAdmin))
 	admin.Get("/system-balance", h.AdminGetSystemBalance)
@@ -469,6 +470,50 @@ func (h *Handler) Withdraw(c *fiber.Ctx) error {
 	}
 
 	return response.Success(c, "penarikan berhasil diajukan", wtx)
+}
+
+// CancelWithdrawal godoc
+// @Summary      Cancel a pending withdrawal
+// @Description  Cancel a pending withdrawal and refund balance
+// @Tags         [User] Finance
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id  path  string  true  "Transaction UUID" Format(uuid)
+// @Success      200 {object}  response.envelope
+// @Router       /wallets/withdrawals/{id}/cancel [post]
+func (h *Handler) CancelWithdrawal(c *fiber.Ctx) error {
+	txID, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return response.BadRequest(c, "ID transaksi tidak valid")
+	}
+
+	userClaims := jwt.GetClaims(c)
+	if userClaims == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
+	userID := userClaims.UserID
+
+	// Verify transaction belongs to this user and is pending
+	wtx, err := h.service.GetTransactionByID(c.Context(), txID)
+	if err != nil {
+		return response.NotFound(c, "transaksi tidak ditemukan")
+	}
+
+	// Verify wallet belongs to user
+	w, err := h.service.GetBalance(c.Context(), userID)
+	if err != nil || w.ID != wtx.WalletID {
+		return response.Forbidden(c, "akses ditolak")
+	}
+
+	if wtx.Status != StatusPending || wtx.Type != TypeWithdrawal {
+		return response.BadRequest(c, "hanya transaksi penarikan yang berstatus pending yang dapat dibatalkan")
+	}
+
+	if err := h.service.FinalizeWithdrawal(c.Context(), txID, StatusRejected); err != nil {
+		return response.InternalError(c, err.Error())
+	}
+
+	return response.Success(c, "permintaan penarikan berhasil dibatalkan", nil)
 }
 
 // AdminGetSystemBalance godoc
