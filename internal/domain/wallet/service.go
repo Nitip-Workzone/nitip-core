@@ -1109,6 +1109,41 @@ func (s *service) FinalizeWithdrawal(ctx context.Context, txID uuid.UUID, status
 
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+
+	// Send notification if finalized successfully
+	var walletObj Wallet
+	if err := s.db.NewSelect().Model(&walletObj).Where("id = ?", tx.WalletID).Scan(ctx); err == nil {
+		var title, message string
+		if status == StatusCompleted {
+			title = "Penarikan Dana Berhasil"
+			message = fmt.Sprintf("Penarikan dana sebesar Rp%.0f telah disetujui dan berhasil dikirim.", math.Abs(tx.Amount))
+		} else if status == StatusRejected {
+			title = "Penarikan Dana Dibatalkan"
+			message = fmt.Sprintf("Penarikan dana sebesar Rp%.0f telah dibatalkan dan saldo dikembalikan.", math.Abs(tx.Amount))
+		} else if status == StatusFailed {
+			title = "Penarikan Dana Gagal"
+			message = fmt.Sprintf("Penarikan dana sebesar Rp%.0f gagal diproses dan saldo dikembalikan.", math.Abs(tx.Amount))
+		}
+
+		if title != "" {
+			_ = s.notifSvc.CreateNotification(ctx, notificationDomain.CreateNotificationRequest{
+				UserID:  walletObj.UserID,
+				Title:   title,
+				Message: message,
+				Type:    "wallet",
+				Metadata: map[string]interface{}{
+					"amount":       math.Abs(tx.Amount),
+					"reference_id": tx.ID.String(),
+					"status":       string(status),
+				},
+			})
+		}
+	}
+
+	return nil
 }
 
 func (s *service) GetSystemBalanceSummary(ctx context.Context) (*SystemBalanceSummary, error) {
