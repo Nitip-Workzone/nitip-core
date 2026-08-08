@@ -140,7 +140,7 @@ func (s *Service) ValidateHMAC(ctx context.Context, apiKey, timestamp, signature
 	expected := hmacSHA256(payload, secret)
 
 	// 5. Constant-time comparison
-	if (client.Platform == "web" || client.Platform == "mobile") && signature == "" {
+	if (client.Platform == "web" || client.Platform == "mobile" || client.Platform == "android" || client.Platform == "ios") && signature == "" {
 		// skip
 	} else if !hmac.Equal([]byte(signature), []byte(expected)) {
 		return nil, ErrInvalidSignature
