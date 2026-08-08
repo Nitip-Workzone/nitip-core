@@ -578,6 +578,19 @@ func (s *service) RequestWithdrawal(ctx context.Context, userID uuid.UUID, amoun
 		return nil, err
 	}
 
+	// Create in-app notification (inbox message)
+	_ = s.notifSvc.CreateNotification(ctx, notificationDomain.CreateNotificationRequest{
+		UserID:  userID,
+		Title:   "Permintaan Penarikan Diajukan",
+		Message: fmt.Sprintf("Permintaan penarikan dana sebesar Rp%.0f telah diajukan dan sedang menunggu persetujuan admin.", amount),
+		Type:    "wallet",
+		Metadata: map[string]interface{}{
+			"amount":       amount,
+			"reference_id": wtx.ID.String(),
+			"status":       "pending",
+		},
+	})
+
 	// 5. Trigger PG Disbursement (Async for this simulation)
 	if channel != nil && channel.Type != "MANUAL" {
 		go s.triggerPgDisbursement(wtx, channel)
@@ -990,7 +1003,7 @@ func (s *service) GetPendingWithdrawals(ctx context.Context, limit, offset int) 
 }
 
 func (s *service) ApproveWithdrawal(ctx context.Context, txID, actorID uuid.UUID) error {
-	return s.repo.RunInTx(ctx, func(ctx context.Context, tx bun.Tx) error {
+	err := s.repo.RunInTx(ctx, func(ctx context.Context, tx bun.Tx) error {
 		wtx, err := s.repo.GetTransactionByID(ctx, tx, txID)
 		if err != nil {
 			if strings.Contains(err.Error(), "no rows") {
@@ -1014,6 +1027,30 @@ func (s *service) ApproveWithdrawal(ctx context.Context, txID, actorID uuid.UUID
 
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+
+	// Fetch transaction to get User ID and amount
+	wtx, err := s.repo.GetTransactionByID(ctx, s.db, txID)
+	if err == nil && wtx != nil {
+		var walletObj Wallet
+		if err := s.db.NewSelect().Model(&walletObj).Where("id = ?", wtx.WalletID).Scan(ctx); err == nil {
+			_ = s.notifSvc.CreateNotification(ctx, notificationDomain.CreateNotificationRequest{
+				UserID:  walletObj.UserID,
+				Title:   "Penarikan Dana Berhasil",
+				Message: fmt.Sprintf("Penarikan dana sebesar Rp%.0f telah disetujui dan berhasil dikirim.", math.Abs(wtx.Amount)),
+				Type:    "wallet",
+				Metadata: map[string]interface{}{
+					"amount":       math.Abs(wtx.Amount),
+					"reference_id": wtx.ID.String(),
+					"status":       "completed",
+				},
+			})
+		}
+	}
+
+	return nil
 }
 
 func (s *service) GetTransactionStatus(ctx context.Context, reference string) (*WalletTransaction, error) {
