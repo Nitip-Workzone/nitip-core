@@ -45,11 +45,11 @@ type Ticket struct {
 	ClosedAt     *time.Time `bun:"closed_at" json:"closed_at,omitempty"`
 
 	// Virtuals for response enrichment
-	UserName       string `bun:"-" json:"user_name,omitempty"`
-	UserEmail      string `bun:"-" json:"user_email,omitempty"`
-	UserWhatsapp   string `bun:"-" json:"user_whatsapp,omitempty"`
-	AssignedCSName string `bun:"-" json:"assigned_cs_name,omitempty"`
-	AssignedCSWhatsapp string `bun:"-" json:"assigned_cs_whatsapp,omitempty"`
+	UserName       string `bun:",scanonly" json:"user_name,omitempty"`
+	UserEmail      string `bun:",scanonly" json:"user_email,omitempty"`
+	UserWhatsapp   string `bun:",scanonly" json:"user_whatsapp,omitempty"`
+	AssignedCSName string `bun:",scanonly" json:"assigned_cs_name,omitempty"`
+	AssignedCSWhatsapp string `bun:",scanonly" json:"assigned_cs_whatsapp,omitempty"`
 	OrderNo        string `bun:"-" json:"order_no,omitempty"`
 	MessageCount   int    `bun:"-" json:"message_count,omitempty"`
 }
