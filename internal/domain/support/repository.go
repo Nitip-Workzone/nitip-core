@@ -48,7 +48,18 @@ func (r *repository) CreateTicket(ctx context.Context, ticket *Ticket) error {
 
 func (r *repository) FindTicketByID(ctx context.Context, id uuid.UUID) (*Ticket, error) {
 	t := new(Ticket)
-	err := r.db.NewSelect().Model(t).Where("id = ?", id).Scan(ctx)
+	err := r.db.NewSelect().
+		Model(t).
+		Column("st.*").
+		ColumnExpr("u.name AS user_name").
+		ColumnExpr("u.email AS user_email").
+		ColumnExpr("u.whatsapp_number AS user_whatsapp").
+		ColumnExpr("cs.name AS assigned_cs_name").
+		ColumnExpr("cs.whatsapp_number AS assigned_cs_whatsapp").
+		Join("LEFT JOIN users AS u ON u.id = st.user_id").
+		Join("LEFT JOIN users AS cs ON cs.id = st.assigned_cs_id").
+		Where("st.id = ?", id).
+		Scan(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -108,26 +119,44 @@ func (r *repository) FindTicketsByUser(ctx context.Context, userID uuid.UUID, li
 	if limit > 100 {
 		limit = 100
 	}
-	q := r.db.NewSelect().Model(&tickets).Where("user_id = ?", userID).Order("created_at DESC").Limit(limit).Offset(offset)
+	q := r.db.NewSelect().
+		Model(&tickets).
+		Column("st.*").
+		ColumnExpr("cs.name AS assigned_cs_name").
+		ColumnExpr("cs.whatsapp_number AS assigned_cs_whatsapp").
+		Join("LEFT JOIN users AS cs ON cs.id = st.assigned_cs_id").
+		Where("st.user_id = ?", userID).
+		Order("st.created_at DESC").
+		Limit(limit).
+		Offset(offset)
 	err := q.Scan(ctx)
 	return tickets, err
 }
 
 func (r *repository) FindAllTickets(ctx context.Context, status, category, search string, assignedCSID *uuid.UUID, limit, offset int) ([]Ticket, int, error) {
 	var tickets []Ticket
-	q := r.db.NewSelect().Model(&tickets)
+	q := r.db.NewSelect().
+		Model(&tickets).
+		Column("st.*").
+		ColumnExpr("u.name AS user_name").
+		ColumnExpr("u.email AS user_email").
+		ColumnExpr("u.whatsapp_number AS user_whatsapp").
+		ColumnExpr("cs.name AS assigned_cs_name").
+		ColumnExpr("cs.whatsapp_number AS assigned_cs_whatsapp").
+		Join("LEFT JOIN users AS u ON u.id = st.user_id").
+		Join("LEFT JOIN users AS cs ON cs.id = st.assigned_cs_id")
 	countQ := r.db.NewSelect().Model((*Ticket)(nil))
 
 	if status != "" {
-		q = q.Where("status = ?", status)
+		q = q.Where("st.status = ?", status)
 		countQ = countQ.Where("status = ?", status)
 	}
 	if category != "" {
-		q = q.Where("category = ?", category)
+		q = q.Where("st.category = ?", category)
 		countQ = countQ.Where("category = ?", category)
 	}
 	if assignedCSID != nil {
-		q = q.Where("assigned_cs_id = ?", *assignedCSID)
+		q = q.Where("st.assigned_cs_id = ?", *assignedCSID)
 		countQ = countQ.Where("assigned_cs_id = ?", *assignedCSID)
 	}
 	if search != "" {
@@ -137,7 +166,7 @@ func (r *repository) FindAllTickets(ctx context.Context, status, category, searc
 		escaped = strings.ReplaceAll(escaped, `%`, `\%`)
 		escaped = strings.ReplaceAll(escaped, `_`, `\_`)
 		like := fmt.Sprintf("%%%s%%", escaped)
-		q = q.Where("(title ILIKE ? OR description ILIKE ?)", like, like)
+		q = q.Where("(st.title ILIKE ? OR st.description ILIKE ?)", like, like)
 		countQ = countQ.Where("(title ILIKE ? OR description ILIKE ?)", like, like)
 	}
 
@@ -146,7 +175,7 @@ func (r *repository) FindAllTickets(ctx context.Context, status, category, searc
 		return nil, 0, err
 	}
 
-	q = q.Order("created_at DESC")
+	q = q.Order("st.created_at DESC")
 	if limit > 0 {
 		q = q.Limit(limit)
 	}
@@ -159,7 +188,15 @@ func (r *repository) FindAllTickets(ctx context.Context, status, category, searc
 
 func (r *repository) FindQueueTickets(ctx context.Context, limit, offset int) ([]Ticket, int, error) {
 	var tickets []Ticket
-	q := r.db.NewSelect().Model(&tickets).Where("status IN ('queued','open')").Order("created_at ASC")
+	q := r.db.NewSelect().
+		Model(&tickets).
+		Column("st.*").
+		ColumnExpr("u.name AS user_name").
+		ColumnExpr("u.email AS user_email").
+		ColumnExpr("u.whatsapp_number AS user_whatsapp").
+		Join("LEFT JOIN users AS u ON u.id = st.user_id").
+		Where("st.status IN ('queued','open')").
+		Order("st.created_at ASC")
 	countQ := r.db.NewSelect().Model((*Ticket)(nil)).Where("status IN ('queued','open')")
 
 	count, err := countQ.Count(ctx)

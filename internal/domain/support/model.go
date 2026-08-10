@@ -47,7 +47,9 @@ type Ticket struct {
 	// Virtuals for response enrichment
 	UserName       string `bun:"-" json:"user_name,omitempty"`
 	UserEmail      string `bun:"-" json:"user_email,omitempty"`
+	UserWhatsapp   string `bun:"-" json:"user_whatsapp,omitempty"`
 	AssignedCSName string `bun:"-" json:"assigned_cs_name,omitempty"`
+	AssignedCSWhatsapp string `bun:"-" json:"assigned_cs_whatsapp,omitempty"`
 	OrderNo        string `bun:"-" json:"order_no,omitempty"`
 	MessageCount   int    `bun:"-" json:"message_count,omitempty"`
 }
