@@ -19,7 +19,7 @@ type Repository interface {
 	CompleteAtomic(ctx context.Context, db bun.IDB, id uuid.UUID, runnerID uuid.UUID, deliveryImg string) (bool, error)
 	FindByRequesterID(ctx context.Context, requesterID uuid.UUID) ([]Order, error)
 	FindByRunnerID(ctx context.Context, runnerID uuid.UUID) ([]Order, error)
-	FindByUserID(ctx context.Context, userID uuid.UUID, limit, offset int) ([]Order, error)
+	FindByUserID(ctx context.Context, userID uuid.UUID, limit, offset int, startDate, endDate string) ([]Order, error)
 	Create(ctx context.Context, db bun.IDB, order *Order) error
 	Update(ctx context.Context, db bun.IDB, order *Order) error
 	UpdateWithStatusCheck(ctx context.Context, db bun.IDB, order *Order, expectedStatus string) (bool, error)
@@ -249,7 +249,7 @@ func (r *repository) FindByRunnerID(ctx context.Context, runnerID uuid.UUID) ([]
 	return orders, err
 }
 
-func (r *repository) FindByUserID(ctx context.Context, userID uuid.UUID, limit, offset int) ([]Order, error) {
+func (r *repository) FindByUserID(ctx context.Context, userID uuid.UUID, limit, offset int, startDate, endDate string) ([]Order, error) {
 	orders := []Order{}
 	query := r.db.NewSelect().
 		Model(&orders).
@@ -258,6 +258,13 @@ func (r *repository) FindByUserID(ctx context.Context, userID uuid.UUID, limit, 
 				WhereOr("o.runner_id = ?", userID)
 		}).
 		Order("o.created_at DESC")
+
+	if startDate != "" {
+		query = query.Where("o.created_at >= ?", startDate)
+	}
+	if endDate != "" {
+		query = query.Where("o.created_at <= ?", endDate)
+	}
 
 	if limit > 0 {
 		query = query.Limit(limit).Offset(offset)

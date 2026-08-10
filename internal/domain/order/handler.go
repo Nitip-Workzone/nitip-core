@@ -165,7 +165,10 @@ func (h *Handler) GetMyOrders(c *fiber.Ctx) error {
 	}
 	offset := (page - 1) * limit
 
-	orders, err := h.service.GetByUser(c.Context(), claims.UserID, limit, offset)
+	startDate := c.Query("start_date")
+	endDate := c.Query("end_date")
+
+	orders, err := h.service.GetByUser(c.Context(), claims.UserID, limit, offset, startDate, endDate)
 	if err != nil {
 		return response.InternalError(c, err.Error())
 	}

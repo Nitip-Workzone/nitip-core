@@ -115,7 +115,7 @@ type Service interface {
 	GetByID(ctx context.Context, id uuid.UUID, requestingUserID uuid.UUID, role string) (*Order, error)
 	GetByRequester(ctx context.Context, requesterID uuid.UUID) ([]Order, error)
 	GetByRunner(ctx context.Context, runnerID uuid.UUID) ([]Order, error)
-	GetByUser(ctx context.Context, userID uuid.UUID, limit, offset int) ([]Order, error)
+	GetByUser(ctx context.Context, userID uuid.UUID, limit, offset int, startDate, endDate string) ([]Order, error)
 	AcceptOrder(ctx context.Context, orderID, runnerID uuid.UUID) error
 	PickupOrder(ctx context.Context, orderID, runnerID uuid.UUID) error
 	CancelOrder(ctx context.Context, orderID, userID uuid.UUID, reason string) error
@@ -634,8 +634,8 @@ func (s *service) GetByRunner(ctx context.Context, runnerID uuid.UUID) ([]Order,
 	return orders, nil
 }
 
-func (s *service) GetByUser(ctx context.Context, userID uuid.UUID, limit, offset int) ([]Order, error) {
-	orders, err := s.repo.FindByUserID(ctx, userID, limit, offset)
+func (s *service) GetByUser(ctx context.Context, userID uuid.UUID, limit, offset int, startDate, endDate string) ([]Order, error) {
+	orders, err := s.repo.FindByUserID(ctx, userID, limit, offset, startDate, endDate)
 	if err != nil {
 		return orders, err
 	}
