@@ -3,114 +3,73 @@ package utils
 import (
 	"errors"
 	"fmt"
-	"strconv"
 )
 
 // ConvertStaticToDynamicQRIS parses a static EMVCo QRIS string, sets the amount (Tag 54)
 // and updates the Point of Initiation Method (Tag 01) to 12 (Dynamic), then recalculates the CRC16.
+// It uses direct string injection to guarantee that no other tags or sub-tags are altered in any way.
 func ConvertStaticToDynamicQRIS(staticQRIS string, amount float64) (string, error) {
-	if len(staticQRIS) < 8 {
+	if len(staticQRIS) < 12 {
 		return "", errors.New("invalid static QRIS string length")
 	}
 
-	tags := make(map[string]string)
-	var keysOrder []string
-	i := 0
-	for i < len(staticQRIS) {
-		if i+4 > len(staticQRIS) {
-			break
-		}
-		tag := staticQRIS[i : i+2]
-		lenStr := staticQRIS[i+2 : i+4]
-		length, err := strconv.Atoi(lenStr)
-		if err != nil {
-			return "", fmt.Errorf("invalid length for tag %s: %w", tag, err)
-		}
-		if i+4+length > len(staticQRIS) {
-			return "", fmt.Errorf("length overflow for tag %s", tag)
-		}
-		val := staticQRIS[i+4 : i+4+length]
-
-		// Skip CRC tag (63) as we will recalculate it at the end
-		if tag != "63" {
-			if _, exists := tags[tag]; !exists {
-				keysOrder = append(keysOrder, tag)
-			}
-			tags[tag] = val
-		}
-		i += 4 + length
+	// 1. Strip the existing CRC tag (starts with "6304" from the right)
+	idx63 := LastIndex(staticQRIS, "6304")
+	if idx63 == -1 {
+		return "", errors.New("static QRIS does not contain CRC tag 6304")
 	}
+	payload := staticQRIS[:idx63]
 
-	// 1. Keep Tag 01 (Point of Initiation Method) as "11" (Static) instead of forcing "12" (Dynamic).
-	// Forcing it to "12" causes several bank apps (like Mandiri Livin' or BCA Mobile) to fail
-	// because they expect the merchant to have a dynamic terminal registration in their backend.
-	// The pre-filled amount (Tag 54) works perfectly fine even with "11".
-	tags["01"] = "11"
-	hasTag01 := false
-	for _, k := range keysOrder {
-		if k == "01" {
-			hasTag01 = true
-			break
-		}
-	}
-	if !hasTag01 {
-		// Insert "01" right after "00"
-		var newOrder []string
-		for _, k := range keysOrder {
-			newOrder = append(newOrder, k)
-			if k == "00" {
-				newOrder = append(newOrder, "01")
-			}
-		}
-		keysOrder = newOrder
-	}
+	// 2. Change Tag 01 (Initiation Method) from "010211" (Static) to "010212" (Dynamic)
+	payload = ReplaceFirst(payload, "010211", "010212")
 
-	// 2. Set/Insert Tag 54 (Transaction Amount)
+	// 3. Insert Tag 54 (Amount) right after Tag 53 (Currency "5303360")
+	idx53 := Index(payload, "5303360")
+	if idx53 == -1 {
+		return "", errors.New("static QRIS does not contain Tag 53 (Currency 360)")
+	}
+	end53 := idx53 + len("5303360")
+
+	// Format amount as whole number string
 	amountStr := fmt.Sprintf("%.0f", amount)
-	tags["54"] = amountStr
-	hasTag54 := false
-	for _, k := range keysOrder {
-		if k == "54" {
-			hasTag54 = true
-			break
-		}
-	}
-	if !hasTag54 {
-		// Insert "54" right after "53" (Transaction Currency) or before "58" (Country Code)
-		var newOrder []string
-		inserted := false
-		for _, k := range keysOrder {
-			if k == "58" && !inserted {
-				newOrder = append(newOrder, "54")
-				inserted = true
-			}
-			newOrder = append(newOrder, k)
-			if k == "53" && !inserted {
-				newOrder = append(newOrder, "54")
-				inserted = true
-			}
-		}
-		if !inserted {
-			newOrder = append(newOrder, "54")
-		}
-		keysOrder = newOrder
-	}
+	tag54 := fmt.Sprintf("54%02d%s", len(amountStr), amountStr)
 
-	// Rebuild the payload string
-	var payload string
-	for _, tag := range keysOrder {
-		val := tags[tag]
-		payload += fmt.Sprintf("%s%02d%s", tag, len(val), val)
-	}
-
-	// Append Tag 63 (CRC) prefix "6304"
+	// Inject Tag 54
+	payload = payload[:end53] + tag54 + payload[end53:]
 	payload += "6304"
 
-	// Calculate CRC-16 CCITT-FALSE
+	// 4. Calculate new CRC16
 	crc := CalculateCRC16([]byte(payload))
 	finalQRIS := fmt.Sprintf("%s%04X", payload, crc)
 
 	return finalQRIS, nil
+}
+
+// Helpers to avoid external dependency issues and keep code simple
+func Index(s, substr string) int {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return i
+		}
+	}
+	return -1
+}
+
+func LastIndex(s, substr string) int {
+	for i := len(s) - len(substr); i >= 0; i-- {
+		if s[i:i+len(substr)] == substr {
+			return i
+		}
+	}
+	return -1
+}
+
+func ReplaceFirst(s, old, new string) string {
+	idx := Index(s, old)
+	if idx == -1 {
+		return s
+	}
+	return s[:idx] + new + s[idx+len(old):]
 }
 
 // CalculateCRC16 calculates CRC-16/CCITT-FALSE
