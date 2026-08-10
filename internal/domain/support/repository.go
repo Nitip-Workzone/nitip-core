@@ -251,8 +251,10 @@ func (r *repository) FindMessagesByTicketID(ctx context.Context, ticketID uuid.U
 		q = q.Where("is_internal = false")
 	}
 	if afterID != nil {
-		// Cursor by id to avoid same timestamp skip bug (prod)
-		q = q.Where("id > ?", *afterID)
+		// Filter by created_at of the target afterID message.
+		// Since UUIDs are non-sequential, comparing UUIDs using "id > ?" returns incorrect random results.
+		q = q.Where("created_at >= (SELECT created_at FROM support_messages WHERE id = ?)", *afterID).
+			Where("id != ?", *afterID)
 	}
 	if afterTime != nil && *afterTime != "" {
 		q = q.Where("created_at > ?", *afterTime)
