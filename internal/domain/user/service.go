@@ -1185,7 +1185,7 @@ func (s *service) OnboardMerchant(ctx context.Context, req OnboardMerchantReques
 		Password:       string(hashedPassword),
 		Role:           RoleMerchant,
 		DeviceId:       &devID,
-		IsVerified:     true, // Verified as user, but merchant status is controlled by is_open
+		IsVerified:     false, // Requires admin approval before account is active
 		CreatedAt:      now,
 		UpdatedAt:      now,
 	}
