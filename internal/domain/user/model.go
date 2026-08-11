@@ -88,3 +88,18 @@ type UserBankAccount struct {
 	CreatedAt   time.Time `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"created_at"`
 	UpdatedAt   time.Time `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updated_at"`
 }
+
+type RegistrationInvitation struct {
+	bun.BaseModel `bun:"table:registration_invitations,alias:ri"`
+
+	ID          uuid.UUID `bun:"id,pk,type:uuid" json:"id"`
+	Token       string    `bun:"token,notnull,unique" json:"token"`
+	PhoneNumber string    `bun:"phone_number,notnull" json:"phone_number"`
+	Role        string    `bun:"role,notnull" json:"role"`
+	Status      string    `bun:"status,notnull,default:'pending'" json:"status"` // pending, used, expired
+	CreatedBy   uuid.UUID `bun:"created_by,type:uuid,notnull" json:"created_by"`
+	ExpiresAt   time.Time `bun:"expires_at,notnull" json:"expires_at"`
+	CreatedAt   time.Time `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"created_at"`
+	UpdatedAt   time.Time `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updated_at"`
+}
+

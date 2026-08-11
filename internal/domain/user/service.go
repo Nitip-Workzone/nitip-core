@@ -47,6 +47,7 @@ type CreateUserRequest struct {
 }
 
 type OnboardRunnerRequest struct {
+	Token          string    `json:"token"           validate:"required"`
 	Name           string    `json:"name"            validate:"required,min=2,max=100"`
 	Email          string    `json:"email"           validate:"required,email"`
 	Password       string    `json:"password"        validate:"required,min=8,max=72"`
@@ -59,6 +60,7 @@ type OnboardRunnerRequest struct {
 }
 
 type OnboardMerchantRequest struct {
+	Token             string    `json:"token"           validate:"required"`
 	Name              string    `json:"name"            validate:"required,min=2,max=100"`
 	Email             string    `json:"email"           validate:"required,email"`
 	Password          string    `json:"password"        validate:"required,min=8,max=72"`
@@ -177,6 +179,11 @@ type Service interface {
 	// Web Onboarding (One-Step)
 	OnboardRunner(ctx context.Context, req OnboardRunnerRequest) (*User, error)
 	OnboardMerchant(ctx context.Context, req OnboardMerchantRequest) (*User, error)
+
+	// Registration Invitations
+	CreateInvitation(ctx context.Context, actorID uuid.UUID, phoneNumber, role string) (*RegistrationInvitation, error)
+	ListInvitations(ctx context.Context) ([]RegistrationInvitation, error)
+	ValidateInvitation(ctx context.Context, token string) (*RegistrationInvitation, error)
 }
 
 type service struct {
@@ -1006,6 +1013,21 @@ type merchantSurveyLocal struct {
 }
 
 func (s *service) OnboardRunner(ctx context.Context, req OnboardRunnerRequest) (*User, error) {
+	// Validate invitation token
+	invite, err := s.ValidateInvitation(ctx, req.Token)
+	if err != nil {
+		return nil, err
+	}
+
+	sanitizedInputWa := sanitizeWhatsappNumber(req.WhatsappNumber)
+	if sanitizedInputWa != invite.PhoneNumber {
+		return nil, errors.New("nomor WhatsApp tidak sesuai dengan undangan pendaftaran")
+	}
+
+	if invite.Role != RoleRunner {
+		return nil, errors.New("peran undangan tidak sesuai untuk pendaftaran Runner")
+	}
+
 	// 1. Check if email already registered
 	existing, err := s.repo.FindByEmail(ctx, req.Email)
 	if err == nil && existing != nil {
@@ -1058,7 +1080,7 @@ func (s *service) OnboardRunner(ctx context.Context, req OnboardRunnerRequest) (
 		ID:             userID,
 		Name:           req.Name,
 		Email:          req.Email,
-		WhatsappNumber: sanitizeWhatsappNumber(req.WhatsappNumber),
+		WhatsappNumber: sanitizedInputWa,
 		Password:       string(hashedPassword),
 		Role:           RoleRunner,
 		DeviceId:       &devID,
@@ -1086,6 +1108,13 @@ func (s *service) OnboardRunner(ctx context.Context, req OnboardRunnerRequest) (
 		return nil, fmt.Errorf("gagal menyimpan data KYC: %w", err)
 	}
 
+	// Update invitation status to used inside db transaction
+	invite.Status = "used"
+	invite.UpdatedAt = now
+	if _, err := tx.NewUpdate().Model(invite).WherePK().Exec(ctx); err != nil {
+		return nil, fmt.Errorf("gagal memperbarui status undangan: %w", err)
+	}
+
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("gagal mengonfirmasi transaksi pendaftaran: %w", err)
 	}
@@ -1095,6 +1124,21 @@ func (s *service) OnboardRunner(ctx context.Context, req OnboardRunnerRequest) (
 }
 
 func (s *service) OnboardMerchant(ctx context.Context, req OnboardMerchantRequest) (*User, error) {
+	// Validate invitation token
+	invite, err := s.ValidateInvitation(ctx, req.Token)
+	if err != nil {
+		return nil, err
+	}
+
+	sanitizedInputWa := sanitizeWhatsappNumber(req.WhatsappNumber)
+	if sanitizedInputWa != invite.PhoneNumber {
+		return nil, errors.New("nomor WhatsApp tidak sesuai dengan undangan pendaftaran")
+	}
+
+	if invite.Role != RoleMerchant {
+		return nil, errors.New("peran undangan tidak sesuai untuk pendaftaran Merchant")
+	}
+
 	// 1. Check if email already registered
 	existing, err := s.repo.FindByEmail(ctx, req.Email)
 	if err == nil && existing != nil {
@@ -1137,7 +1181,7 @@ func (s *service) OnboardMerchant(ctx context.Context, req OnboardMerchantReques
 		ID:             userID,
 		Name:           req.Name,
 		Email:          req.Email,
-		WhatsappNumber: sanitizeWhatsappNumber(req.WhatsappNumber),
+		WhatsappNumber: sanitizedInputWa,
 		Password:       string(hashedPassword),
 		Role:           RoleMerchant,
 		DeviceId:       &devID,
@@ -1184,6 +1228,13 @@ func (s *service) OnboardMerchant(ctx context.Context, req OnboardMerchantReques
 		return nil, fmt.Errorf("gagal menyimpan data survei merchant: %w", err)
 	}
 
+	// Update invitation status to used inside db transaction
+	invite.Status = "used"
+	invite.UpdatedAt = now
+	if _, err := tx.NewUpdate().Model(invite).WherePK().Exec(ctx); err != nil {
+		return nil, fmt.Errorf("gagal memperbarui status undangan: %w", err)
+	}
+
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("gagal mengonfirmasi transaksi pendaftaran merchant: %w", err)
 	}
@@ -1191,4 +1242,53 @@ func (s *service) OnboardMerchant(ctx context.Context, req OnboardMerchantReques
 	user.ComputeHasPin()
 	return user, nil
 }
+
+func (s *service) CreateInvitation(ctx context.Context, actorID uuid.UUID, phoneNumber, role string) (*RegistrationInvitation, error) {
+	if role != RoleRunner && role != RoleMerchant {
+		return nil, errors.New("peran undangan tidak valid")
+	}
+
+	invite := &RegistrationInvitation{
+		ID:          uuid.New(),
+		Token:       uuid.New().String(),
+		PhoneNumber: sanitizeWhatsappNumber(phoneNumber),
+		Role:        role,
+		Status:      "pending",
+		CreatedBy:   actorID,
+		ExpiresAt:   time.Now().Add(7 * 24 * time.Hour), // 7 days expiration
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
+	}
+
+	if err := s.repo.CreateInvitation(ctx, invite); err != nil {
+		return nil, fmt.Errorf("gagal membuat undangan pendaftaran: %w", err)
+	}
+
+	return invite, nil
+}
+
+func (s *service) ListInvitations(ctx context.Context) ([]RegistrationInvitation, error) {
+	return s.repo.ListInvitations(ctx)
+}
+
+func (s *service) ValidateInvitation(ctx context.Context, token string) (*RegistrationInvitation, error) {
+	invite, err := s.repo.FindInvitationByToken(ctx, token)
+	if err != nil {
+		return nil, errors.New("tautan pendaftaran tidak ditemukan")
+	}
+
+	if invite.Status != "pending" {
+		return nil, errors.New("tautan pendaftaran sudah digunakan")
+	}
+
+	if time.Now().After(invite.ExpiresAt) {
+		invite.Status = "expired"
+		invite.UpdatedAt = time.Now()
+		_ = s.repo.UpdateInvitation(ctx, invite)
+		return nil, errors.New("tautan pendaftaran sudah kedaluwarsa")
+	}
+
+	return invite, nil
+}
+
 

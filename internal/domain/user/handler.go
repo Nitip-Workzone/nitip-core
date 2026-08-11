@@ -49,7 +49,7 @@ func (h *Handler) RegisterRoutes(router fiber.Router) {
 	g.Put("/accepting-orders", middleware.Protected(h.db, h.redis), middleware.Role(RoleRunner), h.UpdateAcceptingOrders)
 	g.Post("/location", middleware.Protected(h.db, h.redis), middleware.Role(RoleRunner), h.UpdateLocation)
 	g.Post("/heartbeat", middleware.Protected(h.db, h.redis), middleware.Role(RoleRunner), h.Heartbeat)
-	// g.Get("/location/stream", middleware.Protected(h.db, h.redis), websocket.New(h.StreamLocation))
+	g.Get("/invitations/validate", h.ValidateInvitation)
 
 	// Admin-only User Management
 	adminUser := router.Group("/admin/users", middleware.Protected(h.db, h.redis), middleware.Role(RoleAdmin))
@@ -67,6 +67,8 @@ func (h *Handler) RegisterRoutes(router fiber.Router) {
 	adminUser.Post("/:id/bank-account", h.AdminRegisterBankAccount)
 	adminUser.Get("/:id/bank-account", h.AdminGetBankAccount)
 	adminUser.Post("/:id/reset-password", h.AdminResetPassword)
+	adminUser.Post("/invitations", h.AdminCreateInvitation)
+	adminUser.Get("/invitations", h.AdminListInvitations)
 
 	// TOTP Management
 	g.Post("/totp/setup", middleware.Protected(h.db, h.redis), middleware.RateLimit(h.redis, 3, 1*time.Minute), h.SetupTOTP)
@@ -1148,13 +1150,14 @@ func (h *Handler) AdminGetBankAccount(c *fiber.Ctx) error {
 }
 
 func (h *Handler) OnboardRunner(c *fiber.Ctx) error {
+	token := c.FormValue("token")
 	name := c.FormValue("name")
 	email := c.FormValue("email")
 	password := c.FormValue("password")
 	whatsappNumber := c.FormValue("whatsapp_number")
 	idCardNumber := c.FormValue("id_card_number")
 
-	if name == "" || email == "" || password == "" || whatsappNumber == "" || idCardNumber == "" {
+	if token == "" || name == "" || email == "" || password == "" || whatsappNumber == "" || idCardNumber == "" {
 		return response.BadRequest(c, "semua kolom pendaftaran wajib diisi")
 	}
 
@@ -1197,6 +1200,7 @@ func (h *Handler) OnboardRunner(c *fiber.Ctx) error {
 	defer func() { _ = sf.Close() }()
 
 	req := OnboardRunnerRequest{
+		Token:          token,
 		Name:           name,
 		Email:          email,
 		Password:       password,
@@ -1221,6 +1225,7 @@ func (h *Handler) OnboardRunner(c *fiber.Ctx) error {
 }
 
 func (h *Handler) OnboardMerchant(c *fiber.Ctx) error {
+	token := c.FormValue("token")
 	name := c.FormValue("name")
 	email := c.FormValue("email")
 	password := c.FormValue("password")
@@ -1234,7 +1239,7 @@ func (h *Handler) OnboardMerchant(c *fiber.Ctx) error {
 	monthlySalesRange := c.FormValue("monthly_sales_range")
 	averageItemPriceStr := c.FormValue("average_item_price")
 
-	if name == "" || email == "" || password == "" || whatsappNumber == "" || merchantName == "" || address == "" || latitudeStr == "" || longitudeStr == "" || category == "" || monthlySalesRange == "" || averageItemPriceStr == "" {
+	if token == "" || name == "" || email == "" || password == "" || whatsappNumber == "" || merchantName == "" || address == "" || latitudeStr == "" || longitudeStr == "" || category == "" || monthlySalesRange == "" || averageItemPriceStr == "" {
 		return response.BadRequest(c, "semua kolom pendaftaran merchant wajib diisi")
 	}
 
@@ -1271,6 +1276,7 @@ func (h *Handler) OnboardMerchant(c *fiber.Ctx) error {
 	defer func() { _ = pf.Close() }()
 
 	req := OnboardMerchantRequest{
+		Token:             token,
 		Name:              name,
 		Email:             email,
 		Password:          password,
@@ -1298,4 +1304,57 @@ func (h *Handler) OnboardMerchant(c *fiber.Ctx) error {
 
 	return response.Created(c, "pendaftaran Merchant berhasil, mohon tunggu kurasi oleh tim admin", user)
 }
+
+type CreateInvitationRequest struct {
+	PhoneNumber string `json:"phone_number" validate:"required,min=9,max=15"`
+	Role        string `json:"role"         validate:"required,oneof=runner merchant"`
+}
+
+func (h *Handler) AdminCreateInvitation(c *fiber.Ctx) error {
+	var req CreateInvitationRequest
+	if err := c.BodyParser(&req); err != nil {
+		return response.BadRequest(c, "body request tidak valid")
+	}
+
+	if errs := validator.Validate(req); errs != nil {
+		return response.ValidationFailed(c, errs)
+	}
+
+	claims := jwt.GetClaims(c)
+	if claims == nil {
+		return response.Unauthorized(c, "tidak diotorisasi")
+	}
+	actorID := claims.UserID
+
+	invite, err := h.service.CreateInvitation(c.Context(), actorID, req.PhoneNumber, req.Role)
+	if err != nil {
+		return response.BadRequest(c, err.Error())
+	}
+
+	return response.Created(c, "undangan pendaftaran berhasil dibuat", invite)
+}
+
+func (h *Handler) AdminListInvitations(c *fiber.Ctx) error {
+	invites, err := h.service.ListInvitations(c.Context())
+	if err != nil {
+		return response.InternalError(c, err.Error())
+	}
+
+	return response.Success(c, "daftar undangan pendaftaran berhasil diambil", invites)
+}
+
+func (h *Handler) ValidateInvitation(c *fiber.Ctx) error {
+	token := c.Query("token")
+	if token == "" {
+		return response.BadRequest(c, "token pendaftaran wajib disertakan")
+	}
+
+	invite, err := h.service.ValidateInvitation(c.Context(), token)
+	if err != nil {
+		return response.BadRequest(c, err.Error())
+	}
+
+	return response.Success(c, "token pendaftaran valid", invite)
+}
+
 

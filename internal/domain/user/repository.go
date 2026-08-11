@@ -23,6 +23,12 @@ type Repository interface {
 	UpsertBankAccount(ctx context.Context, bankAccount *UserBankAccount) error
 	UpdateAcceptingOrders(ctx context.Context, id uuid.UUID, isAccepting bool) error
 	GetDB() *bun.DB
+
+	// Invitations
+	CreateInvitation(ctx context.Context, invite *RegistrationInvitation) error
+	FindInvitationByToken(ctx context.Context, token string) (*RegistrationInvitation, error)
+	ListInvitations(ctx context.Context) ([]RegistrationInvitation, error)
+	UpdateInvitation(ctx context.Context, invite *RegistrationInvitation) error
 }
 
 type repository struct {
@@ -182,3 +188,29 @@ func (r *repository) UpsertBankAccount(ctx context.Context, bankAccount *UserBan
 		Exec(ctx)
 	return err
 }
+
+func (r *repository) CreateInvitation(ctx context.Context, invite *RegistrationInvitation) error {
+	_, err := r.db.NewInsert().Model(invite).Exec(ctx)
+	return err
+}
+
+func (r *repository) FindInvitationByToken(ctx context.Context, token string) (*RegistrationInvitation, error) {
+	invite := new(RegistrationInvitation)
+	err := r.db.NewSelect().Model(invite).Where("token = ?", token).Scan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return invite, nil
+}
+
+func (r *repository) ListInvitations(ctx context.Context) ([]RegistrationInvitation, error) {
+	var invites []RegistrationInvitation
+	err := r.db.NewSelect().Model(&invites).Order("created_at DESC").Limit(100).Scan(ctx)
+	return invites, err
+}
+
+func (r *repository) UpdateInvitation(ctx context.Context, invite *RegistrationInvitation) error {
+	_, err := r.db.NewUpdate().Model(invite).WherePK().Exec(ctx)
+	return err
+}
+
