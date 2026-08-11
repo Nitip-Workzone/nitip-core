@@ -75,3 +75,14 @@ type OrderItem struct {
 	MenuName  string `bun:"-" json:"menu_name,omitempty"`
 	MenuImage string `bun:"-" json:"menu_image,omitempty"`
 }
+
+type MerchantSurvey struct {
+	bun.BaseModel `bun:"table:merchant_surveys,alias:ms"`
+
+	ID                uuid.UUID `bun:"id,pk,type:uuid" json:"id"`
+	MerchantID        uuid.UUID `bun:"merchant_id,type:uuid,notnull" json:"merchant_id"`
+	MonthlySalesRange string    `bun:"monthly_sales_range,notnull" json:"monthly_sales_range"`
+	AverageItemPrice  float64   `bun:"average_item_price,notnull" json:"average_item_price"`
+	CreatedAt         time.Time `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"created_at"`
+}
+

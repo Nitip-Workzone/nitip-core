@@ -35,6 +35,9 @@ type Service interface {
 	// OrderItem
 	CreateOrderItems(ctx context.Context, items []OrderItem) error
 	ListOrderItemsByOrderID(ctx context.Context, orderID uuid.UUID) ([]OrderItem, error)
+
+	// Survey
+	CreateSurvey(ctx context.Context, merchantID uuid.UUID, monthlySalesRange string, averageItemPrice float64) (*MerchantSurvey, error)
 }
 
 type service struct {
@@ -302,3 +305,18 @@ func (s *service) CreateOrderItems(ctx context.Context, items []OrderItem) error
 func (s *service) ListOrderItemsByOrderID(ctx context.Context, orderID uuid.UUID) ([]OrderItem, error) {
 	return s.repo.ListOrderItemsByOrderID(ctx, orderID)
 }
+
+func (s *service) CreateSurvey(ctx context.Context, merchantID uuid.UUID, monthlySalesRange string, averageItemPrice float64) (*MerchantSurvey, error) {
+	survey := &MerchantSurvey{
+		ID:                uuid.New(),
+		MerchantID:        merchantID,
+		MonthlySalesRange: monthlySalesRange,
+		AverageItemPrice:  averageItemPrice,
+		CreatedAt:         time.Now(),
+	}
+	if err := s.repo.CreateSurvey(ctx, survey); err != nil {
+		return nil, err
+	}
+	return survey, nil
+}
+

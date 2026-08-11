@@ -22,11 +22,17 @@ type Repository interface {
 	FindBankAccountByUserID(ctx context.Context, userID uuid.UUID) (*UserBankAccount, error)
 	UpsertBankAccount(ctx context.Context, bankAccount *UserBankAccount) error
 	UpdateAcceptingOrders(ctx context.Context, id uuid.UUID, isAccepting bool) error
+	GetDB() *bun.DB
 }
 
 type repository struct {
 	db *bun.DB
 }
+
+func (r *repository) GetDB() *bun.DB {
+	return r.db
+}
+
 
 func NewRepository(db *bun.DB) Repository {
 	return &repository{db: db}

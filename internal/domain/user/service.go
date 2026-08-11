@@ -21,6 +21,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pquerna/otp/totp"
 	"github.com/redis/go-redis/v9"
+	"github.com/uptrace/bun"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -44,6 +45,36 @@ type CreateUserRequest struct {
 	DeviceId       string `json:"device_id"       validate:"required"`
 	WhatsappNumber string `json:"whatsapp_number" validate:"required,min=9,max=15,numeric"`
 }
+
+type OnboardRunnerRequest struct {
+	Name           string    `json:"name"            validate:"required,min=2,max=100"`
+	Email          string    `json:"email"           validate:"required,email"`
+	Password       string    `json:"password"        validate:"required,min=8,max=72"`
+	WhatsappNumber string    `json:"whatsapp_number" validate:"required,min=9,max=15,numeric"`
+	IdCardNumber   string    `json:"id_card_number"  validate:"required,len=16,numeric"`
+	IdCardFile     io.Reader `json:"-"`
+	IdCardFilename string    `json:"-"`
+	SelfieFile     io.Reader `json:"-"`
+	SelfieFilename string    `json:"-"`
+}
+
+type OnboardMerchantRequest struct {
+	Name              string    `json:"name"            validate:"required,min=2,max=100"`
+	Email             string    `json:"email"           validate:"required,email"`
+	Password          string    `json:"password"        validate:"required,min=8,max=72"`
+	WhatsappNumber    string    `json:"whatsapp_number" validate:"required,min=9,max=15,numeric"`
+	MerchantName      string    `json:"merchant_name"   validate:"required,min=2,max=100"`
+	Description       string    `json:"description"     validate:"omitempty,max=500"`
+	Address           string    `json:"address"         validate:"required,max=500"`
+	Latitude          float64   `json:"latitude"        validate:"required,latitude"`
+	Longitude         float64   `json:"longitude"       validate:"required,longitude"`
+	Category          string    `json:"category"        validate:"required,oneof=food laundry mart"`
+	MonthlySalesRange string    `json:"monthly_sales_range" validate:"required"`
+	AverageItemPrice  float64   `json:"average_item_price" validate:"required,gt=0"`
+	PhotoFile         io.Reader `json:"-"`
+	PhotoFilename     string    `json:"-"`
+}
+
 
 type AdminCreateUserRequest struct {
 	Name           string `json:"name"            validate:"required,min=2,max=100"`
@@ -142,6 +173,10 @@ type Service interface {
 
 	// Admin Password Reset
 	AdminResetPassword(ctx context.Context, targetUserID uuid.UUID, newPassword, adminPassword, totpCode string, adminID uuid.UUID) error
+
+	// Web Onboarding (One-Step)
+	OnboardRunner(ctx context.Context, req OnboardRunnerRequest) (*User, error)
+	OnboardMerchant(ctx context.Context, req OnboardMerchantRequest) (*User, error)
 }
 
 type service struct {
@@ -926,3 +961,234 @@ func (s *service) AdminResetPassword(ctx context.Context, targetUserID uuid.UUID
 	log.Printf("[ADMIN_ACTION] Admin %s reset password for User %s (%s)", adminID, targetUserID, targetUser.Email)
 	return nil
 }
+
+type kycSubmissionLocal struct {
+	bun.BaseModel `bun:"table:kyc_submissions,alias:ks"`
+
+	ID             uuid.UUID `bun:"id,pk,type:uuid"`
+	UserID         uuid.UUID `bun:"user_id,type:uuid,notnull"`
+	IdCardNumber   string    `bun:"id_card_number,notnull"`
+	IdCardImageUrl string    `bun:"id_card_image_url,notnull"`
+	SelfieImageUrl string    `bun:"selfie_image_url,notnull"`
+	Status         string    `bun:"status,notnull,default:'pending'"`
+	CreatedAt      time.Time `bun:"created_at,nullzero,notnull,default:current_timestamp"`
+	UpdatedAt      time.Time `bun:"updated_at,nullzero,notnull,default:current_timestamp"`
+}
+
+type merchantLocal struct {
+	bun.BaseModel `bun:"table:merchants,alias:m"`
+
+	ID              uuid.UUID `bun:"id,pk,type:uuid"`
+	OwnerID         uuid.UUID `bun:"owner_id,type:uuid,notnull"`
+	Name            string    `bun:"name,notnull"`
+	Description     string    `bun:"description"`
+	Address         string    `bun:"address"`
+	Latitude        float64   `bun:"latitude,notnull"`
+	Longitude       float64   `bun:"longitude,notnull"`
+	Category        string    `bun:"category,notnull,default:'food'"`
+	IsOpen          bool      `bun:"is_open,notnull,default:false"`
+	AutoConfirm     bool      `bun:"auto_confirm,notnull,default:false"`
+	MaxActiveOrders int       `bun:"max_active_orders,notnull,default:5"`
+	Rating          float64   `bun:"rating,notnull,default:5.0"`
+	ImageURL        string    `bun:"image_url"`
+	CreatedAt       time.Time `bun:"created_at,nullzero,notnull,default:current_timestamp"`
+	UpdatedAt       time.Time `bun:"updated_at,nullzero,notnull,default:current_timestamp"`
+}
+
+type merchantSurveyLocal struct {
+	bun.BaseModel `bun:"table:merchant_surveys,alias:ms"`
+
+	ID                uuid.UUID `bun:"id,pk,type:uuid"`
+	MerchantID        uuid.UUID `bun:"merchant_id,type:uuid,notnull"`
+	MonthlySalesRange string    `bun:"monthly_sales_range,notnull"`
+	AverageItemPrice  float64   `bun:"average_item_price,notnull"`
+	CreatedAt         time.Time `bun:"created_at,nullzero,notnull,default:current_timestamp"`
+}
+
+func (s *service) OnboardRunner(ctx context.Context, req OnboardRunnerRequest) (*User, error) {
+	// 1. Check if email already registered
+	existing, err := s.repo.FindByEmail(ctx, req.Email)
+	if err == nil && existing != nil {
+		return nil, errors.New("email sudah terdaftar")
+	}
+
+	// 2. Hash Password
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	if err != nil {
+		return nil, errors.New("gagal mengenkripsi kata sandi")
+	}
+
+	userID := uuid.New()
+
+	// 3. Upload ID Card and Selfie (before db tx)
+	var idCardURL, selfieURL string
+	if req.IdCardFile != nil && s.storage != nil {
+		objectKey := fmt.Sprintf("kyc/id_cards/%s_%d_%s", userID.String(), time.Now().Unix(), req.IdCardFilename)
+		path, err := s.storage.Upload(ctx, objectKey, req.IdCardFile, -1, "image/jpeg")
+		if err != nil {
+			return nil, fmt.Errorf("gagal mengunggah foto KTP: %w", err)
+		}
+		idCardURL = path
+	} else {
+		return nil, errors.New("foto KTP wajib diunggah")
+	}
+
+	if req.SelfieFile != nil && s.storage != nil {
+		objectKey := fmt.Sprintf("kyc/selfies/%s_%d_%s", userID.String(), time.Now().Unix(), req.SelfieFilename)
+		path, err := s.storage.Upload(ctx, objectKey, req.SelfieFile, -1, "image/jpeg")
+		if err != nil {
+			return nil, fmt.Errorf("gagal mengunggah foto selfie: %w", err)
+		}
+		selfieURL = path
+	} else {
+		return nil, errors.New("foto selfie wajib diunggah")
+	}
+
+	// 4. Database Transaction
+	db := s.repo.GetDB()
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("gagal memulai transaksi: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	now := time.Now()
+	devID := "web"
+	user := &User{
+		ID:             userID,
+		Name:           req.Name,
+		Email:          req.Email,
+		WhatsappNumber: sanitizeWhatsappNumber(req.WhatsappNumber),
+		Password:       string(hashedPassword),
+		Role:           RoleRunner,
+		DeviceId:       &devID,
+		IsVerified:     false,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+
+	if _, err := tx.NewInsert().Model(user).Exec(ctx); err != nil {
+		return nil, fmt.Errorf("gagal menyimpan data pengguna: %w", err)
+	}
+
+	kycSub := &kycSubmissionLocal{
+		ID:             uuid.New(),
+		UserID:         userID,
+		IdCardNumber:   req.IdCardNumber,
+		IdCardImageUrl: idCardURL,
+		SelfieImageUrl: selfieURL,
+		Status:         "pending",
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+
+	if _, err := tx.NewInsert().Model(kycSub).Exec(ctx); err != nil {
+		return nil, fmt.Errorf("gagal menyimpan data KYC: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("gagal mengonfirmasi transaksi pendaftaran: %w", err)
+	}
+
+	user.ComputeHasPin()
+	return user, nil
+}
+
+func (s *service) OnboardMerchant(ctx context.Context, req OnboardMerchantRequest) (*User, error) {
+	// 1. Check if email already registered
+	existing, err := s.repo.FindByEmail(ctx, req.Email)
+	if err == nil && existing != nil {
+		return nil, errors.New("email sudah terdaftar")
+	}
+
+	// 2. Hash Password
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	if err != nil {
+		return nil, errors.New("gagal mengenkripsi kata sandi")
+	}
+
+	userID := uuid.New()
+	merchantID := uuid.New()
+
+	// 3. Upload Business Photo (before db tx)
+	var photoURL string
+	if req.PhotoFile != nil && s.storage != nil {
+		objectKey := fmt.Sprintf("merchants/%s_%d_%s", merchantID.String(), time.Now().Unix(), req.PhotoFilename)
+		path, err := s.storage.Upload(ctx, objectKey, req.PhotoFile, -1, "image/jpeg")
+		if err != nil {
+			return nil, fmt.Errorf("gagal mengunggah foto usaha: %w", err)
+		}
+		photoURL = path
+	} else {
+		return nil, errors.New("foto usaha wajib diunggah")
+	}
+
+	// 4. Database Transaction
+	db := s.repo.GetDB()
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("gagal memulai transaksi: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	now := time.Now()
+	devID := "web"
+	user := &User{
+		ID:             userID,
+		Name:           req.Name,
+		Email:          req.Email,
+		WhatsappNumber: sanitizeWhatsappNumber(req.WhatsappNumber),
+		Password:       string(hashedPassword),
+		Role:           RoleMerchant,
+		DeviceId:       &devID,
+		IsVerified:     true, // Verified as user, but merchant status is controlled by is_open
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+
+	if _, err := tx.NewInsert().Model(user).Exec(ctx); err != nil {
+		return nil, fmt.Errorf("gagal menyimpan data owner merchant: %w", err)
+	}
+
+	merchant := &merchantLocal{
+		ID:              merchantID,
+		OwnerID:         userID,
+		Name:            req.MerchantName,
+		Description:     req.Description,
+		Address:         req.Address,
+		Latitude:        req.Latitude,
+		Longitude:       req.Longitude,
+		Category:        req.Category,
+		IsOpen:          false, // Kept closed until manual approval/verification
+		AutoConfirm:     false,
+		MaxActiveOrders: 5,
+		Rating:          5.0,
+		ImageURL:        photoURL,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	}
+
+	if _, err := tx.NewInsert().Model(merchant).Exec(ctx); err != nil {
+		return nil, fmt.Errorf("gagal menyimpan data profil merchant: %w", err)
+	}
+
+	survey := &merchantSurveyLocal{
+		ID:                uuid.New(),
+		MerchantID:        merchantID,
+		MonthlySalesRange: req.MonthlySalesRange,
+		AverageItemPrice:  req.AverageItemPrice,
+		CreatedAt:         now,
+	}
+
+	if _, err := tx.NewInsert().Model(survey).Exec(ctx); err != nil {
+		return nil, fmt.Errorf("gagal menyimpan data survei merchant: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("gagal mengonfirmasi transaksi pendaftaran merchant: %w", err)
+	}
+
+	user.ComputeHasPin()
+	return user, nil
+}
+

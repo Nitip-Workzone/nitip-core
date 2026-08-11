@@ -36,6 +36,8 @@ func (h *Handler) RegisterRoutes(router fiber.Router) {
 	// User profile & registration
 	g := router.Group("/users")
 	g.Post("/register", middleware.RateLimit(h.redis, 3, 1*time.Minute), h.Create)
+	g.Post("/onboard/runner", middleware.RateLimit(h.redis, 3, 1*time.Minute), h.OnboardRunner)
+	g.Post("/onboard/merchant", middleware.RateLimit(h.redis, 3, 1*time.Minute), h.OnboardMerchant)
 	g.Get("/me", middleware.Protected(h.db, h.redis), h.GetMe)
 	g.Get("/me/bank-account", middleware.Protected(h.db, h.redis), h.GetMyBankAccount)
 	g.Post("/pin/setup", middleware.Protected(h.db, h.redis), middleware.RateLimit(h.redis, 3, 1*time.Minute), h.SetupPin)
@@ -1144,3 +1146,156 @@ func (h *Handler) AdminGetBankAccount(c *fiber.Ctx) error {
 
 	return response.Success(c, "rekening pengguna berhasil diambil", uba)
 }
+
+func (h *Handler) OnboardRunner(c *fiber.Ctx) error {
+	name := c.FormValue("name")
+	email := c.FormValue("email")
+	password := c.FormValue("password")
+	whatsappNumber := c.FormValue("whatsapp_number")
+	idCardNumber := c.FormValue("id_card_number")
+
+	if name == "" || email == "" || password == "" || whatsappNumber == "" || idCardNumber == "" {
+		return response.BadRequest(c, "semua kolom pendaftaran wajib diisi")
+	}
+
+	if len(idCardNumber) != 16 {
+		return response.BadRequest(c, "nomor KTP harus berjumlah 16 digit")
+	}
+
+	idCardFile, err := c.FormFile("id_card")
+	if err != nil {
+		return response.BadRequest(c, "foto KTP wajib diunggah")
+	}
+	if idCardFile.Size > 5*1024*1024 {
+		return response.BadRequest(c, "ukuran foto KTP terlalu besar (maksimal 5MB)")
+	}
+	if !fileutil.IsImage(idCardFile) {
+		return response.BadRequest(c, "file KTP harus berupa gambar (jpg, jpeg, png)")
+	}
+
+	selfieFile, err := c.FormFile("selfie")
+	if err != nil {
+		return response.BadRequest(c, "foto selfie wajib diunggah")
+	}
+	if selfieFile.Size > 5*1024*1024 {
+		return response.BadRequest(c, "ukuran foto selfie terlalu besar (maksimal 5MB)")
+	}
+	if !fileutil.IsImage(selfieFile) {
+		return response.BadRequest(c, "file selfie harus berupa gambar (jpg, jpeg, png)")
+	}
+
+	ic, err := idCardFile.Open()
+	if err != nil {
+		return response.InternalError(c, "gagal memproses file KTP")
+	}
+	defer func() { _ = ic.Close() }()
+
+	sf, err := selfieFile.Open()
+	if err != nil {
+		return response.InternalError(c, "gagal memproses file selfie")
+	}
+	defer func() { _ = sf.Close() }()
+
+	req := OnboardRunnerRequest{
+		Name:           name,
+		Email:          email,
+		Password:       password,
+		WhatsappNumber: whatsappNumber,
+		IdCardNumber:   idCardNumber,
+		IdCardFile:     ic,
+		IdCardFilename: idCardFile.Filename,
+		SelfieFile:     sf,
+		SelfieFilename: selfieFile.Filename,
+	}
+
+	if errs := validator.Validate(req); errs != nil {
+		return response.ValidationFailed(c, errs)
+	}
+
+	user, err := h.service.OnboardRunner(c.Context(), req)
+	if err != nil {
+		return response.BadRequest(c, err.Error())
+	}
+
+	return response.Created(c, "pendaftaran Runner berhasil, mohon tunggu peninjauan dokumen oleh admin", user)
+}
+
+func (h *Handler) OnboardMerchant(c *fiber.Ctx) error {
+	name := c.FormValue("name")
+	email := c.FormValue("email")
+	password := c.FormValue("password")
+	whatsappNumber := c.FormValue("whatsapp_number")
+	merchantName := c.FormValue("merchant_name")
+	description := c.FormValue("description")
+	address := c.FormValue("address")
+	latitudeStr := c.FormValue("latitude")
+	longitudeStr := c.FormValue("longitude")
+	category := c.FormValue("category")
+	monthlySalesRange := c.FormValue("monthly_sales_range")
+	averageItemPriceStr := c.FormValue("average_item_price")
+
+	if name == "" || email == "" || password == "" || whatsappNumber == "" || merchantName == "" || address == "" || latitudeStr == "" || longitudeStr == "" || category == "" || monthlySalesRange == "" || averageItemPriceStr == "" {
+		return response.BadRequest(c, "semua kolom pendaftaran merchant wajib diisi")
+	}
+
+	latitude, err := strconv.ParseFloat(latitudeStr, 64)
+	if err != nil {
+		return response.BadRequest(c, "format koordinat latitude tidak valid")
+	}
+
+	longitude, err := strconv.ParseFloat(longitudeStr, 64)
+	if err != nil {
+		return response.BadRequest(c, "format koordinat longitude tidak valid")
+	}
+
+	averageItemPrice, err := strconv.ParseFloat(averageItemPriceStr, 64)
+	if err != nil {
+		return response.BadRequest(c, "format harga barang tidak valid")
+	}
+
+	photoFile, err := c.FormFile("photo")
+	if err != nil {
+		return response.BadRequest(c, "foto tempat usaha wajib diunggah")
+	}
+	if photoFile.Size > 5*1024*1024 {
+		return response.BadRequest(c, "ukuran foto tempat usaha terlalu besar (maksimal 5MB)")
+	}
+	if !fileutil.IsImage(photoFile) {
+		return response.BadRequest(c, "file foto usaha harus berupa gambar (jpg, jpeg, png)")
+	}
+
+	pf, err := photoFile.Open()
+	if err != nil {
+		return response.InternalError(c, "gagal memproses foto usaha")
+	}
+	defer func() { _ = pf.Close() }()
+
+	req := OnboardMerchantRequest{
+		Name:              name,
+		Email:             email,
+		Password:          password,
+		WhatsappNumber:    whatsappNumber,
+		MerchantName:      merchantName,
+		Description:       description,
+		Address:           address,
+		Latitude:          latitude,
+		Longitude:         longitude,
+		Category:          category,
+		MonthlySalesRange: monthlySalesRange,
+		AverageItemPrice:  averageItemPrice,
+		PhotoFile:         pf,
+		PhotoFilename:     photoFile.Filename,
+	}
+
+	if errs := validator.Validate(req); errs != nil {
+		return response.ValidationFailed(c, errs)
+	}
+
+	user, err := h.service.OnboardMerchant(c.Context(), req)
+	if err != nil {
+		return response.BadRequest(c, err.Error())
+	}
+
+	return response.Created(c, "pendaftaran Merchant berhasil, mohon tunggu kurasi oleh tim admin", user)
+}
+

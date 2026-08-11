@@ -29,6 +29,9 @@ type Repository interface {
 	// OrderItem
 	CreateOrderItems(ctx context.Context, items []OrderItem) error
 	ListOrderItemsByOrderID(ctx context.Context, orderID uuid.UUID) ([]OrderItem, error)
+
+	// Survey
+	CreateSurvey(ctx context.Context, s *MerchantSurvey) error
 }
 
 type repository struct {
@@ -173,3 +176,9 @@ func (r *repository) ListOrderItemsByOrderID(ctx context.Context, orderID uuid.U
 		Scan(ctx)
 	return items, err
 }
+
+func (r *repository) CreateSurvey(ctx context.Context, s *MerchantSurvey) error {
+	_, err := r.db.NewInsert().Model(s).Exec(ctx)
+	return err
+}
+
