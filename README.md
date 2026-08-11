@@ -191,4 +191,4 @@ All query code remains the same — bun handles dialect automatically.
 | POST | `/auth/grant` | Get HMAC grant token |
 | POST | `/auth/login` | Login (email + password) |
 | POST | `/auth/refresh` | Refresh access token |
-| POST | `/auth/logout` | Logout (invalidate session) |
+| POST | `/auth/logout` | Logout (invalidate session) | 
