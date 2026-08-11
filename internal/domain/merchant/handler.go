@@ -170,6 +170,7 @@ type updateProfileRequest struct {
 	Category     string        `json:"category" validate:"required,oneof=food laundry mart"`
 	OpeningHours *OpeningHours `json:"opening_hours,omitempty"`
 	ImageURL     *string       `json:"image_url,omitempty"`
+	CoverURL     *string       `json:"cover_url,omitempty"`
 }
 
 func (h *Handler) UpdateProfile(c *fiber.Ctx) error {
@@ -190,7 +191,7 @@ func (h *Handler) UpdateProfile(c *fiber.Ctx) error {
 		return response.ValidationFailed(c, errs)
 	}
 
-	updated, err := h.service.UpdateMerchantFull(c.Context(), m.ID, req.Name, req.Description, req.Address, req.Latitude, req.Longitude, req.Category, m.MaxActiveOrders, req.OpeningHours, req.ImageURL)
+	updated, err := h.service.UpdateMerchantFull(c.Context(), m.ID, req.Name, req.Description, req.Address, req.Latitude, req.Longitude, req.Category, m.MaxActiveOrders, req.OpeningHours, req.ImageURL, req.CoverURL)
 	if err != nil {
 		return response.InternalError(c, err.Error())
 	}

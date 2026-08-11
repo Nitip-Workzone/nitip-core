@@ -14,7 +14,7 @@ type Service interface {
 	// Merchant
 	CreateMerchant(ctx context.Context, ownerID uuid.UUID, name, description, address string, lat, lng float64, category string, autoConfirm bool, maxActiveOrders int) (*Merchant, error)
 	UpdateMerchant(ctx context.Context, id uuid.UUID, name, description, address string, lat, lng float64, category string, maxActiveOrders int) (*Merchant, error)
-	UpdateMerchantFull(ctx context.Context, id uuid.UUID, name, description, address string, lat, lng float64, category string, maxActiveOrders int, openingHours *OpeningHours, imageURL *string) (*Merchant, error)
+	UpdateMerchantFull(ctx context.Context, id uuid.UUID, name, description, address string, lat, lng float64, category string, maxActiveOrders int, openingHours *OpeningHours, imageURL *string, coverURL *string) (*Merchant, error)
 	GetMerchantByID(ctx context.Context, id uuid.UUID) (*Merchant, error)
 	GetMerchantByOwnerID(ctx context.Context, ownerID uuid.UUID) (*Merchant, error)
 	ListNearbyMerchants(ctx context.Context, lat, lng float64, radiusKm float64) ([]Merchant, error)
@@ -111,7 +111,7 @@ func (s *service) UpdateMerchant(ctx context.Context, id uuid.UUID, name, descri
 	return m, nil
 }
 
-func (s *service) UpdateMerchantFull(ctx context.Context, id uuid.UUID, name, description, address string, lat, lng float64, category string, maxActiveOrders int, openingHours *OpeningHours, imageURL *string) (*Merchant, error) {
+func (s *service) UpdateMerchantFull(ctx context.Context, id uuid.UUID, name, description, address string, lat, lng float64, category string, maxActiveOrders int, openingHours *OpeningHours, imageURL *string, coverURL *string) (*Merchant, error) {
 	m, err := s.repo.GetMerchantByID(ctx, id)
 	if err != nil {
 		return nil, err
@@ -128,6 +128,9 @@ func (s *service) UpdateMerchantFull(ctx context.Context, id uuid.UUID, name, de
 	}
 	if imageURL != nil {
 		m.ImageURL = *imageURL
+	}
+	if coverURL != nil {
+		m.CoverURL = *coverURL
 	}
 	m.UpdatedAt = time.Now()
 	if err := s.repo.UpdateMerchant(ctx, m); err != nil {

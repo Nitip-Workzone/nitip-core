@@ -1275,6 +1275,26 @@ func (h *Handler) OnboardMerchant(c *fiber.Ctx) error {
 	}
 	defer func() { _ = pf.Close() }()
 
+	// Cover file is optional
+	var cf io.Reader
+	var coverFilename string
+	coverFile, err := c.FormFile("cover")
+	if err == nil && coverFile != nil {
+		if coverFile.Size > 5*1024*1024 {
+			return response.BadRequest(c, "ukuran foto sampul terlalu besar (maksimal 5MB)")
+		}
+		if !fileutil.IsImage(coverFile) {
+			return response.BadRequest(c, "file foto sampul harus berupa gambar (jpg, jpeg, png)")
+		}
+		openedCover, err := coverFile.Open()
+		if err != nil {
+			return response.InternalError(c, "gagal memproses foto sampul")
+		}
+		defer func() { _ = openedCover.Close() }()
+		cf = openedCover
+		coverFilename = coverFile.Filename
+	}
+
 	req := OnboardMerchantRequest{
 		Token:             token,
 		Name:              name,
@@ -1291,6 +1311,8 @@ func (h *Handler) OnboardMerchant(c *fiber.Ctx) error {
 		AverageItemPrice:  averageItemPrice,
 		PhotoFile:         pf,
 		PhotoFilename:     photoFile.Filename,
+		CoverFile:         cf,
+		CoverFilename:     coverFilename,
 	}
 
 	if errs := validator.Validate(req); errs != nil {

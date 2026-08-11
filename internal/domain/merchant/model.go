@@ -41,6 +41,7 @@ type Merchant struct {
 	Rating          float64      `bun:"rating,notnull,default:5.0" json:"rating"`
 	OpeningHours    OpeningHours `bun:"opening_hours,type:jsonb,notnull,default:'{}'" json:"opening_hours"`
 	ImageURL        string       `bun:"image_url" json:"image_url,omitempty"`
+	CoverURL        string       `bun:"cover_url" json:"cover_url,omitempty"`
 	CreatedAt       time.Time    `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"created_at"`
 	UpdatedAt       time.Time    `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updated_at"`
 	DeletedAt       *time.Time   `bun:"deleted_at,soft_delete,nullzero" json:"deleted_at,omitempty"`

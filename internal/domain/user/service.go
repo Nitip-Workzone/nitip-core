@@ -75,6 +75,8 @@ type OnboardMerchantRequest struct {
 	AverageItemPrice  float64   `json:"average_item_price" validate:"required,gt=0"`
 	PhotoFile         io.Reader `json:"-"`
 	PhotoFilename     string    `json:"-"`
+	CoverFile         io.Reader `json:"-"`
+	CoverFilename     string    `json:"-"`
 }
 
 
@@ -998,6 +1000,7 @@ type merchantLocal struct {
 	MaxActiveOrders int       `bun:"max_active_orders,notnull,default:5"`
 	Rating          float64   `bun:"rating,notnull,default:5.0"`
 	ImageURL        string    `bun:"image_url"`
+	CoverURL        string    `bun:"cover_url"`
 	CreatedAt       time.Time `bun:"created_at,nullzero,notnull,default:current_timestamp"`
 	UpdatedAt       time.Time `bun:"updated_at,nullzero,notnull,default:current_timestamp"`
 }
@@ -1167,6 +1170,17 @@ func (s *service) OnboardMerchant(ctx context.Context, req OnboardMerchantReques
 		return nil, errors.New("foto usaha wajib diunggah")
 	}
 
+	// Upload Cover Photo (optional, goes to merchants/covers/)
+	var coverURL string
+	if req.CoverFile != nil && s.storage != nil {
+		objectKey := fmt.Sprintf("merchants/covers/%s_%d_%s", merchantID.String(), time.Now().Unix(), req.CoverFilename)
+		path, err := s.storage.Upload(ctx, objectKey, req.CoverFile, -1, "image/jpeg")
+		if err != nil {
+			return nil, fmt.Errorf("gagal mengunggah foto sampul: %w", err)
+		}
+		coverURL = path
+	}
+
 	// 4. Database Transaction
 	db := s.repo.GetDB()
 	tx, err := db.BeginTx(ctx, nil)
@@ -1208,6 +1222,7 @@ func (s *service) OnboardMerchant(ctx context.Context, req OnboardMerchantReques
 		MaxActiveOrders: 5,
 		Rating:          5.0,
 		ImageURL:        photoURL,
+		CoverURL:        coverURL,
 		CreatedAt:       now,
 		UpdatedAt:       now,
 	}
