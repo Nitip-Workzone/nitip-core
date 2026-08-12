@@ -21,7 +21,7 @@ func ConvertStaticToDynamicQRIS(staticQRIS string, amount float64) (string, erro
 	payload := staticQRIS[:idx63]
 
 	// 2. Change Tag 01 (Initiation Method) from "010211" (Static) to "010212" (Dynamic)
-	payload = ReplaceFirst(payload, "010211", "010212")
+	// payload = ReplaceFirst(payload, "010211", "010212")
 
 	// 3. Insert Tag 54 (Amount) right after Tag 53 (Currency "5303360")
 	idx53 := Index(payload, "5303360")
