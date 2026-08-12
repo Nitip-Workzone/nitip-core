@@ -854,6 +854,13 @@ func (s *service) AcceptOrder(ctx context.Context, orderID, runnerID uuid.UUID) 
 			}
 		}
 
+		// 1b. Hold Runner Liability (Deposit)
+		if order.EstimatedCost > 0 {
+			if err := s.walletSvc.HoldLiability(ctx, tx, runnerID, order.ID, order.EstimatedCost); err != nil {
+				return err
+			}
+		}
+
 		// 2. Atomic Capacity Update (only if trip exists)
 		if activeTrip != nil {
 			if err := s.tripRepo.UpdateCapacity(ctx, tx, activeTrip.ID, order.WeightKg, order.VolumeLiters); err != nil {
@@ -1138,6 +1145,13 @@ func (s *service) CancelOrder(ctx context.Context, orderID, userID uuid.UUID, re
 				}
 			}
 			ord.PaymentStatus = PaymentRefunded
+		}
+
+		// Release Runner Liability Hold
+		if ord.RunnerID != nil && ord.EstimatedCost > 0 {
+			if err := s.walletSvc.ReleaseLiability(ctx, tx, *ord.RunnerID, ord.ID, ord.EstimatedCost); err != nil {
+				return err
+			}
 		}
 
 		// Restore Capacity if runner was assigned
@@ -1645,6 +1659,13 @@ func (s *service) ForceCancelOrder(ctx context.Context, orderID uuid.UUID) error
 				return errors.New("gagal mengembalikan dana escrow: " + err.Error())
 			}
 			order.PaymentStatus = PaymentRefunded
+		}
+
+		// 1b. Release Runner Liability
+		if order.RunnerID != nil && order.EstimatedCost > 0 {
+			if err := s.walletSvc.ReleaseLiability(ctx, tx, *order.RunnerID, orderID, order.EstimatedCost); err != nil {
+				return err
+			}
 		}
 
 		// 2. Restore Capacity

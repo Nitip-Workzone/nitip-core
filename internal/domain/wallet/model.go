@@ -11,12 +11,15 @@ type TransactionType string
 type TransactionStatus string
 
 const (
-	TypeTopUp         TransactionType = "TOP_UP"
-	TypeWithdrawal    TransactionType = "WITHDRAWAL"
-	TypeEscrowHold    TransactionType = "ESCROW_HOLD"
-	TypeEscrowRelease TransactionType = "ESCROW_RELEASE"
-	TypePlatformFee   TransactionType = "PLATFORM_FEE"
-	TypeRefund        TransactionType = "REFUND"
+	TypeTopUp               TransactionType = "TOP_UP"
+	TypeWithdrawal          TransactionType = "WITHDRAWAL"
+	TypeEscrowHold          TransactionType = "ESCROW_HOLD"
+	TypeEscrowRelease       TransactionType = "ESCROW_RELEASE"
+	TypeLiabilityHold       TransactionType = "LIABILITY_HOLD"
+	TypeLiabilityRelease    TransactionType = "LIABILITY_RELEASE"
+	TypeLiabilityConfiscated TransactionType = "LIABILITY_CONFISCATED"
+	TypePlatformFee         TransactionType = "PLATFORM_FEE"
+	TypeRefund              TransactionType = "REFUND"
 
 	StatusPending   TransactionStatus = "pending"
 	StatusCompleted TransactionStatus = "completed"

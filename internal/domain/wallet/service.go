@@ -55,6 +55,8 @@ type Service interface {
 
 	// Internal / Automated flow
 	HoldEscrow(ctx context.Context, db bun.IDB, userID, orderID uuid.UUID, amount float64) error
+	HoldLiability(ctx context.Context, db bun.IDB, runnerID, orderID uuid.UUID, amount float64) error
+	ReleaseLiability(ctx context.Context, db bun.IDB, runnerID, orderID uuid.UUID, amount float64) error
 	ReleaseEscrow(ctx context.Context, db bun.IDB, runnerID, orderID uuid.UUID, amount float64, platformFee float64) error
 	RefundEscrow(ctx context.Context, db bun.IDB, requesterID, orderID uuid.UUID, amount float64) error
 	PartialReleaseEscrow(ctx context.Context, db bun.IDB, runnerID, requesterID, orderID uuid.UUID, runnerAmount, refundAmount float64) error
@@ -600,6 +602,52 @@ func (s *service) RequestWithdrawal(ctx context.Context, userID uuid.UUID, amoun
 	return wtx, nil
 }
 
+func (s *service) HoldLiability(ctx context.Context, db bun.IDB, runnerID, orderID uuid.UUID, amount float64) error {
+	w, err := s.repo.GetWalletByUserID(ctx, db, runnerID)
+	if err != nil {
+		return err
+	}
+
+	if w.Balance < amount {
+		return errors.New("saldo jaminan tidak mencukupi untuk pesanan ini")
+	}
+
+	if err := s.repo.UpdateWalletBalance(ctx, db, w.ID, -amount); err != nil {
+		return err
+	}
+
+	wtx := &WalletTransaction{
+		ID:       uuid.New(),
+		WalletID: w.ID,
+		OrderID:  &orderID,
+		Type:     TypeLiabilityHold,
+		Amount:   -amount,
+		Status:   StatusCompleted,
+	}
+	return s.repo.CreateTransaction(ctx, db, wtx)
+}
+
+func (s *service) ReleaseLiability(ctx context.Context, db bun.IDB, runnerID, orderID uuid.UUID, amount float64) error {
+	w, err := s.repo.GetOrCreateWallet(ctx, db, runnerID)
+	if err != nil {
+		return err
+	}
+
+	if err := s.repo.UpdateWalletBalance(ctx, db, w.ID, amount); err != nil {
+		return err
+	}
+
+	wtx := &WalletTransaction{
+		ID:       uuid.New(),
+		WalletID: w.ID,
+		OrderID:  &orderID,
+		Type:     TypeLiabilityRelease,
+		Amount:   amount,
+		Status:   StatusCompleted,
+	}
+	return s.repo.CreateTransaction(ctx, db, wtx)
+}
+
 func (s *service) HoldEscrow(ctx context.Context, db bun.IDB, userID, orderID uuid.UUID, amount float64) error {
 	w, err := s.repo.GetWalletByUserID(ctx, db, userID)
 	if err != nil {
@@ -1083,7 +1131,7 @@ func (s *service) FinalizeWithdrawal(ctx context.Context, txID uuid.UUID, status
 		return nil // Already processed
 	}
 
-	return s.repo.RunInTx(ctx, func(ctx context.Context, btx bun.Tx) error {
+	err = s.repo.RunInTx(ctx, func(ctx context.Context, btx bun.Tx) error {
 		// Update status
 		if err := s.repo.UpdateTransactionStatus(ctx, btx, txID, status); err != nil {
 			return err
@@ -1117,13 +1165,14 @@ func (s *service) FinalizeWithdrawal(ctx context.Context, txID uuid.UUID, status
 	var walletObj Wallet
 	if err := s.db.NewSelect().Model(&walletObj).Where("id = ?", tx.WalletID).Scan(ctx); err == nil {
 		var title, message string
-		if status == StatusCompleted {
+		switch status {
+		case StatusCompleted:
 			title = "Penarikan Dana Berhasil"
 			message = fmt.Sprintf("Penarikan dana sebesar Rp%.0f telah disetujui dan berhasil dikirim.", math.Abs(tx.Amount))
-		} else if status == StatusRejected {
+		case StatusRejected:
 			title = "Penarikan Dana Dibatalkan"
 			message = fmt.Sprintf("Penarikan dana sebesar Rp%.0f telah dibatalkan dan saldo dikembalikan.", math.Abs(tx.Amount))
-		} else if status == StatusFailed {
+		case StatusFailed:
 			title = "Penarikan Dana Gagal"
 			message = fmt.Sprintf("Penarikan dana sebesar Rp%.0f gagal diproses dan saldo dikembalikan.", math.Abs(tx.Amount))
 		}
