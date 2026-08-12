@@ -11,6 +11,7 @@ import (
 	"log"
 	"math"
 	"math/big"
+	mathrand "math/rand"
 	"net/http"
 	"net/url"
 	"os"
@@ -2520,8 +2521,14 @@ func (s *service) generateOrderQRIS(ctx context.Context, order *Order) (string, 
 	var qrString string
 	var reference = order.ID.String()
 
-	grossAmt := math.Ceil(order.TotalPayment / 0.993)
-	pgFee := grossAmt - order.TotalPayment
+	pgFeeStr := s.configSvc.GetValue(ctx, "qris_pg_fee", "0")
+	configuredPGFee, _ := strconv.ParseFloat(pgFeeStr, 64)
+	if configuredPGFee < 0 {
+		configuredPGFee = 0
+	}
+	uniqueCode := float64(mathrand.Intn(99) + 1)
+	pgFee := configuredPGFee + uniqueCode
+	grossAmt := order.TotalPayment + pgFee
 	order.PGFee = pgFee
 	order.TotalPayment = grossAmt
 

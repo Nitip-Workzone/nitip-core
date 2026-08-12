@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"math"
+	"math/rand"
 	"net/http"
 	"os"
 	"strconv"
@@ -161,8 +162,14 @@ func (s *service) InitiateTopUp(ctx context.Context, userID uuid.UUID, amount fl
 	var qrString string
 	var deeplinkString string
 
-	grossAmt := math.Ceil(amount / 0.993)
-	pgFee := grossAmt - amount
+	pgFeeStr := s.configSvc.GetValue(ctx, "qris_pg_fee", "0")
+	configuredPGFee, _ := strconv.ParseFloat(pgFeeStr, 64)
+	if configuredPGFee < 0 {
+		configuredPGFee = 0
+	}
+	uniqueCode := float64(rand.Intn(99) + 1)
+	pgFee := configuredPGFee + uniqueCode
+	grossAmt := amount + pgFee
 
 	if config.App.UsePaymentGateway {
 		if config.App.MidtransServerKey != "" && !config.App.UseMockPayment {
