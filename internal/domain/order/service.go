@@ -85,6 +85,9 @@ type CreateOrderRequest struct {
 	ReceiverPhone   string `json:"receiver_phone"`
 	DeliveryName    string `json:"delivery_name"`
 	DeliveryAddress string `json:"delivery_address"`
+
+	// Order Type Selection
+	OrderType string `json:"order_type" validate:"omitempty,oneof=instant regular"`
 }
 
 type EstimateFeeRequest struct {
@@ -94,6 +97,7 @@ type EstimateFeeRequest struct {
 	DeliveryLng  float64 `json:"delivery_lng"   validate:"required"`
 	WeightKg     float64 `json:"weight_kg"      validate:"required,min=0"`
 	VolumeLiters float64 `json:"volume_liters"  validate:"required,min=0"`
+	OrderType    string  `json:"order_type"     validate:"omitempty,oneof=instant regular"`
 }
 
 type EstimateFeeResponse struct {
@@ -353,12 +357,23 @@ func (s *service) Create(ctx context.Context, requesterID uuid.UUID, req CreateO
 		receiverName = u.Name
 	}
 
-	// 1. Calculate Distance (Already calculated above)
-
 	// 2. Determine Order Type
 	orderType := TypeRegular
-	if distance <= 5.0 {
+	if req.MerchantID != nil {
+		// Nitip-Food otomatis menggunakan mode instant
 		orderType = TypeInstant
+	} else {
+		switch req.OrderType {
+		case "instant":
+			orderType = TypeInstant
+		case "regular":
+			orderType = TypeRegular
+		default:
+			// Fallback: Jika tidak dikirim FE, gunakan logika deteksi jarak default
+			if distance <= 5.0 {
+				orderType = TypeInstant
+			}
+		}
 	}
 
 	// 3. Calculate Delivery Fee automatically (now includes 10% platform markup + checking fee)
@@ -574,8 +589,16 @@ func (s *service) EstimateFee(ctx context.Context, req EstimateFeeRequest) (*Est
 	dist := geo.Haversine(req.PickupLat, req.PickupLng, req.DeliveryLat, req.DeliveryLng)
 
 	orderType := TypeRegular
-	if dist <= 5.0 {
+	switch req.OrderType {
+	case "instant":
 		orderType = TypeInstant
+	case "regular":
+		orderType = TypeRegular
+	default:
+		// Fallback: Jika tidak dikirim FE, gunakan logika jarak default
+		if dist <= 5.0 {
+			orderType = TypeInstant
+		}
 	}
 
 	fee := s.calculateDeliveryFee(ctx, dist, req.WeightKg, req.VolumeLiters, orderType)
@@ -2365,11 +2388,13 @@ func (s *service) calculateDeliveryFee(ctx context.Context, distance, weight, vo
 	var totalFee float64
 
 	if orderType == TypeInstant {
-		// MODE INSTANT (≤ 5km)
+		// MODE INSTANT
 		feeBase, _ := strconv.ParseFloat(s.configSvc.GetValue(ctx, "fee_short_base", "3000"), 64)
+		feePerKM, _ := strconv.ParseFloat(s.configSvc.GetValue(ctx, "fee_short_per_km", "300"), 64)
 		feePerKG, _ := strconv.ParseFloat(s.configSvc.GetValue(ctx, "fee_short_per_kg", "2000"), 64)
 
-		totalFee = feeBase + (weight * feePerKG)
+		routeDistance := distance * 1.3
+		totalFee = feeBase + (routeDistance * feePerKM) + (weight * feePerKG)
 	} else {
 		// MODE REGULAR (> 5km)
 		feeBase, _ := strconv.ParseFloat(s.configSvc.GetValue(ctx, "fee_base", "3000"), 64)
