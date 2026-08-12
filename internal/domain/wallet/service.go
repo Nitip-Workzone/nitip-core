@@ -342,6 +342,8 @@ func (s *service) FinalizeTopUp(ctx context.Context, reference string, notificat
 		// 1. Update status using check-and-set to prevent race conditions (double credit)
 		res, err := tx.NewUpdate().Model((*WalletTransaction)(nil)).
 			Set("status = ?", StatusCompleted).
+			Set("amount = amount + unique_code").
+			Set("pg_fee = pg_fee - unique_code").
 			Where("id = ?", wtx.ID).
 			Where("status = ?", StatusPending).
 			Exec(ctx)
@@ -357,7 +359,8 @@ func (s *service) FinalizeTopUp(ctx context.Context, reference string, notificat
 		}
 
 		// 2. Update balance
-		if err := s.repo.UpdateWalletBalance(ctx, tx, wtx.WalletID, wtx.Amount); err != nil {
+		creditAmt := wtx.Amount + float64(wtx.UniqueCode)
+		if err := s.repo.UpdateWalletBalance(ctx, tx, wtx.WalletID, creditAmt); err != nil {
 			return err
 		}
 
