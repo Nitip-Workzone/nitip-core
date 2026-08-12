@@ -167,7 +167,21 @@ func (s *service) InitiateTopUp(ctx context.Context, userID uuid.UUID, amount fl
 	if configuredPGFee < 0 {
 		configuredPGFee = 0
 	}
-	uniqueCode := float64(rand.Intn(99) + 1)
+	var uniqueCodeVal int
+	if s.redis != nil {
+		for i := 1; i <= 99; i++ {
+			key := fmt.Sprintf("active_uniq:%.2f:%d", amount, i)
+			ok, err := s.redis.Client().SetNX(ctx, key, "active", 15*time.Minute).Result()
+			if err == nil && ok {
+				uniqueCodeVal = i
+				break
+			}
+		}
+	}
+	if uniqueCodeVal == 0 {
+		uniqueCodeVal = rand.Intn(99) + 1
+	}
+	uniqueCode := float64(uniqueCodeVal)
 	pgFee := configuredPGFee + uniqueCode
 	grossAmt := amount + pgFee
 
@@ -295,6 +309,7 @@ func (s *service) InitiateTopUp(ctx context.Context, userID uuid.UUID, amount fl
 		Type:        TypeTopUp,
 		Amount:      amount,
 		PGFee:       pgFee,
+		UniqueCode:  uniqueCodeVal,
 		Reference:   reference,
 		Status:      StatusPending,
 		QrisString:  qrString,
@@ -350,6 +365,12 @@ func (s *service) FinalizeTopUp(ctx context.Context, reference string, notificat
 		if notificationID != "" && s.redis != nil {
 			cacheKey := fmt.Sprintf("payment_listener:processed:%s", notificationID)
 			_ = s.redis.Set(ctx, cacheKey, "processed", 24*time.Hour)
+		}
+
+		// 4. Release unique code
+		if wtx != nil && wtx.UniqueCode > 0 && s.redis != nil {
+			cacheKey := fmt.Sprintf("active_uniq:%.2f:%d", wtx.Amount, wtx.UniqueCode)
+			_ = s.redis.Del(ctx, cacheKey)
 		}
 
 		return nil

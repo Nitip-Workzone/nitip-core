@@ -356,6 +356,10 @@ func (h *Handler) AdminCancelTopUp(c *fiber.Ctx) error {
 		Set("status = ?", StatusFailed).
 		Where("id = ?", wtx.ID).
 		Exec(c.Context())
+	if err == nil && wtx.UniqueCode > 0 && h.redis != nil {
+		cacheKey := fmt.Sprintf("active_uniq:%.2f:%d", wtx.Amount, wtx.UniqueCode)
+		_ = h.redis.Del(c.Context(), cacheKey)
+	}
 	if err != nil {
 		log.Printf("[ADMIN_ACTION_ERROR] Cancel topup %s: failed to update status to failed in DB: %v", reference, err)
 		return response.InternalError(c, "gagal memperbarui status transaksi")

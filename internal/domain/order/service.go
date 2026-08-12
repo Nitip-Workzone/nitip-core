@@ -1176,6 +1176,11 @@ func (s *service) CancelOrder(ctx context.Context, orderID, userID uuid.UUID, re
 	})
 
 	if err == nil {
+		if ord != nil && ord.UniqueCode > 0 && s.redis != nil {
+			baseAmt := ord.TotalPayment - ord.PGFee
+			cacheKey := fmt.Sprintf("active_uniq:%.2f:%d", baseAmt, ord.UniqueCode)
+			_ = s.redis.Del(ctx, cacheKey)
+		}
 		// Notify other parties about cancellation
 		if isRequester {
 			if ord.RunnerID != nil {
@@ -1547,6 +1552,11 @@ func (s *service) processPayment(ctx context.Context, orderID uuid.UUID, payment
 		var orderObj *Order
 		if rowsAffected > 0 {
 			orderObj, _ = s.repo.FindByID(ctx, orderID)
+			if orderObj != nil && orderObj.UniqueCode > 0 && s.redis != nil {
+				baseAmt := orderObj.TotalPayment - orderObj.PGFee
+				cacheKey := fmt.Sprintf("active_uniq:%.2f:%d", baseAmt, orderObj.UniqueCode)
+				_ = s.redis.Del(ctx, cacheKey)
+			}
 		}
 
 		if rowsAffected == 0 {
@@ -1690,6 +1700,11 @@ func (s *service) ForceCancelOrder(ctx context.Context, orderID uuid.UUID) error
 	})
 	if err == nil && s.redis != nil {
 		_ = s.redis.GeoRemoveOrder(ctx, orderID.String())
+		if order != nil && order.UniqueCode > 0 {
+			baseAmt := order.TotalPayment - order.PGFee
+			cacheKey := fmt.Sprintf("active_uniq:%.2f:%d", baseAmt, order.UniqueCode)
+			_ = s.redis.Del(ctx, cacheKey)
+		}
 	}
 	return err
 }
@@ -2507,7 +2522,7 @@ func (s *service) populatePaymentInfo(ctx context.Context, o *Order) {
 			// Save the generated QRIS back to orders table in database so it persists!
 			_, dbErr := s.db.NewUpdate().
 				Model(o).
-				Column("qris_data", "pg_fee", "total_payment").
+				Column("qris_data", "pg_fee", "unique_code", "total_payment").
 				WherePK().
 				Exec(ctx)
 			if dbErr != nil {
@@ -2521,15 +2536,38 @@ func (s *service) generateOrderQRIS(ctx context.Context, order *Order) (string, 
 	var qrString string
 	var reference = order.ID.String()
 
+	baseAmt := order.TotalPayment - order.PGFee
+
+	if order.UniqueCode > 0 && s.redis != nil {
+		oldKey := fmt.Sprintf("active_uniq:%.2f:%d", baseAmt, order.UniqueCode)
+		_ = s.redis.Del(ctx, oldKey)
+	}
+
 	pgFeeStr := s.configSvc.GetValue(ctx, "qris_pg_fee", "0")
 	configuredPGFee, _ := strconv.ParseFloat(pgFeeStr, 64)
 	if configuredPGFee < 0 {
 		configuredPGFee = 0
 	}
-	uniqueCode := float64(mathrand.Intn(99) + 1)
+
+	var uniqueCodeVal int
+	if s.redis != nil {
+		for i := 1; i <= 99; i++ {
+			key := fmt.Sprintf("active_uniq:%.2f:%d", baseAmt, i)
+			ok, err := s.redis.Client().SetNX(ctx, key, "active", 15*time.Minute).Result()
+			if err == nil && ok {
+				uniqueCodeVal = i
+				break
+			}
+		}
+	}
+	if uniqueCodeVal == 0 {
+		uniqueCodeVal = mathrand.Intn(99) + 1
+	}
+	uniqueCode := float64(uniqueCodeVal)
 	pgFee := configuredPGFee + uniqueCode
-	grossAmt := order.TotalPayment + pgFee
+	grossAmt := baseAmt + pgFee
 	order.PGFee = pgFee
+	order.UniqueCode = uniqueCodeVal
 	order.TotalPayment = grossAmt
 
 	if config.App.UsePaymentGateway {
