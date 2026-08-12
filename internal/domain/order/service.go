@@ -1428,6 +1428,13 @@ func (s *service) CompleteOrder(ctx context.Context, orderID, runnerID uuid.UUID
 			order.PaymentStatus = PaymentReleased
 		}
 
+		// 3. Release Runner Liability (Deposit)
+		if order.RunnerID != nil && order.EstimatedCost > 0 {
+			if err := s.walletSvc.ReleaseLiability(ctx, tx, *order.RunnerID, order.ID, order.EstimatedCost); err != nil {
+				return err
+			}
+		}
+
 		if path != "" {
 			order.DeliveryImageURL = path
 		}
@@ -1783,6 +1790,14 @@ func (s *service) ResolveDispute(ctx context.Context, orderID uuid.UUID, side st
 				if err := s.walletSvc.ReleaseEscrowWithRefund(ctx, tx, *order.RunnerID, order.RequesterID, orderID, totalRunnerPayout, platformFee, refundAmount); err != nil {
 					return errors.New("gagal melepaskan dana escrow: " + err.Error())
 				}
+
+				// Release Runner Liability
+				if order.EstimatedCost > 0 {
+					if err := s.walletSvc.ReleaseLiability(ctx, tx, *order.RunnerID, orderID, order.EstimatedCost); err != nil {
+						return err
+					}
+				}
+
 				order.PaymentStatus = PaymentReleased
 				order.Status = StatusCompleted
 			default:
