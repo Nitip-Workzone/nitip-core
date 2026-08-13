@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/codecoffy/nitip-core/config"
 	"github.com/codecoffy/nitip-core/internal/cache"
 	"github.com/codecoffy/nitip-core/internal/domain/audit"
 	"github.com/codecoffy/nitip-core/internal/storage"
@@ -264,7 +265,7 @@ func (s *service) Create(ctx context.Context, req CreateUserRequest) (*User, err
 	}
 
 	// Geofence Region Lock: Hanya berlaku untuk pendaftaran Requester (bukan Runner/Admin)
-	if role == RoleRequester {
+	if role == RoleRequester && !config.App.BypassGeofence {
 		if req.Latitude == nil || req.Longitude == nil {
 			return nil, errors.New("akses lokasi (GPS) wajib diaktifkan untuk mendaftar akun penitip baru")
 		}

@@ -18,6 +18,7 @@ type Config struct {
 	// Bypass & Feature Toggles
 	BypassKYCValidation bool
 	FcmEnabled          bool
+	BypassGeofence      bool
 
 	// Database
 	DBDriver   string // "postgres" | "mysql"
@@ -90,6 +91,7 @@ func Load() *Config {
 		// Bypass & Feature Toggles
 		BypassKYCValidation: getEnv("BYPASS_KYC_VALIDATION", "true") == "true",
 		FcmEnabled:          getEnv("FCM_ENABLED", "false") == "true",
+		BypassGeofence:      getEnv("BYPASS_GEOFENCE", "false") == "true",
 
 		// Database
 		DBDriver:   getEnv("DB_DRIVER", "postgres"),
