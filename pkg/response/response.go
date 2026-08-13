@@ -1,6 +1,7 @@
 package response
 
 import (
+	"fmt"
 	"log"
 	"strings"
 
@@ -67,6 +68,12 @@ func NoContent(c *fiber.Ctx) error {
 // ── Error responses ──────────────────────────────────────
 
 func ValidationFailed(c *fiber.Ctx, errs []ValidationError) error {
+	var errDetails []string
+	for _, e := range errs {
+		errDetails = append(errDetails, fmt.Sprintf("%s: %s", e.Field, e.Message))
+	}
+	log.Printf("[WARN] Validation Failed %s %s: %s", c.Method(), c.Path(), strings.Join(errDetails, ", "))
+
 	return c.Status(fiber.StatusUnprocessableEntity).JSON(envelope{
 		Success: false,
 		Message: "validasi gagal",
