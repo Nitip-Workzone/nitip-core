@@ -38,12 +38,14 @@ func (s *service) geoDistance(lat1, lon1, lat2, lon2 float64) float64 {
 }
 
 type CreateUserRequest struct {
-	Name           string `json:"name"            validate:"required,min=2,max=100"`
-	Email          string `json:"email"           validate:"required,email"`
-	Password       string `json:"password"        validate:"required,min=8,max=72"`
-	Role           string `json:"role"            validate:"omitempty,oneof=requester runner"`
-	DeviceId       string `json:"device_id"       validate:"required"`
-	WhatsappNumber string `json:"whatsapp_number" validate:"required,min=9,max=15,numeric"`
+	Name           string   `json:"name"            validate:"required,min=2,max=100"`
+	Email          string   `json:"email"           validate:"required,email"`
+	Password       string   `json:"password"        validate:"required,min=8,max=72"`
+	Role           string   `json:"role"            validate:"omitempty,oneof=requester runner"`
+	DeviceId       string   `json:"device_id"       validate:"required"`
+	WhatsappNumber string   `json:"whatsapp_number" validate:"required,min=9,max=15,numeric"`
+	Latitude       *float64 `json:"latitude"        validate:"omitempty,latitude"`
+	Longitude      *float64 `json:"longitude"       validate:"omitempty,longitude"`
 }
 
 type OnboardRunnerRequest struct {
@@ -259,6 +261,23 @@ func (s *service) Create(ctx context.Context, req CreateUserRequest) (*User, err
 	role := RoleRequester
 	if req.Role != "" {
 		role = req.Role
+	}
+
+	// Geofence Region Lock: Hanya berlaku untuk pendaftaran Requester (bukan Runner/Admin)
+	if role == RoleRequester {
+		if req.Latitude == nil || req.Longitude == nil {
+			return nil, errors.New("akses lokasi (GPS) wajib diaktifkan untuk mendaftar akun penitip baru")
+		}
+
+		// Pusat Wilayah: Lolak / Kotamobagu (-0.741049, 124.312988)
+		centerLat := -0.741049
+		centerLng := 124.312988
+		maxRadiusKm := 60.0
+
+		distance := s.geoDistance(centerLat, centerLng, *req.Latitude, *req.Longitude)
+		if distance > maxRadiusKm {
+			return nil, errors.New("pendaftaran ditutup karena lokasi Anda saat ini berada di luar wilayah operasional Kotamobagu & Bolaang Mongondow")
+		}
 	}
 
 	now := time.Now()
