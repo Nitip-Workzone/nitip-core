@@ -270,8 +270,8 @@ func (s *service) Create(ctx context.Context, req CreateUserRequest) (*User, err
 			return nil, errors.New("akses lokasi (GPS) wajib diaktifkan untuk mendaftar akun penitip baru")
 		}
 
-		// Pusat Wilayah: Lolak / Kotamobagu (-0.741049, 124.312988)
-		centerLat := -0.741049
+		// Pusat Wilayah: Lolak / Kotamobagu (0.741049, 124.312988)
+		centerLat := 0.741049
 		centerLng := 124.312988
 		maxRadiusKm := 60.0
 
