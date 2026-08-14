@@ -13,6 +13,7 @@ type Repository interface {
 	FindByID(ctx context.Context, id uuid.UUID) (*User, error)
 	FindByIDs(ctx context.Context, ids []uuid.UUID) ([]User, error)
 	FindByEmail(ctx context.Context, email string) (*User, error)
+	FindByWhatsappNumber(ctx context.Context, whatsappNumber string) (*User, error)
 	FindNearbyRunners(ctx context.Context, lat, lng, radiusKm float64) ([]User, error)
 	Create(ctx context.Context, user *User) error
 	Update(ctx context.Context, user *User) error
@@ -89,6 +90,15 @@ func (r *repository) FindByIDs(ctx context.Context, ids []uuid.UUID) ([]User, er
 func (r *repository) FindByEmail(ctx context.Context, email string) (*User, error) {
 	user := new(User)
 	err := r.db.NewSelect().Model(user).Where("email = ?", email).Scan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return user, nil
+}
+
+func (r *repository) FindByWhatsappNumber(ctx context.Context, whatsappNumber string) (*User, error) {
+	user := new(User)
+	err := r.db.NewSelect().Model(user).Where("whatsapp_number = ?", whatsappNumber).Scan(ctx)
 	if err != nil {
 		return nil, err
 	}

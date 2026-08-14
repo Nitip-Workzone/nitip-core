@@ -94,7 +94,7 @@ type AdminCreateUserRequest struct {
 }
 
 type LoginRequest struct {
-	Email    string `json:"email"    validate:"required,email"`
+	Email    string `json:"email"    validate:"required"`
 	Password string `json:"password" validate:"required"`
 	DeviceId string `json:"device_id" validate:"required"`
 	TotpCode string `json:"totp_code" validate:"omitempty,len=6,numeric"`
@@ -255,6 +255,11 @@ func (s *service) GetByIDs(ctx context.Context, ids []uuid.UUID) ([]User, error)
 }
 
 func (s *service) Create(ctx context.Context, req CreateUserRequest) (*User, error) {
+	sanitizedWa := sanitizeWhatsappNumber(req.WhatsappNumber)
+	if existing, err := s.repo.FindByWhatsappNumber(ctx, sanitizedWa); err == nil && existing != nil {
+		return nil, errors.New("nomor whatsapp sudah digunakan")
+	}
+
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
 		return nil, errors.New("gagal mengenkripsi kata sandi")
@@ -287,7 +292,7 @@ func (s *service) Create(ctx context.Context, req CreateUserRequest) (*User, err
 		ID:             uuid.New(),
 		Name:           req.Name,
 		Email:          req.Email,
-		WhatsappNumber: req.WhatsappNumber,
+		WhatsappNumber: sanitizedWa,
 		Password:       string(hashedPassword),
 		Role:           role,
 		DeviceId:       &req.DeviceId,
@@ -302,6 +307,11 @@ func (s *service) Create(ctx context.Context, req CreateUserRequest) (*User, err
 }
 
 func (s *service) AdminCreate(ctx context.Context, req AdminCreateUserRequest) (*User, error) {
+	sanitizedWa := sanitizeWhatsappNumber(req.WhatsappNumber)
+	if existing, err := s.repo.FindByWhatsappNumber(ctx, sanitizedWa); err == nil && existing != nil {
+		return nil, errors.New("nomor whatsapp sudah digunakan")
+	}
+
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
 		return nil, errors.New("gagal mengenkripsi kata sandi")
@@ -312,7 +322,7 @@ func (s *service) AdminCreate(ctx context.Context, req AdminCreateUserRequest) (
 		ID:             uuid.New(),
 		Name:           req.Name,
 		Email:          req.Email,
-		WhatsappNumber: req.WhatsappNumber,
+		WhatsappNumber: sanitizedWa,
 		Password:       string(hashedPassword),
 		Role:           req.Role,
 		IsVerified:     req.IsVerified,
@@ -334,14 +344,27 @@ func (s *service) AdminCreate(ctx context.Context, req AdminCreateUserRequest) (
 func (s *service) Login(ctx context.Context, req LoginRequest, platform string) (*LoginResponse, error) {
 	isDev := os.Getenv("APP_ENV") != "production"
 	if isDev {
-		log.Printf("[DEBUG] Login attempt for email: %s, platform: %s", req.Email, platform)
+		log.Printf("[DEBUG] Login attempt for identifier: %s, platform: %s", req.Email, platform)
 	}
-	user, err := s.repo.FindByEmail(ctx, req.Email)
-	if err != nil {
-		if isDev {
-			log.Printf("[DEBUG] Login failed: User not found for email %s: %v", req.Email, err)
+
+	var user *User
+	var err error
+
+	if strings.Contains(req.Email, "@") {
+		user, err = s.repo.FindByEmail(ctx, req.Email)
+	} else {
+		sanitizedWa := sanitizeWhatsappNumber(req.Email)
+		user, err = s.repo.FindByWhatsappNumber(ctx, sanitizedWa)
+		if (err != nil || user == nil) && sanitizedWa != req.Email {
+			user, err = s.repo.FindByWhatsappNumber(ctx, req.Email)
 		}
-		return nil, errors.New("email atau kata sandi salah")
+	}
+
+	if err != nil || user == nil {
+		if isDev {
+			log.Printf("[DEBUG] Login failed: User not found for identifier %s: %v", req.Email, err)
+		}
+		return nil, errors.New("email, nomor telepon, atau kata sandi salah")
 	}
 
 	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.Password)); err != nil {
@@ -1309,10 +1332,15 @@ func (s *service) CreateInvitation(ctx context.Context, actorID uuid.UUID, phone
 		return nil, errors.New("peran undangan tidak valid")
 	}
 
+	sanitizedWa := sanitizeWhatsappNumber(phoneNumber)
+	if existing, err := s.repo.FindByWhatsappNumber(ctx, sanitizedWa); err == nil && existing != nil {
+		return nil, errors.New("nomor whatsapp sudah terdaftar sebagai pengguna")
+	}
+
 	invite := &RegistrationInvitation{
 		ID:          uuid.New(),
 		Token:       uuid.New().String(),
-		PhoneNumber: sanitizeWhatsappNumber(phoneNumber),
+		PhoneNumber: sanitizedWa,
 		Role:        role,
 		Status:      "pending",
 		CreatedBy:   actorID,
