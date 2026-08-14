@@ -55,7 +55,7 @@ type OnboardRunnerRequest struct {
 	Email          string    `json:"email"           validate:"required,email"`
 	Password       string    `json:"password"        validate:"required,min=8,max=72"`
 	WhatsappNumber string    `json:"whatsapp_number" validate:"required,min=9,max=15,numeric"`
-	IdCardNumber   string    `json:"id_card_number"  validate:"required,len=16,numeric"`
+	IdCardNumber   string    `json:"id_card_number"  validate:"omitempty,len=16,numeric"`
 	IdCardFile     io.Reader `json:"-"`
 	IdCardFilename string    `json:"-"`
 	SelfieFile     io.Reader `json:"-"`
@@ -1123,8 +1123,6 @@ func (s *service) OnboardRunner(ctx context.Context, req OnboardRunnerRequest) (
 			return nil, fmt.Errorf("gagal mengunggah foto KTP: %w", err)
 		}
 		idCardURL = path
-	} else {
-		return nil, errors.New("foto KTP wajib diunggah")
 	}
 
 	if req.SelfieFile != nil && s.storage != nil {

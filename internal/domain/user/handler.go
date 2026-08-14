@@ -1195,24 +1195,35 @@ func (h *Handler) OnboardRunner(c *fiber.Ctx) error {
 	password := c.FormValue("password")
 	whatsappNumber := c.FormValue("whatsapp_number")
 	idCardNumber := c.FormValue("id_card_number")
+	if idCardNumber == "" {
+		idCardNumber = "0000000000000000"
+	}
 
-	if token == "" || name == "" || email == "" || password == "" || whatsappNumber == "" || idCardNumber == "" {
+	if token == "" || name == "" || email == "" || password == "" || whatsappNumber == "" {
 		return response.BadRequest(c, "semua kolom pendaftaran wajib diisi")
 	}
 
-	if len(idCardNumber) != 16 {
+	if idCardNumber != "0000000000000000" && len(idCardNumber) != 16 {
 		return response.BadRequest(c, "nomor KTP harus berjumlah 16 digit")
 	}
 
+	var ic io.Reader
+	var idCardFilename string
 	idCardFile, err := c.FormFile("id_card")
-	if err != nil {
-		return response.BadRequest(c, "foto KTP wajib diunggah")
-	}
-	if idCardFile.Size > 5*1024*1024 {
-		return response.BadRequest(c, "ukuran foto KTP terlalu besar (maksimal 5MB)")
-	}
-	if !fileutil.IsImage(idCardFile) {
-		return response.BadRequest(c, "file KTP harus berupa gambar (jpg, jpeg, png)")
+	if err == nil {
+		if idCardFile.Size > 5*1024*1024 {
+			return response.BadRequest(c, "ukuran foto KTP terlalu besar (maksimal 5MB)")
+		}
+		if !fileutil.IsImage(idCardFile) {
+			return response.BadRequest(c, "file KTP harus berupa gambar (jpg, jpeg, png)")
+		}
+		opened, err := idCardFile.Open()
+		if err != nil {
+			return response.InternalError(c, "gagal memproses file KTP")
+		}
+		defer func() { _ = opened.Close() }()
+		ic = opened
+		idCardFilename = idCardFile.Filename
 	}
 
 	selfieFile, err := c.FormFile("selfie")
@@ -1225,12 +1236,6 @@ func (h *Handler) OnboardRunner(c *fiber.Ctx) error {
 	if !fileutil.IsImage(selfieFile) {
 		return response.BadRequest(c, "file selfie harus berupa gambar (jpg, jpeg, png)")
 	}
-
-	ic, err := idCardFile.Open()
-	if err != nil {
-		return response.InternalError(c, "gagal memproses file KTP")
-	}
-	defer func() { _ = ic.Close() }()
 
 	sf, err := selfieFile.Open()
 	if err != nil {
@@ -1246,7 +1251,7 @@ func (h *Handler) OnboardRunner(c *fiber.Ctx) error {
 		WhatsappNumber: whatsappNumber,
 		IdCardNumber:   idCardNumber,
 		IdCardFile:     ic,
-		IdCardFilename: idCardFile.Filename,
+		IdCardFilename: idCardFilename,
 		SelfieFile:     sf,
 		SelfieFilename: selfieFile.Filename,
 	}
