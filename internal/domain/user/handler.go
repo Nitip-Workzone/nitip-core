@@ -1211,8 +1211,8 @@ func (h *Handler) OnboardRunner(c *fiber.Ctx) error {
 	var idCardFilename string
 	idCardFile, err := c.FormFile("id_card")
 	if err == nil {
-		if idCardFile.Size > 5*1024*1024 {
-			return response.BadRequest(c, "ukuran foto KTP terlalu besar (maksimal 5MB)")
+		if idCardFile.Size > 20*1024*1024 {
+			return response.BadRequest(c, "ukuran foto KTP terlalu besar (maksimal 20MB)")
 		}
 		if !fileutil.IsImage(idCardFile) {
 			return response.BadRequest(c, "file KTP harus berupa gambar (jpg, jpeg, png)")
@@ -1230,8 +1230,8 @@ func (h *Handler) OnboardRunner(c *fiber.Ctx) error {
 	if err != nil {
 		return response.BadRequest(c, "foto selfie wajib diunggah")
 	}
-	if selfieFile.Size > 5*1024*1024 {
-		return response.BadRequest(c, "ukuran foto selfie terlalu besar (maksimal 5MB)")
+	if selfieFile.Size > 20*1024*1024 {
+		return response.BadRequest(c, "ukuran foto selfie terlalu besar (maksimal 20MB)")
 	}
 	if !fileutil.IsImage(selfieFile) {
 		return response.BadRequest(c, "file selfie harus berupa gambar (jpg, jpeg, png)")

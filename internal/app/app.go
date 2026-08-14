@@ -27,7 +27,7 @@ func New(logger *zap.Logger) *App {
 	f := fiber.New(fiber.Config{
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 30 * time.Second,
-		BodyLimit:    2 * 1024 * 1024, // 2 MB default
+		BodyLimit:    20 * 1024 * 1024, // 20 MB to allow high-res mobile photos
 		ErrorHandler: middleware.ErrorHandler,
 	})
 

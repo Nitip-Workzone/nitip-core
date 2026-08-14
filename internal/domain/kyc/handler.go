@@ -63,8 +63,8 @@ func (h *Handler) Submit(c *fiber.Ctx) error {
 	if err != nil {
 		return response.BadRequest(c, "gambar kartu identitas wajib diunggah")
 	}
-	if idCardFile.Size > 5*1024*1024 {
-		return response.BadRequest(c, "ukuran gambar kartu identitas terlalu besar (maksimal 5MB)")
+	if idCardFile.Size > 20*1024*1024 {
+		return response.BadRequest(c, "ukuran gambar kartu identitas terlalu besar (maksimal 20MB)")
 	}
 	if !fileutil.IsImage(idCardFile) {
 		return response.BadRequest(c, "kartu identitas harus berupa file gambar (jpg, jpeg, png)")
@@ -74,8 +74,8 @@ func (h *Handler) Submit(c *fiber.Ctx) error {
 	if err != nil {
 		return response.BadRequest(c, "gambar selfie wajib diunggah")
 	}
-	if selfieFile.Size > 5*1024*1024 {
-		return response.BadRequest(c, "ukuran gambar selfie terlalu besar (maksimal 5MB)")
+	if selfieFile.Size > 20*1024*1024 {
+		return response.BadRequest(c, "ukuran gambar selfie terlalu besar (maksimal 20MB)")
 	}
 	if !fileutil.IsImage(selfieFile) {
 		return response.BadRequest(c, "selfie harus berupa file gambar (jpg, jpeg, png)")
