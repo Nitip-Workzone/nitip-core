@@ -29,15 +29,40 @@ func NewService(repo Repository, storage storage.Storage) Service {
 }
 
 func (s *service) GetAllBanners(ctx context.Context) ([]Banner, error) {
-	return s.repo.GetAll(ctx)
+	banners, err := s.repo.GetAll(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for i := range banners {
+		if signed, err := s.storage.SignedURL(ctx, banners[i].ImageURL, 1*time.Hour); err == nil {
+			banners[i].ImageURL = signed
+		}
+	}
+	return banners, nil
 }
 
 func (s *service) GetActiveBanners(ctx context.Context) ([]Banner, error) {
-	return s.repo.GetActive(ctx)
+	banners, err := s.repo.GetActive(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for i := range banners {
+		if signed, err := s.storage.SignedURL(ctx, banners[i].ImageURL, 1*time.Hour); err == nil {
+			banners[i].ImageURL = signed
+		}
+	}
+	return banners, nil
 }
 
 func (s *service) GetBannerByID(ctx context.Context, id uuid.UUID) (*Banner, error) {
-	return s.repo.GetByID(ctx, id)
+	banner, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if signed, err := s.storage.SignedURL(ctx, banner.ImageURL, 1*time.Hour); err == nil {
+		banner.ImageURL = signed
+	}
+	return banner, nil
 }
 
 func (s *service) CreateBanner(ctx context.Context, title, imageURL string, redirectURL *string, isActive bool) (*Banner, error) {
@@ -53,6 +78,9 @@ func (s *service) CreateBanner(ctx context.Context, title, imageURL string, redi
 	err := s.repo.Create(ctx, banner)
 	if err != nil {
 		return nil, err
+	}
+	if signed, err := s.storage.SignedURL(ctx, banner.ImageURL, 1*time.Hour); err == nil {
+		banner.ImageURL = signed
 	}
 	return banner, nil
 }
@@ -72,6 +100,9 @@ func (s *service) UpdateBanner(ctx context.Context, id uuid.UUID, title, imageUR
 	err = s.repo.Update(ctx, banner)
 	if err != nil {
 		return nil, err
+	}
+	if signed, err := s.storage.SignedURL(ctx, banner.ImageURL, 1*time.Hour); err == nil {
+		banner.ImageURL = signed
 	}
 	return banner, nil
 }
