@@ -176,6 +176,7 @@ type Service interface {
 
 	// Bank Account Management
 	GetBankAccount(ctx context.Context, userID uuid.UUID) (*UserBankAccount, error)
+	RegisterBankAccount(ctx context.Context, userID uuid.UUID, bankName, accountNo, accountName string) error
 	AdminRegisterBankAccount(ctx context.Context, userID uuid.UUID, bankName, accountNo, accountName, adminPassword, totpCode string, adminID uuid.UUID) error
 
 	// Admin Password Reset
@@ -932,6 +933,31 @@ func (s *service) AdminRegisterBankAccount(ctx context.Context, userID uuid.UUID
 	}
 
 	s.auditSvc.Log(ctx, &adminID, "REGISTER_USER_BANK", "user_bank_accounts", userID.String(), nil, bankAccount, "", "")
+	return nil
+}
+
+func (s *service) RegisterBankAccount(ctx context.Context, userID uuid.UUID, bankName, accountNo, accountName string) error {
+	// Pengecekan jika rekening sudah ada
+	existing, err := s.repo.FindBankAccountByUserID(ctx, userID)
+	if err == nil && existing != nil && existing.AccountNo != "" {
+		return errors.New("rekening bank sudah terdaftar. Hubungi admin/CS via tiket bantuan untuk melakukan perubahan")
+	}
+
+	bankAccount := &UserBankAccount{
+		ID:          uuid.New(),
+		UserID:      userID,
+		BankName:    bankName,
+		AccountNo:   accountNo,
+		AccountName: accountName,
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
+	}
+
+	if err := s.repo.UpsertBankAccount(ctx, bankAccount); err != nil {
+		return fmt.Errorf("gagal mendaftarkan rekening: %w", err)
+	}
+
+	s.auditSvc.Log(ctx, &userID, "SELF_REGISTER_BANK", "user_bank_accounts", userID.String(), nil, bankAccount, "", "")
 	return nil
 }
 

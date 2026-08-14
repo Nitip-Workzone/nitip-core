@@ -40,6 +40,7 @@ func (h *Handler) RegisterRoutes(router fiber.Router) {
 	g.Post("/onboard/merchant", middleware.RateLimit(h.redis, 3, 1*time.Minute), h.OnboardMerchant)
 	g.Get("/me", middleware.Protected(h.db, h.redis), h.GetMe)
 	g.Get("/me/bank-account", middleware.Protected(h.db, h.redis), h.GetMyBankAccount)
+	g.Post("/me/bank-account", middleware.Protected(h.db, h.redis), h.RegisterMyBankAccount)
 	g.Post("/pin/setup", middleware.Protected(h.db, h.redis), middleware.RateLimit(h.redis, 3, 1*time.Minute), h.SetupPin)
 	g.Post("/pin/change", middleware.Protected(h.db, h.redis), middleware.RateLimit(h.redis, 5, 1*time.Minute), h.ChangePin)
 	g.Post("/pin/verify", middleware.Protected(h.db, h.redis), middleware.RateLimit(h.redis, 5, 1*time.Minute), h.VerifyPin)
@@ -1033,6 +1034,44 @@ func (h *Handler) GetMyBankAccount(c *fiber.Ctx) error {
 	}
 
 	return response.Success(c, "rekening berhasil diambil", uba)
+}
+
+type RegisterMyBankAccountRequest struct {
+	BankName    string `json:"bank_name" validate:"required"`
+	AccountNo   string `json:"account_no" validate:"required"`
+	AccountName string `json:"account_name" validate:"required"`
+}
+
+// RegisterMyBankAccount godoc
+// @Summary      Register own bank account
+// @Description  Register own bank account details. Only allowed once.
+// @Tags         [User] Finance
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        body  body      RegisterMyBankAccountRequest true  "Registration details"
+// @Success      200   {object}  response.envelope
+// @Router       /users/me/bank-account [post]
+func (h *Handler) RegisterMyBankAccount(c *fiber.Ctx) error {
+	claims := jwt.GetClaims(c)
+	if claims == nil {
+		return response.Unauthorized(c, "tidak memiliki akses")
+	}
+
+	var req RegisterMyBankAccountRequest
+	if err := c.BodyParser(&req); err != nil {
+		return response.BadRequest(c, "format permintaan tidak valid")
+	}
+
+	if errs := validator.Validate(req); errs != nil {
+		return response.ValidationFailed(c, errs)
+	}
+
+	if err := h.service.RegisterBankAccount(c.Context(), claims.UserID, req.BankName, req.AccountNo, req.AccountName); err != nil {
+		return response.BadRequest(c, err.Error())
+	}
+
+	return response.Success(c, "rekening Anda berhasil didaftarkan", nil)
 }
 
 type AdminRegisterBankAccountRequest struct {
