@@ -80,6 +80,12 @@ func (h *Handler) RegisterRoutes(router fiber.Router) {
 	authGroup.Post("/login", auth.RequireGrant(h.db), middleware.RateLimit(h.redis, 5, 1*time.Minute), h.Login)
 	authGroup.Post("/refresh", auth.RequireGrant(h.db), middleware.RateLimit(h.redis, 10, 1*time.Minute), h.Refresh)
 	authGroup.Post("/logout", middleware.Protected(h.db, h.redis), h.Logout)
+
+	// WebAuthn Passkeys
+	authGroup.Post("/webauthn/register/begin", middleware.Protected(h.db, h.redis), h.WebAuthnRegisterBegin)
+	authGroup.Post("/webauthn/register/finish", middleware.Protected(h.db, h.redis), h.WebAuthnRegisterFinish)
+	authGroup.Post("/webauthn/login/begin", middleware.RateLimit(h.redis, 5, 1*time.Minute), h.WebAuthnLoginBegin)
+	authGroup.Post("/webauthn/login/finish", middleware.RateLimit(h.redis, 5, 1*time.Minute), h.WebAuthnLoginFinish)
 }
 
 // List godoc

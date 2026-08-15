@@ -190,6 +190,12 @@ type Service interface {
 	CreateInvitation(ctx context.Context, actorID uuid.UUID, phoneNumber, role string) (*RegistrationInvitation, error)
 	ListInvitations(ctx context.Context) ([]RegistrationInvitation, error)
 	ValidateInvitation(ctx context.Context, token string) (*RegistrationInvitation, error)
+
+	// WebAuthn
+	WebAuthnRegisterBegin(ctx context.Context, userID uuid.UUID) (interface{}, error)
+	WebAuthnRegisterFinish(ctx context.Context, userID uuid.UUID, parsedResponse interface{}) error
+	WebAuthnLoginBegin(ctx context.Context, email string) (interface{}, error)
+	WebAuthnLoginFinish(ctx context.Context, email string, parsedResponse interface{}, platform string) (*LoginResponse, error)
 }
 
 type service struct {

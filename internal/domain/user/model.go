@@ -4,6 +4,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/google/uuid"
 	"github.com/uptrace/bun"
 )
@@ -103,3 +104,29 @@ type RegistrationInvitation struct {
 	UpdatedAt   time.Time `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updated_at"`
 }
 
+// WebAuthnUser Interface Implementation
+
+func (u *User) WebAuthnID() []byte {
+	return []byte(u.ID.String())
+}
+
+func (u *User) WebAuthnName() string {
+	return u.Email
+}
+
+func (u *User) WebAuthnDisplayName() string {
+	return u.Name
+}
+
+func (u *User) WebAuthnIcon() string {
+	if u.AvatarUrl != nil {
+		return *u.AvatarUrl
+	}
+	return ""
+}
+
+func (u *User) WebAuthnCredentials() []webauthn.Credential {
+	// Credentials are loaded from the database via WebAuthnService when needed.
+	// This method can return nil or an empty slice if we manage credentials externally.
+	return []webauthn.Credential{}
+}

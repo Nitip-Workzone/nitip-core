@@ -9,6 +9,7 @@ require (
 	github.com/alicebob/miniredis/v2 v2.38.0
 	github.com/go-playground/validator/v10 v10.30.1
 	github.com/go-sql-driver/mysql v1.9.3
+	github.com/go-webauthn/webauthn v0.17.4
 	github.com/gofiber/fiber/v2 v2.52.12
 	github.com/gofiber/swagger v1.1.1
 	github.com/gofiber/websocket/v2 v2.2.1
@@ -29,6 +30,7 @@ require (
 	github.com/uptrace/bun/dialect/mysqldialect v1.2.18
 	github.com/uptrace/bun/dialect/pgdialect v1.2.18
 	github.com/uptrace/bun/driver/pgdriver v1.2.18
+	github.com/valyala/fasthttp v1.70.0
 	go.uber.org/zap v1.27.1
 	golang.org/x/crypto v0.53.0
 	golang.org/x/image v0.44.0
@@ -66,6 +68,7 @@ require (
 	github.com/envoyproxy/protoc-gen-validate v1.3.0 // indirect
 	github.com/fasthttp/websocket v1.5.3 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
+	github.com/fxamacker/cbor/v2 v2.9.2 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.12 // indirect
 	github.com/go-ini/ini v1.67.0 // indirect
 	github.com/go-jose/go-jose/v4 v4.1.3 // indirect
@@ -77,9 +80,12 @@ require (
 	github.com/go-openapi/swag v0.19.15 // indirect
 	github.com/go-playground/locales v0.14.1 // indirect
 	github.com/go-playground/universal-translator v0.18.1 // indirect
+	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
+	github.com/go-webauthn/x v0.2.6 // indirect
 	github.com/golang-jwt/jwt/v4 v4.5.2 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/google/go-querystring v1.0.0 // indirect
+	github.com/google/go-tpm v0.9.8 // indirect
 	github.com/google/s2a-go v0.1.9 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.6 // indirect
 	github.com/googleapis/gax-go/v2 v2.15.0 // indirect
@@ -108,12 +114,12 @@ require (
 	github.com/spiffe/go-spiffe/v2 v2.6.0 // indirect
 	github.com/stretchr/objx v0.5.2 // indirect
 	github.com/swaggo/files/v2 v2.0.2 // indirect
-	github.com/tinylib/msgp v1.6.1 // indirect
+	github.com/tinylib/msgp v1.6.4 // indirect
 	github.com/tmthrgd/go-hex v0.0.0-20190904060850-447a3041c3bc // indirect
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
-	github.com/valyala/fasthttp v1.70.0 // indirect
 	github.com/vmihailenco/msgpack/v5 v5.4.1 // indirect
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
+	github.com/x448/float16 v0.8.4 // indirect
 	github.com/yuin/gopher-lua v1.1.1 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/detectors/gcp v1.39.0 // indirect

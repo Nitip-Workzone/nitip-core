@@ -30,6 +30,11 @@ type Repository interface {
 	FindInvitationByToken(ctx context.Context, token string) (*RegistrationInvitation, error)
 	ListInvitations(ctx context.Context) ([]RegistrationInvitation, error)
 	UpdateInvitation(ctx context.Context, invite *RegistrationInvitation) error
+
+	// WebAuthn
+	CreateWebAuthnCredential(ctx context.Context, cred *WebauthnCredential) error
+	FindWebAuthnCredentialsByUserID(ctx context.Context, userID uuid.UUID) ([]WebauthnCredential, error)
+	UpdateWebAuthnCredential(ctx context.Context, cred *WebauthnCredential) error
 }
 
 type repository struct {
@@ -221,6 +226,22 @@ func (r *repository) ListInvitations(ctx context.Context) ([]RegistrationInvitat
 
 func (r *repository) UpdateInvitation(ctx context.Context, invite *RegistrationInvitation) error {
 	_, err := r.db.NewUpdate().Model(invite).WherePK().Exec(ctx)
+	return err
+}
+
+func (r *repository) CreateWebAuthnCredential(ctx context.Context, cred *WebauthnCredential) error {
+	_, err := r.db.NewInsert().Model(cred).Exec(ctx)
+	return err
+}
+
+func (r *repository) FindWebAuthnCredentialsByUserID(ctx context.Context, userID uuid.UUID) ([]WebauthnCredential, error) {
+	var creds []WebauthnCredential
+	err := r.db.NewSelect().Model(&creds).Where("user_id = ?", userID).Scan(ctx)
+	return creds, err
+}
+
+func (r *repository) UpdateWebAuthnCredential(ctx context.Context, cred *WebauthnCredential) error {
+	_, err := r.db.NewUpdate().Model(cred).WherePK().Exec(ctx)
 	return err
 }
 
