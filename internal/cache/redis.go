@@ -61,6 +61,27 @@ func (r *Redis) Exists(ctx context.Context, key string) (bool, error) {
 	return n > 0, err
 }
 
+func (r *Redis) DelByPattern(ctx context.Context, pattern string) error {
+	var cursor uint64
+	for {
+		var keys []string
+		var err error
+		keys, cursor, err = r.client.Scan(ctx, cursor, pattern, 100).Result()
+		if err != nil {
+			return err
+		}
+		if len(keys) > 0 {
+			if err := r.client.Del(ctx, keys...).Err(); err != nil {
+				return err
+			}
+		}
+		if cursor == 0 {
+			break
+		}
+	}
+	return nil
+}
+
 func (r *Redis) Client() *redis.Client {
 	return r.client
 }

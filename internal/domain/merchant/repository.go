@@ -86,7 +86,6 @@ func (r *repository) ListNearbyMerchants(ctx context.Context, lat, lng float64, 
 	radiusM := radiusKm * 1000
 	err := r.db.NewSelect().
 		Model(&merchants).
-		Where("is_open = ?", true).
 		// Use ST_DWithin with geography(Point) for GIST index acceleration; if geom column exists use it else compute on fly
 		Where("ST_DWithin(CAST(ST_SetSRID(ST_MakePoint(longitude, latitude),4326) AS geography), CAST(ST_SetSRID(ST_MakePoint(?, ?),4326) AS geography), ?)", lng, lat, radiusM).
 		OrderExpr("ST_Distance(CAST(ST_SetSRID(ST_MakePoint(longitude, latitude),4326) AS geography), CAST(ST_SetSRID(ST_MakePoint(?, ?),4326) AS geography)) ASC", lng, lat).
@@ -96,7 +95,6 @@ func (r *repository) ListNearbyMerchants(ctx context.Context, lat, lng float64, 
 		// fallback to old acos if PostGIS fails
 		err = r.db.NewSelect().
 			Model(&merchants).
-			Where("is_open = ?", true).
 			Where("6371 * acos(cos(radians(?)) * cos(radians(latitude)) * cos(radians(longitude) - radians(?)) + sin(radians(?)) * sin(radians(latitude))) <= ?", lat, lng, lat, radiusKm).
 			Limit(50).
 			Scan(ctx)

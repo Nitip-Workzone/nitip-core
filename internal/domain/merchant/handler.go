@@ -1,8 +1,13 @@
 package merchant
 
 import (
+	"context"
+	"encoding/json"
+	"fmt"
 	"log"
+	"math"
 	"strconv"
+	"time"
 
 	"github.com/codecoffy/nitip-core/internal/cache"
 	"github.com/codecoffy/nitip-core/internal/domain/user"
@@ -24,6 +29,12 @@ type Handler struct {
 
 func NewHandler(service Service, db *bun.DB, redis *cache.Redis) *Handler {
 	return &Handler{service: service, db: db, redis: redis}
+}
+
+func (h *Handler) invalidateCache(ctx context.Context) {
+	if h.redis != nil {
+		_ = h.redis.DelByPattern(ctx, "merchants:nearby:*")
+	}
 }
 
 func (h *Handler) RegisterRoutes(router fiber.Router) {
@@ -76,9 +87,32 @@ func (h *Handler) ListNearby(c *fiber.Ctx) error {
 		radius = 10.0
 	}
 
-	merchants, err := h.service.ListNearbyMerchants(c.Context(), lat, lng, radius)
+	// Round coordinates to 3 decimal places to create a stable key (approx. 110m precision)
+	roundedLat := math.Round(lat*1000) / 1000
+	roundedLng := math.Round(lng*1000) / 1000
+	cacheKey := fmt.Sprintf("merchants:nearby:%.3f:%.3f:%.2f", roundedLat, roundedLng, radius)
+
+	// Check Redis cache first
+	var merchants []Merchant
+	if h.redis != nil {
+		cachedData, err := h.redis.Get(c.Context(), cacheKey)
+		if err == nil && cachedData != "" {
+			if jsonErr := json.Unmarshal([]byte(cachedData), &merchants); jsonErr == nil {
+				return response.Success(c, "daftar merchant terdekat berhasil diambil", merchants)
+			}
+		}
+	}
+
+	merchants, err = h.service.ListNearbyMerchants(c.Context(), lat, lng, radius)
 	if err != nil {
 		return response.InternalError(c, err.Error())
+	}
+
+	// Cache the result in Redis for 1 minute
+	if h.redis != nil && len(merchants) > 0 {
+		if cacheBytes, jsonErr := json.Marshal(merchants); jsonErr == nil {
+			_ = h.redis.Set(c.Context(), cacheKey, cacheBytes, 1*time.Minute)
+		}
 	}
 
 	return response.Success(c, "daftar merchant terdekat berhasil diambil", merchants)
@@ -158,6 +192,7 @@ func (h *Handler) CreateProfile(c *fiber.Ctx) error {
 		return response.InternalError(c, "gagal melengkapi profil merchant")
 	}
 
+	h.invalidateCache(c.Context())
 	return response.Success(c, "profil merchant berhasil dilengkapi", m)
 }
 
@@ -196,6 +231,7 @@ func (h *Handler) UpdateProfile(c *fiber.Ctx) error {
 		return response.InternalError(c, err.Error())
 	}
 
+	h.invalidateCache(c.Context())
 	return response.Success(c, "profil merchant berhasil diperbarui", updated)
 }
 
@@ -239,6 +275,7 @@ func (h *Handler) UpdateStatus(c *fiber.Ctx) error {
 		return response.InternalError(c, err.Error())
 	}
 
+	h.invalidateCache(c.Context())
 	return response.Success(c, "status merchant berhasil diperbarui", m)
 }
 
@@ -442,6 +479,7 @@ func (h *Handler) AdminCreate(c *fiber.Ctx) error {
 		return response.InternalError(c, err.Error())
 	}
 
+	h.invalidateCache(c.Context())
 	return response.Success(c, "merchant berhasil dibuat oleh admin", m)
 }
 
@@ -475,6 +513,7 @@ func (h *Handler) AdminUpdate(c *fiber.Ctx) error {
 		return response.InternalError(c, err.Error())
 	}
 
+	h.invalidateCache(c.Context())
 	return response.Success(c, "merchant berhasil diperbarui oleh admin", m)
 }
 
@@ -489,6 +528,7 @@ func (h *Handler) AdminDelete(c *fiber.Ctx) error {
 		return response.InternalError(c, err.Error())
 	}
 
+	h.invalidateCache(c.Context())
 	return response.Success(c, "merchant berhasil dihapus oleh admin", nil)
 }
 
