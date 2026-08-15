@@ -3,12 +3,40 @@ package merchant
 import (
 	"context"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/codecoffy/nitip-core/internal/domain/user"
 	"github.com/codecoffy/nitip-core/internal/storage"
 	"github.com/google/uuid"
 )
+
+func sanitizeStorageKey(urlStr string) string {
+	if urlStr == "" {
+		return ""
+	}
+	if strings.HasPrefix(urlStr, "http://") || strings.HasPrefix(urlStr, "https://") {
+		temp := urlStr
+		if strings.HasPrefix(temp, "https://") {
+			temp = strings.TrimPrefix(temp, "https://")
+		} else {
+			temp = strings.TrimPrefix(temp, "http://")
+		}
+
+		slashIdx := strings.Index(temp, "/")
+		if slashIdx != -1 {
+			path := temp[slashIdx+1:]
+			path = strings.TrimPrefix(path, "uploads/")
+			
+			// Strip query parameters (e.g. ?q-sign-algorithm=...)
+			if qIdx := strings.Index(path, "?"); qIdx != -1 {
+				path = path[:qIdx]
+			}
+			return path
+		}
+	}
+	return urlStr
+}
 
 type Service interface {
 	// Merchant
@@ -127,32 +155,57 @@ func (s *service) UpdateMerchantFull(ctx context.Context, id uuid.UUID, name, de
 		m.OpeningHours = *openingHours
 	}
 	if imageURL != nil {
-		m.ImageURL = *imageURL
+		m.ImageURL = sanitizeStorageKey(*imageURL)
 	}
 	if coverURL != nil {
-		m.CoverURL = *coverURL
+		m.CoverURL = sanitizeStorageKey(*coverURL)
 	}
 	m.UpdatedAt = time.Now()
 	if err := s.repo.UpdateMerchant(ctx, m); err != nil {
 		return nil, err
 	}
+	s.signMerchantImages(ctx, m)
 	return m, nil
 }
 
 func (s *service) GetMerchantByID(ctx context.Context, id uuid.UUID) (*Merchant, error) {
-	return s.repo.GetMerchantByID(ctx, id)
+	m, err := s.repo.GetMerchantByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	s.signMerchantImages(ctx, m)
+	return m, nil
 }
 
 func (s *service) GetMerchantByOwnerID(ctx context.Context, ownerID uuid.UUID) (*Merchant, error) {
-	return s.repo.GetMerchantByOwnerID(ctx, ownerID)
+	m, err := s.repo.GetMerchantByOwnerID(ctx, ownerID)
+	if err != nil {
+		return nil, err
+	}
+	s.signMerchantImages(ctx, m)
+	return m, nil
 }
 
 func (s *service) ListNearbyMerchants(ctx context.Context, lat, lng float64, radiusKm float64) ([]Merchant, error) {
-	return s.repo.ListNearbyMerchants(ctx, lat, lng, radiusKm)
+	merchants, err := s.repo.ListNearbyMerchants(ctx, lat, lng, radiusKm)
+	if err != nil {
+		return nil, err
+	}
+	for i := range merchants {
+		s.signMerchantImages(ctx, &merchants[i])
+	}
+	return merchants, nil
 }
 
 func (s *service) ListAllMerchants(ctx context.Context) ([]Merchant, error) {
-	return s.repo.ListAllMerchants(ctx)
+	merchants, err := s.repo.ListAllMerchants(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for i := range merchants {
+		s.signMerchantImages(ctx, &merchants[i])
+	}
+	return merchants, nil
 }
 
 func (s *service) DeleteMerchant(ctx context.Context, id uuid.UUID) error {
@@ -183,6 +236,7 @@ func (s *service) ToggleOpenStatus(ctx context.Context, id uuid.UUID, isOpen boo
 	if err := s.repo.UpdateMerchant(ctx, m); err != nil {
 		return nil, err
 	}
+	s.signMerchantImages(ctx, m)
 	return m, nil
 }
 
@@ -198,6 +252,7 @@ func (s *service) ToggleAutoConfirm(ctx context.Context, id uuid.UUID, autoConfi
 	if err := s.repo.UpdateMerchant(ctx, m); err != nil {
 		return nil, err
 	}
+	s.signMerchantImages(ctx, m)
 	return m, nil
 }
 
@@ -210,7 +265,7 @@ func (s *service) CreateMenu(ctx context.Context, merchantID uuid.UUID, name, de
 		Name:        name,
 		Description: description,
 		Price:       price,
-		ImageURL:    imageURL,
+		ImageURL:    sanitizeStorageKey(imageURL),
 		IsAvailable: isAvailable,
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
@@ -231,7 +286,7 @@ func (s *service) UpdateMenu(ctx context.Context, id uuid.UUID, name, descriptio
 	menu.Name = name
 	menu.Description = description
 	menu.Price = price
-	menu.ImageURL = imageURL
+	menu.ImageURL = sanitizeStorageKey(imageURL)
 	menu.IsAvailable = isAvailable
 	menu.UpdatedAt = time.Now()
 
@@ -293,6 +348,23 @@ func (s *service) signMenuImage(ctx context.Context, m *Menu) {
 		m.ImageURL = signed
 	}
 }
+
+func (s *service) signMerchantImages(ctx context.Context, m *Merchant) {
+	if m == nil {
+		return
+	}
+	if m.ImageURL != "" && (len(m.ImageURL) <= 4 || m.ImageURL[:4] != "http") {
+		if signed, err := s.storage.SignedURL(ctx, m.ImageURL, 1*time.Hour); err == nil {
+			m.ImageURL = signed
+		}
+	}
+	if m.CoverURL != "" && (len(m.CoverURL) <= 4 || m.CoverURL[:4] != "http") {
+		if signed, err := s.storage.SignedURL(ctx, m.CoverURL, 1*time.Hour); err == nil {
+			m.CoverURL = signed
+		}
+	}
+}
+
 
 func (s *service) UploadMenuImage(ctx context.Context, filename string, content io.Reader, size int64, contentType string) (string, error) {
 	objectKey := "menus/" + uuid.New().String() + "_" + filename

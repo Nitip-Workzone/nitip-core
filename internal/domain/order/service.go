@@ -2438,6 +2438,11 @@ func sanitizeStorageKey(urlStr string) string {
 		if slashIdx != -1 {
 			path := temp[slashIdx+1:]
 			path = strings.TrimPrefix(path, "uploads/")
+			
+			// Strip query parameters (e.g. ?q-sign-algorithm=...)
+			if qIdx := strings.Index(path, "?"); qIdx != -1 {
+				path = path[:qIdx]
+			}
 			return path
 		}
 	}

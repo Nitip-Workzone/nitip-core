@@ -3,11 +3,39 @@ package banner
 import (
 	"context"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/codecoffy/nitip-core/internal/storage"
 	"github.com/google/uuid"
 )
+
+func sanitizeStorageKey(urlStr string) string {
+	if urlStr == "" {
+		return ""
+	}
+	if strings.HasPrefix(urlStr, "http://") || strings.HasPrefix(urlStr, "https://") {
+		temp := urlStr
+		if strings.HasPrefix(temp, "https://") {
+			temp = strings.TrimPrefix(temp, "https://")
+		} else {
+			temp = strings.TrimPrefix(temp, "http://")
+		}
+
+		slashIdx := strings.Index(temp, "/")
+		if slashIdx != -1 {
+			path := temp[slashIdx+1:]
+			path = strings.TrimPrefix(path, "uploads/")
+			
+			// Strip query parameters (e.g. ?q-sign-algorithm=...)
+			if qIdx := strings.Index(path, "?"); qIdx != -1 {
+				path = path[:qIdx]
+			}
+			return path
+		}
+	}
+	return urlStr
+}
 
 type Service interface {
 	GetAllBanners(ctx context.Context) ([]Banner, error)
@@ -69,7 +97,7 @@ func (s *service) CreateBanner(ctx context.Context, title, imageURL string, redi
 	banner := &Banner{
 		ID:          uuid.New(),
 		Title:       title,
-		ImageURL:    imageURL,
+		ImageURL:    sanitizeStorageKey(imageURL),
 		RedirectURL: redirectURL,
 		IsActive:    isActive,
 		CreatedAt:   time.Now(),
@@ -92,7 +120,7 @@ func (s *service) UpdateBanner(ctx context.Context, id uuid.UUID, title, imageUR
 	}
 
 	banner.Title = title
-	banner.ImageURL = imageURL
+	banner.ImageURL = sanitizeStorageKey(imageURL)
 	banner.RedirectURL = redirectURL
 	banner.IsActive = isActive
 	banner.UpdatedAt = time.Now()
