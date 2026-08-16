@@ -470,6 +470,10 @@ func (h *Handler) Withdraw(c *fiber.Ctx) error {
 
 	wtx, err := h.service.RequestWithdrawal(c.Context(), userID, req.Amount, req.ChannelID, req.Pin, req.Metadata)
 	if err != nil {
+		lowMsg := strings.ToLower(err.Error())
+		if strings.Contains(lowMsg, "e-kyc") || strings.Contains(lowMsg, "non-verifikasi") {
+			return response.BadRequestWithCode(c, err.Error(), "KYC_REQUIRED")
+		}
 		return response.BadRequest(c, err.Error())
 	}
 

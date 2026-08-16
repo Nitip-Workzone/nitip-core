@@ -27,11 +27,12 @@ type ValidationError struct {
 // envelope is the unified API response wrapper.
 // swagger:model
 type envelope struct {
-	Success bool              `json:"success"`
-	Message string            `json:"message"`
-	Data    any               `json:"data,omitempty"`
-	Meta    *Meta             `json:"meta,omitempty"`
-	Errors  []ValidationError `json:"errors,omitempty"`
+	Success   bool              `json:"success"`
+	Message   string            `json:"message"`
+	ErrorCode string            `json:"error_code,omitempty"`
+	Data      any               `json:"data,omitempty"`
+	Meta      *Meta             `json:"meta,omitempty"`
+	Errors    []ValidationError `json:"errors,omitempty"`
 }
 
 // ── Success responses ────────────────────────────────────
@@ -85,6 +86,22 @@ func BadRequest(c *fiber.Ctx, message string) error {
 	return c.Status(fiber.StatusBadRequest).JSON(envelope{
 		Success: false,
 		Message: message,
+	})
+}
+
+func BadRequestWithCode(c *fiber.Ctx, message string, errorCode string) error {
+	return c.Status(fiber.StatusBadRequest).JSON(envelope{
+		Success:   false,
+		Message:   message,
+		ErrorCode: errorCode,
+	})
+}
+
+func ForbiddenWithCode(c *fiber.Ctx, message string, errorCode string) error {
+	return c.Status(fiber.StatusForbidden).JSON(envelope{
+		Success:   false,
+		Message:   message,
+		ErrorCode: errorCode,
 	})
 }
 

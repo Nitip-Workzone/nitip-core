@@ -128,6 +128,9 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 			strings.Contains(lowMsg, "db") {
 			return response.InternalError(c, err.Error())
 		}
+		if strings.Contains(lowMsg, "e-kyc") || strings.Contains(lowMsg, "non-verifikasi") {
+			return response.BadRequestWithCode(c, err.Error(), "KYC_REQUIRED")
+		}
 		return response.BadRequest(c, err.Error())
 	}
 
@@ -264,6 +267,10 @@ func (h *Handler) Accept(c *fiber.Ctx) error {
 	}
 
 	if err := h.service.AcceptOrder(c.Context(), id, claims.UserID); err != nil {
+		lowMsg := strings.ToLower(err.Error())
+		if strings.Contains(lowMsg, "e-kyc") || strings.Contains(lowMsg, "non-verifikasi") {
+			return response.BadRequestWithCode(c, err.Error(), "KYC_REQUIRED")
+		}
 		return response.BadRequest(c, err.Error())
 	}
 
