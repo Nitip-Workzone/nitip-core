@@ -27,5 +27,5 @@ type Store struct {
 	UpdatedAt   time.Time       `bun:"updated_at,notnull,default:current_timestamp" json:"updated_at"`
 
 	// DistanceKm is a computed field — not a DB column, only populated by FindNearby.
-	DistanceKm float64 `bun:"-" json:"distance_km,omitempty"`
+	DistanceKm float64 `bun:",scanonly" json:"distance_km,omitempty"`
 }
