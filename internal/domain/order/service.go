@@ -144,6 +144,10 @@ type Service interface {
 	GetAllWithFilters(ctx context.Context, status string, offset, limit int) ([]Order, error)
 	ForceCancelOrder(ctx context.Context, orderID uuid.UUID) error
 
+	// Runner reassign (Food priority cooking/ready)
+	RunnerCancelForReassign(ctx context.Context, orderID, runnerID uuid.UUID, reason string) error
+	ReassignOrder(ctx context.Context, orderID, runnerID uuid.UUID, reason string) error
+
 	// Phase 2: Disputes
 	DisputeOrder(ctx context.Context, orderID, requesterID uuid.UUID, reason, proofURL string) error
 	ResolveDispute(ctx context.Context, orderID uuid.UUID, side string) error
@@ -1238,20 +1242,46 @@ func (s *service) CancelOrder(ctx context.Context, orderID, userID uuid.UUID, re
 		}
 	}
 
+	// Detect runner pre-pickup reassign scenario (Food priority: cooking/ready/merchant_accepted/accepted/pending before delivering/purchasing)
+	isRunnerPrePickupReassign := false
+	if isRunner {
+		switch ord.Status {
+		case StatusPending, StatusMerchantAccepted, StatusCooking, StatusReady, StatusAccepted:
+			// Food: cooking/ready must be reassign not cancel (bahaya dapur sudah masak)
+			// Beli/Kirim: pending/accepted before pickup also reassign
+			isRunnerPrePickupReassign = true
+		}
+	}
+
 	// 3. Conditional cancel with strict guard for runner/merchant (prod fraud protection)
+	// For reassign case, we relax 30m guard? We allow immediate reassign with reason, but still require reason
+	// Keep 30m guard only for final cancel, not for reassign. For reassign we just need reason.
 	if !isNormalCancel {
-		// Runner/Merchant only allowed to cancel before goods purchased / delivering
-		if isRunner || isMerchantOwner {
-			if ord.Status == StatusPurchasing || ord.Status == StatusDelivering || ord.Status == StatusCompleted || ord.Status == StatusCancelled {
-				return errors.New("pesanan dalam tahap pembelian/pengiriman tidak dapat dibatalkan oleh runner/merchant, hubungi admin")
+		if isRunner && isRunnerPrePickupReassign {
+			// Allow immediate reassign if reason provided, no 30m wait, but reason mandatory
+			if strings.TrimSpace(reason) == "" {
+				return errors.New("alasan pembatalan/pengalihan wajib diisi")
+			}
+			// Continue to reassign flow below (skip 30m check)
+		} else {
+			// Runner/Merchant only allowed to cancel before goods purchased / delivering
+			if isRunner || isMerchantOwner {
+				if ord.Status == StatusPurchasing || ord.Status == StatusDelivering || ord.Status == StatusCompleted || ord.Status == StatusCancelled {
+					return errors.New("pesanan dalam tahap pembelian/pengiriman tidak dapat dibatalkan oleh runner/merchant, hubungi admin")
+				}
+			}
+			if time.Since(ord.UpdatedAt) <= 30*time.Minute {
+				return errors.New("pembatalan tidak diizinkan kecuali status pesanan stagnan (tidak berubah) lebih dari 30 menit")
+			}
+			if strings.TrimSpace(reason) == "" {
+				return errors.New("alasan pembatalan (reason) wajib diisi")
 			}
 		}
-		if time.Since(ord.UpdatedAt) <= 30*time.Minute {
-			return errors.New("pembatalan tidak diizinkan kecuali status pesanan stagnan (tidak berubah) lebih dari 30 menit")
-		}
-		if strings.TrimSpace(reason) == "" {
-			return errors.New("alasan pembatalan (reason) wajib diisi")
-		}
+	}
+
+	// If runner pre-pickup -> do reassign instead of cancel
+	if isRunnerPrePickupReassign {
+		return s.runnerCancelForReassign(ctx, ord, userID, reason)
 	}
 
 	// Logic: Charge checking fee if status is PURCHASING or if there's an adjustment
@@ -1429,6 +1459,202 @@ func (s *service) CancelOrder(ctx context.Context, orderID, userID uuid.UUID, re
 	}
 
 	return err
+}
+
+// runnerCancelForReassign: Runner cancel pre-pickup -> reassign to nearest online runner instead of final cancelled
+// Food priority: cooking/ready/merchant_accepted must keep same status to avoid merchant rework, clear runner, re-queue
+func (s *service) runnerCancelForReassign(ctx context.Context, ord *Order, runnerID uuid.UUID, reason string) error {
+	// Check reassign limit via Redis counter
+	reassignKey := fmt.Sprintf("reassign:count:%s", ord.ID.String())
+	var reassignCount int
+	if s.redis != nil {
+		if val, err := s.redis.Client().Get(ctx, reassignKey).Int(); err == nil {
+			reassignCount = val
+		}
+		// If already >=2, fallback to final cancel
+		if reassignCount >= 2 {
+			// Final cancel after 2 reassigns
+			return s.finalCancelAfterReassignLimit(ctx, ord, runnerID, reason)
+		}
+	}
+
+	oldStatus := ord.Status
+	oldRunnerID := ord.RunnerID
+
+	// Tx: clear runner, release liability, restore capacity, keep status
+	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		locked, err := s.repo.FindByIDForUpdate(ctx, tx, ord.ID)
+		if err != nil {
+			return err
+		}
+		if locked.Status == StatusCompleted || locked.Status == StatusCancelled || locked.Status == StatusExpired {
+			return errors.New("pesanan sudah selesai atau dibatalkan (race)")
+		}
+		// Ensure still same runner
+		if locked.RunnerID == nil || *locked.RunnerID != runnerID {
+			return errors.New("anda bukan runner untuk pesanan ini (race)")
+		}
+		ord = locked
+		oldStatus = ord.Status
+
+		// Release Runner Liability Hold
+		if ord.RunnerID != nil && ord.EstimatedCost > 0 {
+			if err := s.walletSvc.ReleaseLiability(ctx, tx, *ord.RunnerID, ord.ID, ord.EstimatedCost); err != nil {
+				return err
+			}
+		}
+		// Restore Capacity
+		if ord.RunnerID != nil && ord.TripID != nil {
+			if err := s.tripRepo.RestoreCapacity(ctx, tx, *ord.TripID, ord.WeightKg, ord.VolumeLiters); err != nil {
+				return errors.New("gagal memulihkan kapasitas perjalanan")
+			}
+		}
+
+		// Clear runner fields, keep status same (cooking/ready/merchant_accepted/accepted/pending)
+		// Do NOT refund escrow, DO NOT release promotion
+		ord.RunnerID = nil
+		ord.TripID = nil
+		ord.UpdatedAt = time.Now()
+		// For non-food pending/accepted keep same, food cooking/ready keep same to preserve merchant work
+		// Do not set DisputeReason as cancel, use separate field for reassign reason? Use DisputeReason for audit temporary
+		if reason != "" {
+			ord.DisputeReason = fmt.Sprintf("Runner cancel reassign [%s]: %s", oldRunnerID, reason)
+		}
+
+		_, updErr := tx.NewUpdate().Model(ord).WherePK().Exec(ctx)
+		if updErr == nil {
+			s.auditSvc.LogWithDB(ctx, tx, &runnerID, audit.ActionOrderReassign, "order", ord.ID.String(),
+				map[string]interface{}{"status": oldStatus, "runner_id": oldRunnerID, "reason": reason},
+				map[string]interface{}{"status": ord.Status, "runner_id": nil, "reassign_count": reassignCount + 1, "reason": reason}, "", "")
+		}
+		return updErr
+	})
+
+	if err != nil {
+		return err
+	}
+
+	// Incr reassign counter
+	if s.redis != nil {
+		_ = s.redis.Client().Incr(ctx, reassignKey).Err()
+		_ = s.redis.Client().Expire(ctx, reassignKey, 24*time.Hour).Err()
+		_, _ = s.redis.IncrCounter(ctx, "reassign:count")
+		_, _ = s.redis.IncrCounter(ctx, "events:total")
+	}
+
+	// Re-queue: GeoAdd + EnqueueMatching + BroadcastNewOrder
+	if s.redis != nil {
+		_ = s.redis.GeoAddOrder(ctx, ord.ID.String(), ord.PickupLat, ord.PickupLng)
+	}
+	if s.matchingSvc != nil {
+		s.matchingSvc.EnqueueMatching(ord.ID)
+	}
+	if s.poolHub != nil {
+		go s.poolHub.BroadcastNewOrder(ord)
+		go s.poolHub.BroadcastOrderStatus(ord.ID.String(), oldStatus, "reassigned")
+		if ord.MerchantID != nil {
+			go s.poolHub.BroadcastMerchantEvent(ord.MerchantID.String(), "order_requeued", ord)
+		}
+	}
+
+	// Notifications
+	// Requester: runner cancel, searching replacement
+	_ = s.notifSvc.CreateNotification(ctx, notifDomain.CreateNotificationRequest{
+		UserID:   ord.RequesterID,
+		Title:    "Runner Membatalkan, Mencari Pengganti",
+		Message:  fmt.Sprintf("Runner membatalkan pesanan %s (alasan: %s). Kami sedang mencarikan runner terdekat yang aktif/online untuk pengiriman %s.", ord.ItemDetails, reason, map[bool]string{true: "instant", false: "reguler"}[ord.OrderType == TypeInstant]),
+		Type:     "order",
+		Metadata: map[string]interface{}{"order_id": ord.ID.String(), "status": oldStatus, "reassign": true, "reason": reason},
+	})
+	if s.fcm != nil && config.App.FcmEnabled {
+		go func() {
+			bgCtx := context.Background()
+			reqUser, _ := s.userSvc.GetByID(bgCtx, ord.RequesterID, ord.RequesterID)
+			if reqUser != nil && reqUser.FcmToken != nil && *reqUser.FcmToken != "" {
+				_ = s.fcm.SendToDevice(bgCtx, *reqUser.FcmToken, "Mencari Runner Pengganti",
+					fmt.Sprintf("Runner membatalkan pesanan %s, kami cari pengganti terdekat.", ord.ItemDetails),
+					map[string]string{"order_id": ord.ID.String(), "type": "order_reassigned"})
+			}
+		}()
+	}
+
+	// Merchant: runner batal, makanan tetap lanjut, mencari driver lain (Food priority)
+	if ord.MerchantID != nil {
+		merch, _ := s.merchantSvc.GetMerchantByID(ctx, *ord.MerchantID)
+		if merch != nil {
+			_ = s.notifSvc.CreateNotification(ctx, notifDomain.CreateNotificationRequest{
+				UserID:   merch.OwnerID,
+				Title:    "Runner Batal, Mencari Pengganti",
+				Message:  fmt.Sprintf("Runner membatalkan pesanan %s (alasan: %s). Makanan tetap lanjut dimasak (%s). Kami mencarikan driver online terdekat.", ord.ItemDetails, reason, oldStatus),
+				Type:     "order",
+				Metadata: map[string]interface{}{"order_id": ord.ID.String(), "status": oldStatus, "reassign": true},
+			})
+			if s.fcm != nil && config.App.FcmEnabled {
+				go func() {
+					bgCtx := context.Background()
+					ownerUser, _ := s.userSvc.GetByID(bgCtx, merch.OwnerID, merch.OwnerID)
+					if ownerUser != nil && ownerUser.FcmToken != nil && *ownerUser.FcmToken != "" {
+						_ = s.fcm.SendToDevice(bgCtx, *ownerUser.FcmToken, "Runner Batal - Tetap Masak",
+							fmt.Sprintf("Runner batal pesanan %s, tetap lanjut masak, kami cari pengganti.", ord.ItemDetails),
+							map[string]string{"order_id": ord.ID.String(), "type": "merchant_order_requeued"})
+					}
+				}()
+			}
+		}
+	}
+
+	// Old runner ack
+	_ = s.notifSvc.CreateNotification(ctx, notifDomain.CreateNotificationRequest{
+		UserID:   runnerID,
+		Title:    "Pesanan Dialihkan ke Runner Lain",
+		Message:  fmt.Sprintf("Pembatalan pesanan %s diterima, pesanan akan dialihkan ke runner terdekat yang online. Alasan: %s", ord.ItemDetails, reason),
+		Type:     "order",
+		Metadata: map[string]interface{}{"order_id": ord.ID.String(), "reassigned": true},
+	})
+
+	return nil
+}
+
+func (s *service) finalCancelAfterReassignLimit(ctx context.Context, ord *Order, runnerID uuid.UUID, reason string) error {
+	// Final cancel after 2 reassigns limit reached
+	// Do full refund + release promo + etc similar to CancelOrder final
+	return s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		locked, err := s.repo.FindByIDForUpdate(ctx, tx, ord.ID)
+		if err != nil {
+			return err
+		}
+		if locked.Status == StatusCompleted || locked.Status == StatusCancelled {
+			return errors.New("pesanan sudah selesai atau dibatalkan")
+		}
+		ord = locked
+		if ord.PaymentMethod == MethodEscrow && ord.PaymentStatus == PaymentEscrow {
+			totalEscrow := ord.EstimatedCost + ord.DeliveryFee
+			if err := s.walletSvc.RefundEscrow(ctx, tx, ord.RequesterID, ord.ID, totalEscrow); err != nil {
+				return err
+			}
+			ord.PaymentStatus = PaymentRefunded
+		}
+		if ord.RunnerID != nil && ord.EstimatedCost > 0 {
+			_ = s.walletSvc.ReleaseLiability(ctx, tx, *ord.RunnerID, ord.ID, ord.EstimatedCost)
+		}
+		if ord.RunnerID != nil && ord.TripID != nil {
+			_ = s.tripRepo.RestoreCapacity(ctx, tx, *ord.TripID, ord.WeightKg, ord.VolumeLiters)
+		}
+		if s.promotionSvc != nil && ord.PromotionID != nil {
+			_ = s.promotionSvc.ReleaseUsage(ctx, tx, ord.ID)
+		}
+		oldStatus := ord.Status
+		ord.Status = StatusCancelled
+		ord.DisputeReason = fmt.Sprintf("Reassign limit exceeded (2x) final cancel by %s: %s", runnerID.String(), reason)
+		ord.UpdatedAt = time.Now()
+		_, err = tx.NewUpdate().Model(ord).WherePK().Exec(ctx)
+		if err == nil {
+			s.auditSvc.LogWithDB(ctx, tx, &runnerID, audit.ActionOrderCancel, "order", ord.ID.String(),
+				map[string]interface{}{"status": oldStatus, "reassign_limit": 2},
+				map[string]interface{}{"status": StatusCancelled, "reason": ord.DisputeReason}, "", "")
+		}
+		return err
+	})
 }
 
 func (s *service) SubmitPurchaseReceipt(ctx context.Context, orderID, runnerID uuid.UUID, receiptReader io.Reader, receiptFilename string) error {
@@ -1653,6 +1879,22 @@ func (s *service) CompleteOrder(ctx context.Context, orderID, runnerID uuid.UUID
 	}
 
 	return err
+}
+
+func (s *service) RunnerCancelForReassign(ctx context.Context, orderID, runnerID uuid.UUID, reason string) error {
+	// Public wrapper calls internal runnerCancelForReassign after fetching order
+	ord, err := s.repo.FindByID(ctx, orderID)
+	if err != nil {
+		return err
+	}
+	if ord.RunnerID == nil || *ord.RunnerID != runnerID {
+		return errors.New("anda bukan runner untuk pesanan ini")
+	}
+	return s.runnerCancelForReassign(ctx, ord, runnerID, reason)
+}
+
+func (s *service) ReassignOrder(ctx context.Context, orderID, runnerID uuid.UUID, reason string) error {
+	return s.RunnerCancelForReassign(ctx, orderID, runnerID, reason)
 }
 
 func (s *service) UpdatePaymentStatus(ctx context.Context, orderID uuid.UUID, paymentStatus string) error {

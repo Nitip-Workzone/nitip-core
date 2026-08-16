@@ -39,6 +39,7 @@ const (
 	ActionOrderPurchased    = "ORDER_PURCHASED"
 	ActionOrderPickup       = "ORDER_PICKUP"
 	ActionOrderUpdate       = "ORDER_UPDATE"
+	ActionOrderReassign     = "ORDER_REASSIGN"
 	ActionWithdrawalApprove = "WITHDRAWAL_APPROVE"
 
 	// Discount / Promotion

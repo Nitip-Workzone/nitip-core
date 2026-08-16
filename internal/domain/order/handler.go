@@ -68,6 +68,8 @@ func (h *Handler) RegisterRoutes(router fiber.Router) {
 	orders.Post("/:id/purchased", middleware.Role(user.RoleRunner), h.Purchased)
 	orders.Post("/:id/complete", middleware.Role(user.RoleRunner), h.Complete)
 	orders.Post("/:id/adjust-price", middleware.Role(user.RoleRunner), h.AdjustPrice)
+	orders.Post("/:id/reassign", middleware.Role(user.RoleRunner), h.Reassign)
+	orders.Post("/:id/runner-cancel", middleware.Role(user.RoleRunner), h.Reassign)
 
 	// Price Adjustment Approval (Requester)
 	orders.Post("/:id/approve-adjustment", middleware.Role(user.RoleRequester, user.RoleRunner), h.ApproveAdjustment)
@@ -240,7 +242,35 @@ func (h *Handler) Cancel(c *fiber.Ctx) error {
 		return response.BadRequest(c, err.Error())
 	}
 
-	return response.Success(c, "pesanan berhasil dibatalkan", nil)
+	return response.Success(c, "pesanan berhasil dibatalkan/dialihkan", nil)
+}
+
+func (h *Handler) Reassign(c *fiber.Ctx) error {
+	id, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return response.BadRequest(c, "ID pesanan tidak valid")
+	}
+
+	type ReassignPayload struct {
+		Reason string `json:"reason"`
+	}
+	var req ReassignPayload
+	_ = c.BodyParser(&req)
+
+	claims := jwt.GetClaims(c)
+	if claims == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
+
+	if strings.TrimSpace(req.Reason) == "" {
+		req.Reason = "Runner membatalkan sebelum pickup, dialihkan ke runner lain"
+	}
+
+	if err := h.service.RunnerCancelForReassign(c.Context(), id, claims.UserID, req.Reason); err != nil {
+		return response.BadRequest(c, err.Error())
+	}
+
+	return response.Success(c, "pesanan berhasil dialihkan ke runner terdekat yang online", nil)
 }
 
 // Accept godoc
