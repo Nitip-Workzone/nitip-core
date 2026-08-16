@@ -252,7 +252,7 @@ func (r *repository) GetSettlement(ctx context.Context, merchantID *uuid.UUID, f
 		OrderCount     int        `bun:"order_count"`
 	}
 	var rows []row
-	q := r.db.NewSelect().Table("promotion_usages", "pu").
+	q := r.db.NewSelect().TableExpr("promotion_usages AS pu").
 		ColumnExpr("pu.merchant_id as merchant_id").
 		ColumnExpr("SUM(pu.discount_amount) as total_liability").
 		ColumnExpr("COUNT(*) as order_count").
