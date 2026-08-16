@@ -31,6 +31,7 @@ func (h *Handler) RegisterRoutes(router fiber.Router) {
 	admin := router.Group("/admin/stores", middleware.Protected(h.db, h.redis), middleware.Role(user.RoleAdmin))
 	admin.Get("/", h.AdminList)
 	admin.Post("/", h.AdminCreate)
+	admin.Post("/batch", h.AdminBatchCreate)
 	admin.Put("/:id", h.AdminUpdate)
 	admin.Delete("/:id", h.AdminDelete)
 }
@@ -178,4 +179,41 @@ func (h *Handler) AdminDelete(c *fiber.Ctx) error {
 		return response.InternalError(c, err.Error())
 	}
 	return response.Success(c, "tokoh berhasil dihapus", nil)
+}
+
+// AdminBatchCreate godoc
+// @Summary      [Admin] Batch create stores
+// @Description  Admin: Add multiple new tokoh in a single request (useful for crawler imports)
+// @Tags         [Admin] Store Management
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        body  body      []CreateStoreRequest  true  "Array of stores payload"
+// @Success      201   {object}  response.envelope{data=map[string]interface{}}
+// @Router       /admin/stores/batch [post]
+func (h *Handler) AdminBatchCreate(c *fiber.Ctx) error {
+	var reqs []CreateStoreRequest
+	if err := c.BodyParser(&reqs); err != nil {
+		return response.BadRequest(c, "format permintaan tidak valid")
+	}
+
+	// Bulk validation check
+	for _, r := range reqs {
+		if r.Name == "" {
+			return response.BadRequest(c, "nama tokoh tidak boleh kosong pada item batch")
+		}
+		if r.Lat == 0 || r.Lng == 0 {
+			return response.BadRequest(c, "koordinat lat dan lng tidak boleh kosong pada item batch")
+		}
+	}
+
+	count, err := h.service.CreateStoresBatch(c.Context(), reqs)
+	if err != nil {
+		return response.InternalError(c, err.Error())
+	}
+
+	return response.Created(c, "batch tokoh berhasil ditambahkan", fiber.Map{
+		"processed": len(reqs),
+		"inserted":  count,
+	})
 }

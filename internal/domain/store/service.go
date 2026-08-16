@@ -51,6 +51,7 @@ type Service interface {
 	GetActiveStores(ctx context.Context) ([]Store, error)
 	GetNearbyStores(ctx context.Context, lat, lng, radiusKm float64, limit int) ([]Store, error)
 	CreateStore(ctx context.Context, req CreateStoreRequest) (*Store, error)
+	CreateStoresBatch(ctx context.Context, reqs []CreateStoreRequest) (int, error)
 	UpdateStore(ctx context.Context, id uuid.UUID, req UpdateStoreRequest) (*Store, error)
 	DeleteStore(ctx context.Context, id uuid.UUID) error
 }
@@ -186,6 +187,46 @@ func (s *service) DeleteStore(ctx context.Context, id uuid.UUID) error {
 	}
 	s.invalidateCache(ctx)
 	return nil
+}
+
+func (s *service) CreateStoresBatch(ctx context.Context, reqs []CreateStoreRequest) (int, error) {
+	if len(reqs) == 0 {
+		return 0, nil
+	}
+
+	successCount := 0
+	for _, req := range reqs {
+		if req.Name == "" {
+			continue
+		}
+		
+		isActive := true
+		if req.IsActive != nil {
+			isActive = *req.IsActive
+		}
+
+		store := &Store{
+			ID:          uuid.New(),
+			Name:        req.Name,
+			Address:     req.Address,
+			Lat:         req.Lat,
+			Lng:         req.Lng,
+			Category:    req.Category,
+			Description: req.Description,
+			ImageURL:    req.ImageURL,
+			Items:       json.RawMessage("[]"),
+			IsActive:    isActive,
+			CreatedAt:   time.Now(),
+			UpdatedAt:   time.Now(),
+		}
+
+		if err := s.repo.Create(ctx, store); err == nil {
+			successCount++
+		}
+	}
+
+	s.invalidateCache(ctx)
+	return successCount, nil
 }
 
 // invalidateCache clears the active stores cache after any mutation.
