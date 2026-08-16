@@ -171,6 +171,7 @@ func (s *service) InitiateTopUp(ctx context.Context, userID uuid.UUID, amount fl
 	if s.redis != nil {
 		for i := 1; i <= 99; i++ {
 			key := fmt.Sprintf("active_uniq:%.2f:%d", amount, i)
+			//nolint:staticcheck // s.redis.Client().SetNX is deprecated
 			ok, err := s.redis.Client().SetNX(ctx, key, "active", 15*time.Minute).Result()
 			if err == nil && ok {
 				uniqueCodeVal = i

@@ -2584,6 +2584,7 @@ func (s *service) generateOrderQRIS(ctx context.Context, order *Order) (string, 
 	if s.redis != nil {
 		for i := 1; i <= 99; i++ {
 			key := fmt.Sprintf("active_uniq:%.2f:%d", baseAmt, i)
+			//nolint:staticcheck // s.redis.Client().SetNX is deprecated
 			ok, err := s.redis.Client().SetNX(ctx, key, "active", 15*time.Minute).Result()
 			if err == nil && ok {
 				uniqueCodeVal = i
