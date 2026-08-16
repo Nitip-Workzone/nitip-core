@@ -23,12 +23,13 @@ import (
 	"github.com/codecoffy/nitip-core/internal/domain/merchant"
 	notificationDomain "github.com/codecoffy/nitip-core/internal/domain/notification"
 	"github.com/codecoffy/nitip-core/internal/domain/order"
+	"github.com/codecoffy/nitip-core/internal/domain/promotion"
 	"github.com/codecoffy/nitip-core/internal/domain/review"
+	"github.com/codecoffy/nitip-core/internal/domain/store"
 	supportDomain "github.com/codecoffy/nitip-core/internal/domain/support"
 	"github.com/codecoffy/nitip-core/internal/domain/trip"
 	"github.com/codecoffy/nitip-core/internal/domain/user"
 	"github.com/codecoffy/nitip-core/internal/domain/wallet"
-	"github.com/codecoffy/nitip-core/internal/domain/store"
 	infraFirebase "github.com/codecoffy/nitip-core/internal/infrastructure/firebase"
 	applogger "github.com/codecoffy/nitip-core/internal/logger"
 	"github.com/codecoffy/nitip-core/internal/notification"
@@ -234,12 +235,21 @@ func main() {
 	merchantSvc := merchant.NewService(merchantRepo, userRepo, storageSvc)
 	merchantHandler := merchant.NewHandler(merchantSvc, db, redisCache)
 	fiberApp.RegisterRoutes(merchantHandler.RegisterRoutes)
-
+	// Promotion Domain (isolated, minimal impact)
+	// Note: import promotion with alias to avoid conflict, but we need to add import at top
 	// Order Service + Pool Realtime wiring
 	orderSvc := order.NewService(orderRepo, userSvc, tripRepo, matchingSvc, walletSvc, cfgSvc, fcmClient, notifSvc, redisCache, db, auditSvc, storageSvc, merchantSvc)
 	// Wire pool broadcaster adapter (order -> realtime without cycle)
 	poolAdapter := order.NewPoolBroadcasterAdapter(poolHub, poolBroadcaster)
 	orderSvc.SetPoolBroadcaster(poolAdapter)
+
+	// Promotion Domain (isolated, minimal impact) - wired after orderSvc creation
+	promoRepo := promotion.NewRepository(db)
+	promoSvc := promotion.NewService(promoRepo, userRepo, merchantRepo, auditSvc, redisCache, db)
+	promoHandler := promotion.NewHandler(promoSvc, db, redisCache)
+	fiberApp.RegisterRoutes(promoHandler.RegisterRoutes)
+	// Inject promotion service into order service (optional nil guard protects if not wired)
+	orderSvc.SetPromotionService(promoSvc)
 
 	wallet.OnPaymentSuccess = func(ctx context.Context, reference string) error {
 		id, err := uuid.Parse(reference)

@@ -63,6 +63,12 @@ type Order struct {
 	DeliveryAddress string `bun:"delivery_address" json:"delivery_address,omitempty"`
 	CompletionCode  string `bun:"completion_code,nullzero" json:"completion_code,omitempty"`
 
+	// Promotion / Discount (minimal impact additive)
+	PromotionID    *uuid.UUID `bun:"promotion_id,type:uuid" json:"promotion_id,omitempty"`
+	DiscountAmount float64    `bun:"discount_amount,notnull,default:0" json:"discount_amount"`
+	OriginalTotal  *float64   `bun:"original_total" json:"original_total,omitempty"`
+	DiscountType   *string    `bun:"discount_type" json:"discount_type,omitempty"`
+
 	// Virtual fields (populated dynamically, not stored in DB)
 	RunnerName      string   `bun:"-" json:"runner_name,omitempty"`
 	RunnerPhone     string   `bun:"-" json:"runner_phone,omitempty"`
@@ -71,6 +77,7 @@ type Order struct {
 	FeedbackRating  *int     `bun:"-" json:"feedback_rating,omitempty"`
 	FeedbackComment string   `bun:"-" json:"feedback_comment,omitempty"`
 	QRISData        string   `bun:"qris_data,nullzero" json:"qris_data,omitempty"`
+	PromotionCode   string   `bun:"-" json:"promotion_code,omitempty"`
 }
 
 var (

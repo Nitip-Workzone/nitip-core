@@ -40,4 +40,11 @@ const (
 	ActionOrderPickup       = "ORDER_PICKUP"
 	ActionOrderUpdate       = "ORDER_UPDATE"
 	ActionWithdrawalApprove = "WITHDRAWAL_APPROVE"
+
+	// Discount / Promotion
+	ActionDiscountCreate  = "DISCOUNT_CREATE"
+	ActionDiscountUpdate  = "DISCOUNT_UPDATE"
+	ActionDiscountDelete  = "DISCOUNT_DELETE"
+	ActionDiscountReserve = "DISCOUNT_RESERVE"
+	ActionDiscountRelease = "DISCOUNT_RELEASE"
 )

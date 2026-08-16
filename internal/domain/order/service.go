@@ -22,7 +22,6 @@ import (
 
 	"github.com/codecoffy/nitip-core/config"
 	"github.com/codecoffy/nitip-core/internal/cache"
-	"github.com/codecoffy/nitip-core/internal/utils"
 	"github.com/codecoffy/nitip-core/internal/domain/audit"
 	systemconfig "github.com/codecoffy/nitip-core/internal/domain/config"
 	"github.com/codecoffy/nitip-core/internal/domain/merchant"
@@ -32,6 +31,7 @@ import (
 	"github.com/codecoffy/nitip-core/internal/domain/wallet"
 	"github.com/codecoffy/nitip-core/internal/notification"
 	"github.com/codecoffy/nitip-core/internal/storage"
+	"github.com/codecoffy/nitip-core/internal/utils"
 	"github.com/codecoffy/nitip-core/pkg/fileutil"
 	"github.com/codecoffy/nitip-core/pkg/geo"
 	"github.com/google/uuid"
@@ -88,16 +88,21 @@ type CreateOrderRequest struct {
 
 	// Order Type Selection
 	OrderType string `json:"order_type" validate:"omitempty,oneof=instant regular"`
+
+	// Promotion
+	PromotionCode *string `json:"promotion_code,omitempty"`
 }
 
 type EstimateFeeRequest struct {
-	PickupLat    float64 `json:"pickup_lat"     validate:"required"`
-	PickupLng    float64 `json:"pickup_lng"     validate:"required"`
-	DeliveryLat  float64 `json:"delivery_lat"   validate:"required"`
-	DeliveryLng  float64 `json:"delivery_lng"   validate:"required"`
-	WeightKg     float64 `json:"weight_kg"      validate:"required,min=0"`
-	VolumeLiters float64 `json:"volume_liters"  validate:"required,min=0"`
-	OrderType    string  `json:"order_type"     validate:"omitempty,oneof=instant regular"`
+	PickupLat     float64    `json:"pickup_lat"     validate:"required"`
+	PickupLng     float64    `json:"pickup_lng"     validate:"required"`
+	DeliveryLat   float64    `json:"delivery_lat"   validate:"required"`
+	DeliveryLng   float64    `json:"delivery_lng"   validate:"required"`
+	WeightKg      float64    `json:"weight_kg"      validate:"required,min=0"`
+	VolumeLiters  float64    `json:"volume_liters"  validate:"required,min=0"`
+	OrderType     string     `json:"order_type"     validate:"omitempty,oneof=instant regular"`
+	PromotionCode *string    `json:"promotion_code,omitempty"`
+	MerchantID    *uuid.UUID `json:"merchant_id,omitempty"`
 }
 
 type EstimateFeeResponse struct {
@@ -158,6 +163,7 @@ type Service interface {
 
 	// Realtime pool
 	SetPoolBroadcaster(b PoolBroadcaster)
+	SetPromotionService(ps PromotionService)
 }
 
 type PoolBroadcaster interface {
@@ -182,9 +188,17 @@ type service struct {
 	auditSvc     audit.Service
 	storage      storage.Storage
 	merchantSvc  merchant.Service
+	promotionSvc PromotionService // optional, nil guard for minimal impact
 	paymentQueue chan PaymentJob
 	paymentOnce  sync.Once
 	poolHub      PoolBroadcaster
+}
+
+// PromotionService is an interface to avoid import cycle with promotion domain
+type PromotionService interface {
+	ValidateAndReserveForOrder(ctx context.Context, tx bun.IDB, code string, merchantID *uuid.UUID, userID uuid.UUID, itemTotal, deliveryTotal, total float64) (any, float64, error)
+	ApplyUsage(ctx context.Context, tx bun.IDB, promoID, orderID, userID uuid.UUID, merchantID *uuid.UUID, discountAmount, originalAmount float64) error
+	ReleaseUsage(ctx context.Context, tx bun.IDB, orderID uuid.UUID) error
 }
 
 func NewService(repo Repository, userSvc user.Service, tripRepo trip.Repository, matchingSvc Matcher, walletSvc wallet.Service, configSvc systemconfig.Service, fcm notification.Notifier, notifSvc notifDomain.Service, redis *cache.Redis, db *bun.DB, auditSvc audit.Service, storage storage.Storage, merchantSvc merchant.Service) Service {
@@ -208,6 +222,10 @@ func NewService(repo Repository, userSvc user.Service, tripRepo trip.Repository,
 
 func (s *service) SetPoolBroadcaster(b PoolBroadcaster) {
 	s.poolHub = b
+}
+
+func (s *service) SetPromotionService(ps PromotionService) {
+	s.promotionSvc = ps
 }
 
 func (s *service) Create(ctx context.Context, requesterID uuid.UUID, req CreateOrderRequest) (*Order, error) {
@@ -463,9 +481,52 @@ func (s *service) Create(ctx context.Context, requesterID uuid.UUID, req CreateO
 		}
 	}
 
-	// --- 4. Transactional Create & Escrow Hold ---
+	// Keep original total for discount audit
+	originalTotalForAudit := order.TotalPayment
+
+	// --- 4. Transactional Create & Escrow Hold + Promotion Reserve (minimal impact) ---
 	err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		// A. Create Order Record FIRST (so Foreign Key exists)
+		// A. Apply Promotion Discount if any (inside same Tx for FOR UPDATE safety)
+		if s.promotionSvc != nil {
+			promoCode := ""
+			if req.PromotionCode != nil {
+				promoCode = *req.PromotionCode
+			}
+			// Only attempt if code provided or merchant order (for auto)
+			if promoCode != "" || req.MerchantID != nil {
+				itemTotal := req.EstimatedCost
+				deliveryTotal := order.DeliveryFee
+				total := order.TotalPayment
+
+				promoObj, discountAmt, err := s.promotionSvc.ValidateAndReserveForOrder(ctx, tx, promoCode, req.MerchantID, requesterID, itemTotal, deliveryTotal, total)
+				if err != nil {
+					// If auto promo not found, graceful no discount (don't fail)
+					if promoCode == "" && (err.Error() == "tidak ada promo aktif" || err.Error() == "tidak ada promo auto aktif") {
+						// no auto promo, proceed without discount
+					} else {
+						return err
+					}
+				} else if promoObj != nil && discountAmt > 0 {
+					// Apply discount to order
+					order.DiscountAmount = discountAmt
+					originalTotalForAudit = order.TotalPayment
+					order.OriginalTotal = &originalTotalForAudit
+					order.TotalPayment = math.Max(0, order.TotalPayment-discountAmt)
+
+					if promoID := extractPromoID(promoObj); promoID != uuid.Nil {
+						order.PromotionID = &promoID
+						if dt := extractPromoDiscountType(promoObj); dt != "" {
+							order.DiscountType = &dt
+						}
+						if pc := extractPromoCode(promoObj); pc != "" {
+							order.PromotionCode = pc
+						}
+					}
+				}
+			}
+		}
+
+		// B. Create Order Record (after discount calc so TotalPayment already reduced)
 		if err := s.repo.Create(ctx, tx, order); err != nil {
 			return err
 		}
@@ -480,25 +541,29 @@ func (s *service) Create(ctx context.Context, requesterID uuid.UUID, req CreateO
 			}
 		}
 
-		// B. Balance Check & Hold for Escrow (Wallet only)
+		// C. Insert promotion usage if discount applied
+		if s.promotionSvc != nil && order.PromotionID != nil && order.DiscountAmount > 0 {
+			if err := s.promotionSvc.ApplyUsage(ctx, tx, *order.PromotionID, order.ID, requesterID, req.MerchantID, order.DiscountAmount, originalTotalForAudit); err != nil {
+				return fmt.Errorf("gagal mencatat penggunaan promo: %w", err)
+			}
+		}
+
+		// D. Balance Check & Hold for Escrow (Wallet only) - now with discounted TotalPayment
 		if order.PaymentMethod == "escrow" && order.PaymentSource == "wallet" {
 			w, err := s.walletSvc.GetBalance(ctx, requesterID)
 			if err != nil {
 				return fmt.Errorf("gagal mengecek saldo dompet: %v", err)
 			}
 			if w.Balance < order.TotalPayment {
-				return fmt.Errorf("saldo tidak mencukupi. Saldo Anda: Rp %.0f, Total Biaya: Rp %.0f", w.Balance, order.TotalPayment)
+				return fmt.Errorf("saldo tidak mencukupi. Saldo Anda: Rp %.0f, Total Biaya: Rp %.0f (diskon Rp %.0f)", w.Balance, order.TotalPayment, order.DiscountAmount)
 			}
 
-			// Hold the balance (references the order we just created)
 			if err := s.walletSvc.HoldEscrow(ctx, tx, requesterID, order.ID, order.TotalPayment); err != nil {
 				return fmt.Errorf("gagal mengunci saldo: %v", err)
 			}
 
-			// Update payment status (we need to update the order we just inserted)
 			order.PaymentStatus = PaymentEscrow
 
-			// Auto confirm: if auto_confirm is active, status transitions immediately to cooking
 			if merch != nil && merch.AutoConfirm {
 				order.Status = StatusCooking
 			}
@@ -584,6 +649,42 @@ func generateCompletionCode() (string, error) {
 		return "", fmt.Errorf("generate completion code: %w", err)
 	}
 	return fmt.Sprintf("%06d", n.Int64()), nil
+}
+
+// Promotion helpers via reflection to avoid import cycle
+func extractPromoID(obj interface{}) uuid.UUID {
+	if obj == nil {
+		return uuid.Nil
+	}
+	// Try interface method
+	if m, ok := obj.(interface{ GetID() uuid.UUID }); ok {
+		return m.GetID()
+	}
+	return extractFieldUUID(obj, "ID")
+}
+
+func extractPromoDiscountType(obj interface{}) string {
+	return extractFieldString(obj, "DiscountType")
+}
+
+func extractPromoCode(obj interface{}) string {
+	s := extractFieldStringPtr(obj, "Code")
+	if s != nil {
+		return *s
+	}
+	return ""
+}
+
+func extractFieldUUID(obj interface{}, field string) uuid.UUID {
+	return extractUUIDReflect(obj, field)
+}
+
+func extractFieldString(obj interface{}, field string) string {
+	return extractStringReflect(obj, field)
+}
+
+func extractFieldStringPtr(obj interface{}, field string) *string {
+	return extractStringPtrReflect(obj, field)
 }
 
 func (s *service) EstimateFee(ctx context.Context, req EstimateFeeRequest) (*EstimateFeeResponse, error) {
@@ -1186,6 +1287,11 @@ func (s *service) CancelOrder(ctx context.Context, orderID, userID uuid.UUID, re
 			}
 		}
 
+		// Release promotion usage if any
+		if s.promotionSvc != nil && ord.PromotionID != nil {
+			_ = s.promotionSvc.ReleaseUsage(ctx, tx, ord.ID)
+		}
+
 		oldStatus := ord.Status
 		ord.Status = StatusCancelled
 		if reason != "" {
@@ -1715,6 +1821,11 @@ func (s *service) ForceCancelOrder(ctx context.Context, orderID uuid.UUID) error
 			if err := s.tripRepo.RestoreCapacity(ctx, tx, *order.TripID, order.WeightKg, order.VolumeLiters); err != nil {
 				return errors.New("gagal memulihkan kapasitas perjalanan")
 			}
+		}
+
+		// Release promotion usage
+		if s.promotionSvc != nil && order.PromotionID != nil {
+			_ = s.promotionSvc.ReleaseUsage(ctx, tx, orderID)
 		}
 
 		order.Status = StatusCancelled
@@ -2439,7 +2550,7 @@ func sanitizeStorageKey(urlStr string) string {
 		if slashIdx != -1 {
 			path := temp[slashIdx+1:]
 			path = strings.TrimPrefix(path, "uploads/")
-			
+
 			// Strip query parameters (e.g. ?q-sign-algorithm=...)
 			if qIdx := strings.Index(path, "?"); qIdx != -1 {
 				path = path[:qIdx]
