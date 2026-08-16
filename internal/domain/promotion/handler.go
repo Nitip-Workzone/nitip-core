@@ -37,6 +37,10 @@ func (h *Handler) RegisterRoutes(router fiber.Router) {
 	admin.Get("/:id/usages", h.AdminListUsages)
 	admin.Get("/:id/stats", h.AdminStats)
 
+	merchant := router.Group("/merchant/promotions", middleware.Protected(h.db, h.redis), middleware.Role(user.RoleMerchant))
+	merchant.Get("/", h.MerchantPromotions)
+	merchant.Get("/settlement", h.MerchantSettlement)
+
 	public := router.Group("/promotions")
 	public.Get("/active", h.PublicActive)
 	public.Post("/validate", h.PublicValidate)
@@ -274,4 +278,68 @@ func (h *Handler) PublicValidate(c *fiber.Ctx) error {
 		return response.BadRequest(c, res.Message)
 	}
 	return response.Success(c, "voucher valid", res)
+}
+
+func (h *Handler) MerchantPromotions(c *fiber.Ctx) error {
+	claims := jwt.GetClaims(c)
+	if claims == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
+	// ownerID is userID, need to find merchant by owner
+	// We fetch via service method GetActiveForMerchant after finding merchantID
+	// For minimal, we try to parse merchant_id from query, else try to get owner merchant via DB query
+	// Approach: list active promos where merchant_id in (select id from merchants where owner_id = ? ) OR global? But merchant portal wants own merchant only.
+	// For Phase 8 minimal, we expect frontend sends merchant_id from currentMerchant, so use query param
+	var merchantID *uuid.UUID
+	if mid := c.Query("merchant_id"); mid != "" {
+		if parsed, err := uuid.Parse(mid); err == nil {
+			merchantID = &parsed
+		}
+	}
+	// If no merchant_id query, try to find by owner via direct DB lookup
+	if merchantID == nil {
+		// Attempt to find merchant by owner_id via raw query using db
+		var mID uuid.UUID
+		err := h.db.NewSelect().Table("merchants").Column("id").Where("owner_id = ?", claims.UserID).Scan(c.Context(), &mID)
+		if err == nil {
+			merchantID = &mID
+		}
+	}
+	if merchantID == nil {
+		return response.Success(c, "promo merchant", []Promotion{})
+	}
+	list, err := h.svc.GetActiveForMerchant(c.Context(), merchantID)
+	if err != nil {
+		return response.InternalError(c, err.Error())
+	}
+	// Filter only promos for this merchant (exclude global? Keep all active relevant)
+	return response.Success(c, "promo merchant", list)
+}
+
+func (h *Handler) MerchantSettlement(c *fiber.Ctx) error {
+	claims := jwt.GetClaims(c)
+	if claims == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
+	var merchantID *uuid.UUID
+	if mid := c.Query("merchant_id"); mid != "" {
+		if parsed, err := uuid.Parse(mid); err == nil {
+			merchantID = &parsed
+		}
+	}
+	if merchantID == nil {
+		var mID uuid.UUID
+		err := h.db.NewSelect().Table("merchants").Column("id").Where("owner_id = ?", claims.UserID).Scan(c.Context(), &mID)
+		if err == nil {
+			merchantID = &mID
+		}
+	}
+	if merchantID == nil {
+		return response.Success(c, "settlement merchant", &SettlementResponse{TotalLiability: 0, TotalOrders: 0, Items: []SettlementItem{}})
+	}
+	res, err := h.svc.GetSettlement(c.Context(), merchantID, nil, nil)
+	if err != nil {
+		return response.InternalError(c, err.Error())
+	}
+	return response.Success(c, "settlement merchant", res)
 }

@@ -484,16 +484,35 @@ func (s *service) Create(ctx context.Context, requesterID uuid.UUID, req CreateO
 	// Keep original total for discount audit
 	originalTotalForAudit := order.TotalPayment
 
-	// --- 4. Transactional Create & Escrow Hold + Promotion Reserve (minimal impact) ---
+	// --- 4. Transactional Create & Escrow Hold + Promotion Reserve (Food only + wallet/qris only) ---
+	// Prioritas voucher hanya untuk Nitip-Food (terafiliasi merchant). Nitip-Beli (non-merchant) tidak bisa.
+	// Dan voucher hanya bisa wallet/qris, jika COD maka peringatan + dikosongkan (tidak bisa digunakan)
+	if req.PromotionCode != nil && *req.PromotionCode != "" {
+		if req.MerchantID == nil {
+			// Tidak terafiliasi merchant -> Nitip-Beli Regular tidak bisa pakai voucher (prioritas Food only)
+			return nil, errors.New("voucher hanya berlaku untuk Nitip Food (terafiliasi merchant), tidak bisa untuk Nitip Beli/Kirim")
+		}
+		if req.PaymentMethod == MethodCOD {
+			// COD tidak bisa pakai voucher - harus warning dan dikosongkan
+			return nil, errors.New("voucher tidak dapat digunakan dengan metode COD. Silakan pilih Wallet atau QRIS dan voucher akan dikosongkan")
+		}
+	}
+
 	err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		// A. Apply Promotion Discount if any (inside same Tx for FOR UPDATE safety)
+		// A. Apply Promotion Discount if any (inside same Tx for FOR UPDATE safety) - Food only
 		if s.promotionSvc != nil {
 			promoCode := ""
 			if req.PromotionCode != nil {
 				promoCode = *req.PromotionCode
 			}
-			// Only attempt if code provided or merchant order (for auto)
-			if promoCode != "" || req.MerchantID != nil {
+			// Prioritas Food Only: hanya jika merchant_id ada (terafiliasi merchant)
+			// Jika tidak ada merchant_id (Nitip Beli/Kirim) -> skip promo, tidak bisa voucher
+			isFoodOrder := req.MerchantID != nil
+			if !isFoodOrder && promoCode != "" {
+				return errors.New("voucher hanya untuk Nitip Food")
+			}
+			// Only attempt if food order (merchant affiliated) and (code provided or auto)
+			if isFoodOrder && (promoCode != "" || req.MerchantID != nil) {
 				itemTotal := req.EstimatedCost
 				deliveryTotal := order.DeliveryFee
 				total := order.TotalPayment
