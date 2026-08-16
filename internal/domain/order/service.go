@@ -318,8 +318,9 @@ func (s *service) Create(ctx context.Context, requesterID uuid.UUID, req CreateO
 			return nil, fmt.Errorf("batas harian membuat pesanan untuk akun non-verifikasi adalah %d kali. Silakan selesaikan e-KYC untuk akses tanpa batas", limit)
 		}
 
-		// 2. COD Restriction for Non-KYC
-		if req.PaymentMethod == "cod" {
+		// 2. COD Restriction for Non-KYC (except regular shipping/delivery)
+		isRegular := (req.OrderType == "regular" || req.OrderType == "") && req.MerchantID == nil
+		if req.PaymentMethod == "cod" && !isRegular {
 			return nil, errors.New("metode pembayaran COD hanya tersedia untuk pengguna yang telah terverifikasi e-KYC")
 		}
 	}

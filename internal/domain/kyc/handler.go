@@ -1,6 +1,7 @@
 package kyc
 
 import (
+	"io"
 	"strconv"
 	"time"
 
@@ -54,20 +55,20 @@ func (h *Handler) Submit(c *fiber.Ctx) error {
 		return response.Unauthorized(c, "sesi tidak valid")
 	}
 
-	number := c.FormValue("id_card_number")
-	if number == "" {
-		return response.BadRequest(c, "nomor kartu identitas wajib diisi")
+	facebookName := c.FormValue("facebook_name")
+	if facebookName == "" {
+		return response.BadRequest(c, "nama profil facebook wajib diisi")
 	}
 
-	idCardFile, err := c.FormFile("id_card")
+	fbScreenshotHeader, err := c.FormFile("facebook_screenshot")
 	if err != nil {
-		return response.BadRequest(c, "gambar kartu identitas wajib diunggah")
+		return response.BadRequest(c, "screenshot halaman profil facebook wajib diunggah")
 	}
-	if idCardFile.Size > 20*1024*1024 {
-		return response.BadRequest(c, "ukuran gambar kartu identitas terlalu besar (maksimal 20MB)")
+	if fbScreenshotHeader.Size > 20*1024*1024 {
+		return response.BadRequest(c, "ukuran screenshot facebook terlalu besar (maksimal 20MB)")
 	}
-	if !fileutil.IsImage(idCardFile) {
-		return response.BadRequest(c, "kartu identitas harus berupa file gambar (jpg, jpeg, png)")
+	if !fileutil.IsImage(fbScreenshotHeader) {
+		return response.BadRequest(c, "screenshot facebook harus berupa file gambar (jpg, jpeg, png)")
 	}
 
 	selfieFile, err := c.FormFile("selfie")
@@ -81,11 +82,11 @@ func (h *Handler) Submit(c *fiber.Ctx) error {
 		return response.BadRequest(c, "selfie harus berupa file gambar (jpg, jpeg, png)")
 	}
 
-	ic, err := idCardFile.Open()
+	fbScreenshotFile, err := fbScreenshotHeader.Open()
 	if err != nil {
-		return response.InternalError(c, "gagal membuka gambar kartu identitas")
+		return response.InternalError(c, "gagal membuka screenshot facebook")
 	}
-	defer func() { _ = ic.Close() }()
+	defer func() { _ = fbScreenshotFile.Close() }()
 
 	sf, err := selfieFile.Open()
 	if err != nil {
@@ -93,12 +94,30 @@ func (h *Handler) Submit(c *fiber.Ctx) error {
 	}
 	defer func() { _ = sf.Close() }()
 
+	// Optional ID Card values
+	var ic io.Reader
+	var idCardFilename string
+	number := c.FormValue("id_card_number")
+	idCardFile, errCard := c.FormFile("id_card")
+	if errCard == nil && idCardFile != nil {
+		if idCardFile.Size <= 20*1024*1024 && fileutil.IsImage(idCardFile) {
+			if f, errOpen := idCardFile.Open(); errOpen == nil {
+				ic = f
+				idCardFilename = idCardFile.Filename
+				defer func() { _ = f.Close() }()
+			}
+		}
+	}
+
 	req := SubmitKycRequest{
-		IdCardNumber: number,
-		IdCardFile:   ic,
-		IdCardName:   idCardFile.Filename,
-		SelfieFile:   sf,
-		SelfieName:   selfieFile.Filename,
+		IdCardNumber:           number,
+		IdCardFile:             ic,
+		IdCardName:             idCardFilename,
+		SelfieFile:             sf,
+		SelfieName:             selfieFile.Filename,
+		FacebookName:           facebookName,
+		FacebookScreenshotFile: fbScreenshotFile,
+		FacebookScreenshotName: fbScreenshotHeader.Filename,
 	}
 
 	kyc, err := h.service.Submit(c.Context(), claims.UserID, req)

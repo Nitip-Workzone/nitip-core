@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/codecoffy/nitip-core/internal/domain/audit"
@@ -15,15 +16,19 @@ import (
 	"github.com/codecoffy/nitip-core/internal/domain/user"
 	"github.com/codecoffy/nitip-core/internal/notification"
 	"github.com/codecoffy/nitip-core/internal/storage"
+	"github.com/codecoffy/nitip-core/pkg/fileutil"
 	"github.com/google/uuid"
 )
 
 type SubmitKycRequest struct {
-	IdCardNumber string
-	IdCardFile   io.Reader
-	IdCardName   string
-	SelfieFile   io.Reader
-	SelfieName   string
+	IdCardNumber           string
+	IdCardFile             io.Reader
+	IdCardName             string
+	SelfieFile             io.Reader
+	SelfieName             string
+	FacebookName           string
+	FacebookScreenshotFile io.Reader
+	FacebookScreenshotName string
 }
 
 type Service interface {
@@ -61,60 +66,80 @@ func (s *service) Submit(ctx context.Context, userID uuid.UUID, req SubmitKycReq
 	}
 
 	// 2. Upload images to Storage (returns relative path/key)
-	var idCardBuf bytes.Buffer
-	idCardSize, err := io.Copy(&idCardBuf, req.IdCardFile)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read id card file: %w", err)
-	}
-	idCardContentType := "image/jpeg"
-	idCardLimit := 512
-	if idCardBuf.Len() < idCardLimit {
-		idCardLimit = idCardBuf.Len()
-	}
-	if idCardLimit > 0 {
-		idCardContentType = http.DetectContentType(idCardBuf.Bytes()[:idCardLimit])
-		if idCardContentType == "application/octet-stream" {
-			idCardContentType = "image/jpeg"
+	var idCardPath string
+	if req.IdCardFile != nil {
+		var idCardBuf bytes.Buffer
+		idCardSize, err := io.Copy(&idCardBuf, req.IdCardFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read id card file: %w", err)
 		}
-	}
-	idCardKey := fmt.Sprintf("kyc/%s/id_card.jpg", userID.String())
-	idCardPath, err := s.storage.Upload(ctx, idCardKey, &idCardBuf, idCardSize, idCardContentType)
-	if err != nil {
-		return nil, err
+		idCardContentType := "image/jpeg"
+		idCardLimit := 512
+		if idCardBuf.Len() < idCardLimit {
+			idCardLimit = idCardBuf.Len()
+		}
+		if idCardLimit > 0 {
+			idCardContentType = http.DetectContentType(idCardBuf.Bytes()[:idCardLimit])
+			if idCardContentType == "application/octet-stream" {
+				idCardContentType = "image/jpeg"
+			}
+		}
+		idCardKey := fmt.Sprintf("kyc/%s/id_card.jpg", userID.String())
+		idCardPath, err = s.storage.Upload(ctx, idCardKey, &idCardBuf, idCardSize, idCardContentType)
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	var selfieBuf bytes.Buffer
-	selfieSize, err := io.Copy(&selfieBuf, req.SelfieFile)
+	// Selfie image compression
+	compressedSelfie, err := fileutil.CompressAndResizeImage(req.SelfieFile, 1200, 75)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read selfie file: %w", err)
+		return nil, fmt.Errorf("gagal mengompresi gambar selfie: %w", err)
+	}
+	var selfieBuf bytes.Buffer
+	selfieSize, err := io.Copy(&selfieBuf, compressedSelfie)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read compressed selfie: %w", err)
 	}
 	selfieContentType := "image/jpeg"
-	selfieLimit := 512
-	if selfieBuf.Len() < selfieLimit {
-		selfieLimit = selfieBuf.Len()
-	}
-	if selfieLimit > 0 {
-		selfieContentType = http.DetectContentType(selfieBuf.Bytes()[:selfieLimit])
-		if selfieContentType == "application/octet-stream" {
-			selfieContentType = "image/jpeg"
-		}
-	}
 	selfieKey := fmt.Sprintf("kyc/%s/selfie.jpg", userID.String())
 	selfiePath, err := s.storage.Upload(ctx, selfieKey, &selfieBuf, selfieSize, selfieContentType)
 	if err != nil {
 		return nil, err
 	}
 
+	// Facebook screenshot compression and upload
+	var facebookScreenshotPath string
+	if req.FacebookScreenshotFile != nil {
+		compressedFB, err := fileutil.CompressAndResizeImage(req.FacebookScreenshotFile, 1200, 75)
+		if err != nil {
+			return nil, fmt.Errorf("gagal mengompresi screenshot facebook: %w", err)
+		}
+		var fbBuf bytes.Buffer
+		fbSize, err := io.Copy(&fbBuf, compressedFB)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read compressed facebook screenshot: %w", err)
+		}
+		fbContentType := "image/jpeg"
+		fbKey := fmt.Sprintf("kyc/%s/facebook_screenshot.jpg", userID.String())
+		facebookScreenshotPath, err = s.storage.Upload(ctx, fbKey, &fbBuf, fbSize, fbContentType)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	// 3. Create submission record
 	kyc := &KycSubmission{
-		ID:             uuid.New(),
-		UserID:         userID,
-		IdCardNumber:   req.IdCardNumber,
-		IdCardImageURL: idCardPath, // Storing path
-		SelfieImageURL: selfiePath, // Storing path
-		Status:         StatusPending,
-		CreatedAt:      time.Now(),
-		UpdatedAt:      time.Now(),
+		ID:                    uuid.New(),
+		UserID:                userID,
+		IdCardNumber:          req.IdCardNumber,
+		IdCardImageURL:        idCardPath,
+		SelfieImageURL:        selfiePath,
+		FacebookName:          req.FacebookName,
+		FacebookScreenshotURL: facebookScreenshotPath,
+		Status:                StatusPending,
+		CreatedAt:             time.Now(),
+		UpdatedAt:             time.Now(),
 	}
 
 	if err := s.repo.Create(ctx, kyc); err != nil {
@@ -217,22 +242,60 @@ func (s *service) Review(ctx context.Context, kycID, actorID uuid.UUID, approved
 
 	return err
 }
+
+func sanitizeStorageKey(urlStr string) string {
+	if urlStr == "" {
+		return ""
+	}
+	if strings.HasPrefix(urlStr, "http://") || strings.HasPrefix(urlStr, "https://") {
+		temp := urlStr
+		if strings.HasPrefix(temp, "https://") {
+			temp = strings.TrimPrefix(temp, "https://")
+		} else {
+			temp = strings.TrimPrefix(temp, "http://")
+		}
+
+		slashIdx := strings.Index(temp, "/")
+		if slashIdx != -1 {
+			path := temp[slashIdx+1:]
+			path = strings.TrimPrefix(path, "uploads/")
+			
+			// Strip query parameters
+			if qIdx := strings.Index(path, "?"); qIdx != -1 {
+				path = path[:qIdx]
+			}
+			return path
+		}
+	}
+	return urlStr
+}
+
 func (s *service) signURLs(ctx context.Context, kyc *KycSubmission) {
 	if kyc == nil {
 		return
 	}
 	// Sign IdCardImageURL
 	if kyc.IdCardImageURL != "" {
-		signed, err := s.storage.SignedURL(ctx, kyc.IdCardImageURL, 1*time.Hour)
+		key := sanitizeStorageKey(kyc.IdCardImageURL)
+		signed, err := s.storage.SignedURL(ctx, key, 1*time.Hour)
 		if err == nil {
 			kyc.IdCardImageURL = signed
 		}
 	}
 	// Sign SelfieImageURL
 	if kyc.SelfieImageURL != "" {
-		signed, err := s.storage.SignedURL(ctx, kyc.SelfieImageURL, 1*time.Hour)
+		key := sanitizeStorageKey(kyc.SelfieImageURL)
+		signed, err := s.storage.SignedURL(ctx, key, 1*time.Hour)
 		if err == nil {
 			kyc.SelfieImageURL = signed
+		}
+	}
+	// Sign FacebookScreenshotURL
+	if kyc.FacebookScreenshotURL != "" {
+		key := sanitizeStorageKey(kyc.FacebookScreenshotURL)
+		signed, err := s.storage.SignedURL(ctx, key, 1*time.Hour)
+		if err == nil {
+			kyc.FacebookScreenshotURL = signed
 		}
 	}
 }
