@@ -281,7 +281,7 @@ func (s *service) WebAuthnLoginFinish(ctx context.Context, email string, parsedR
 		return nil, errors.New("gagal membuat token penyegar")
 	}
 
-	user.ComputeHasPin()
+	s.populateUserFlags(ctx, user)
 	s.signAvatar(ctx, user)
 	return &LoginResponse{
 		Token:        token,

@@ -42,6 +42,7 @@ type User struct {
 	IsAcceptingOrders bool       `bun:"is_accepting_orders,notnull,default:false" json:"is_accepting_orders"`
 	Pin               *string    `bun:"pin" json:"-"`
 	HasPin            bool       `bun:"-" json:"has_pin"`
+	HasPasskey        bool       `bun:"-" json:"has_passkey"`
 	TotpSecret        *string    `bun:"totp_secret" json:"-"`
 	TotpEnabled       bool       `bun:"totp_enabled,notnull,default:false" json:"totp_enabled"`
 	TokenVersion      int        `bun:"token_version,notnull,default:0" json:"-"`

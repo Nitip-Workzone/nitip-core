@@ -244,7 +244,7 @@ func (s *service) GetByID(ctx context.Context, id uuid.UUID, requestorID uuid.UU
 		u.MaskSensitiveData()
 	}
 
-	u.ComputeHasPin()
+	s.populateUserFlags(ctx, u)
 	s.signAvatar(ctx, u)
 	return u, nil
 }
@@ -308,7 +308,7 @@ func (s *service) Create(ctx context.Context, req CreateUserRequest) (*User, err
 	if err := s.repo.Create(ctx, user); err != nil {
 		return nil, err
 	}
-	user.ComputeHasPin()
+	s.populateUserFlags(ctx, user)
 	return user, nil
 }
 
@@ -343,7 +343,7 @@ func (s *service) AdminCreate(ctx context.Context, req AdminCreateUserRequest) (
 	if err := s.repo.Create(ctx, user); err != nil {
 		return nil, err
 	}
-	user.ComputeHasPin()
+	s.populateUserFlags(ctx, user)
 	return user, nil
 }
 
@@ -444,7 +444,7 @@ func (s *service) Login(ctx context.Context, req LoginRequest, platform string) 
 		return nil, errors.New("gagal membuat token penyegar")
 	}
 
-	user.ComputeHasPin()
+	s.populateUserFlags(ctx, user)
 	s.signAvatar(ctx, user)
 	return &LoginResponse{
 		Token:        token,
@@ -498,7 +498,7 @@ func (s *service) Refresh(ctx context.Context, refreshToken string) (*LoginRespo
 		return nil, errors.New("gagal membuat token penyegar baru")
 	}
 
-	user.ComputeHasPin()
+	s.populateUserFlags(ctx, user)
 	s.signAvatar(ctx, user)
 	return &LoginResponse{
 		Token:        accessToken,
@@ -1195,7 +1195,7 @@ func (s *service) OnboardRunner(ctx context.Context, req OnboardRunnerRequest) (
 		return nil, fmt.Errorf("gagal mengonfirmasi transaksi pendaftaran: %w", err)
 	}
 
-	user.ComputeHasPin()
+	s.populateUserFlags(ctx, user)
 	return user, nil
 }
 
@@ -1327,7 +1327,7 @@ func (s *service) OnboardMerchant(ctx context.Context, req OnboardMerchantReques
 		return nil, fmt.Errorf("gagal mengonfirmasi transaksi pendaftaran merchant: %w", err)
 	}
 
-	user.ComputeHasPin()
+	s.populateUserFlags(ctx, user)
 	return user, nil
 }
 
@@ -1382,6 +1382,21 @@ func (s *service) ValidateInvitation(ctx context.Context, token string) (*Regist
 	}
 
 	return invite, nil
+}
+
+func (s *service) populateUserFlags(ctx context.Context, u *User) {
+	if u == nil {
+		return
+	}
+	u.ComputeHasPin()
+	
+	// Cek status passkey (WebAuthn credentials)
+	creds, err := s.repo.FindWebAuthnCredentialsByUserID(ctx, u.ID)
+	if err == nil && len(creds) > 0 {
+		u.HasPasskey = true
+	} else {
+		u.HasPasskey = false
+	}
 }
 
 
