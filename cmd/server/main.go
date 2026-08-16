@@ -28,6 +28,7 @@ import (
 	"github.com/codecoffy/nitip-core/internal/domain/trip"
 	"github.com/codecoffy/nitip-core/internal/domain/user"
 	"github.com/codecoffy/nitip-core/internal/domain/wallet"
+	"github.com/codecoffy/nitip-core/internal/domain/store"
 	infraFirebase "github.com/codecoffy/nitip-core/internal/infrastructure/firebase"
 	applogger "github.com/codecoffy/nitip-core/internal/logger"
 	"github.com/codecoffy/nitip-core/internal/notification"
@@ -76,6 +77,9 @@ import (
 
 // @tag.name         [Admin] System Config
 // @tag.description  Admin: Baca dan ubah nilai konfigurasi sistem secara dinamis.
+
+// @tag.name         [Admin] Store Management
+// @tag.description  Admin: Kelola direktori tokoh titip beli — tambah, ubah, dan hapus tokoh beserta koordinat GPS-nya.
 
 // @tag.name         [Runner] KYC
 // @tag.description  Proses verifikasi identitas (KTP + Selfie) agar Runner dapat menerima order.
@@ -274,6 +278,12 @@ func main() {
 	supportSvc := supportDomain.NewService(supportRepo, cfgSvc, notifSvc, redisCache, auditSvc)
 	supportHandler := supportDomain.NewHandler(supportSvc, db, redisCache)
 	fiberApp.RegisterRoutes(supportHandler.RegisterRoutes)
+
+	// Store Directory (Direktori Tokoh Titip Beli)
+	storeRepo := store.NewRepository(db)
+	storeSvc := store.NewService(storeRepo, redisCache)
+	storeHandler := store.NewHandler(storeSvc, db, redisCache)
+	fiberApp.RegisterRoutes(storeHandler.RegisterRoutes)
 
 	// 7. Graceful shutdown listener
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
