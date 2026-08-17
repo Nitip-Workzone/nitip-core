@@ -8,8 +8,18 @@ import (
 
 	"github.com/codecoffy/nitip-core/internal/domain/user"
 	"github.com/codecoffy/nitip-core/internal/storage"
+	"github.com/codecoffy/nitip-core/pkg/fileutil"
 	"github.com/google/uuid"
 )
+
+func compressWithFileUtil(r io.Reader) (io.Reader, error) {
+	return fileutil.CompressAndResizeImage(r, 1200, 75)
+}
+
+func isJpegFilename(name string) bool {
+	lower := strings.ToLower(name)
+	return strings.HasSuffix(lower, ".jpg") || strings.HasSuffix(lower, ".jpeg")
+}
 
 func sanitizeStorageKey(urlStr string) string {
 	if urlStr == "" {
@@ -27,7 +37,7 @@ func sanitizeStorageKey(urlStr string) string {
 		if slashIdx != -1 {
 			path := temp[slashIdx+1:]
 			path = strings.TrimPrefix(path, "uploads/")
-			
+
 			// Strip query parameters (e.g. ?q-sign-algorithm=...)
 			if qIdx := strings.Index(path, "?"); qIdx != -1 {
 				path = path[:qIdx]
@@ -365,10 +375,32 @@ func (s *service) signMerchantImages(ctx context.Context, m *Merchant) {
 	}
 }
 
-
 func (s *service) UploadMenuImage(ctx context.Context, filename string, content io.Reader, size int64, contentType string) (string, error) {
+	// Compress before upload - fixes slow loading merchant banner/profile (8MB -> 300KB)
+	// Same pattern as KYC & onboarding fix to prevent timeout on some devices
+	uploadReader := content
+	uploadSize := size
+	if compressed, err := s.compressImageForMerchant(content); err == nil {
+		if buf, ok := compressed.(interface{ Len() int }); ok {
+			// *bytes.Buffer
+			if b, ok2 := compressed.(interface{ Bytes() []byte }); ok2 {
+				_ = b
+			}
+			uploadReader = compressed
+			uploadSize = int64(buf.Len())
+		}
+	}
 	objectKey := "menus/" + uuid.New().String() + "_" + filename
-	return s.storage.Upload(ctx, objectKey, content, size, contentType)
+	// Ensure jpeg ext
+	if !isJpegFilename(filename) {
+		objectKey = objectKey + ".jpg"
+	}
+	return s.storage.Upload(ctx, objectKey, uploadReader, uploadSize, "image/jpeg")
+}
+
+func (s *service) compressImageForMerchant(r io.Reader) (io.Reader, error) {
+	// Reuse hardened compress logic 1200px JPEG 75% - runs before storage upload, not inside DB Tx
+	return compressWithFileUtil(r)
 }
 
 // OrderItem Implementation
@@ -394,4 +426,3 @@ func (s *service) CreateSurvey(ctx context.Context, merchantID uuid.UUID, monthl
 	}
 	return survey, nil
 }
-
