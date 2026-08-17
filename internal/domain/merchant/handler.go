@@ -357,11 +357,12 @@ func (h *Handler) ListMenuMerchant(c *fiber.Ctx) error {
 }
 
 type createMenuRequest struct {
-	Name        string  `json:"name" validate:"required"`
-	Description string  `json:"description"`
-	Price       float64 `json:"price" validate:"required,gt=0"`
-	ImageURL    string  `json:"image_url"`
-	IsAvailable *bool   `json:"is_available" validate:"required"`
+	Name        string     `json:"name" validate:"required"`
+	Description string     `json:"description"`
+	Price       float64    `json:"price" validate:"required,gt=0"`
+	ImageURL    string     `json:"image_url"`
+	IsAvailable *bool      `json:"is_available" validate:"required"`
+	CategoryID  *uuid.UUID `json:"category_id,omitempty"`
 }
 
 func (h *Handler) CreateMenu(c *fiber.Ctx) error {
@@ -369,7 +370,7 @@ func (h *Handler) CreateMenu(c *fiber.Ctx) error {
 	if claims == nil {
 		return response.Unauthorized(c, "sesi tidak valid")
 	}
-	m, err := h.service.GetMerchantByOwnerID(c.Context(), claims.UserID)
+	merchant, err := h.service.GetMerchantByOwnerID(c.Context(), claims.UserID)
 	if err != nil {
 		return response.NotFound(c, "profil merchant tidak ditemukan")
 	}
@@ -382,20 +383,29 @@ func (h *Handler) CreateMenu(c *fiber.Ctx) error {
 		return response.ValidationFailed(c, errs)
 	}
 
-	menu, err := h.service.CreateMenu(c.Context(), m.ID, req.Name, req.Description, req.Price, req.ImageURL, *req.IsAvailable)
+	menu, err := h.service.CreateMenu(c.Context(), merchant.ID, req.Name, req.Description, req.Price, req.ImageURL, *req.IsAvailable)
 	if err != nil {
 		return response.InternalError(c, err.Error())
+	}
+
+	// Fix bug kategori hilang: jika ada category_id, langsung update full agar kategori tersimpan
+	if req.CategoryID != nil {
+		updated, err := h.service.UpdateMenuFull(c.Context(), menu.ID, req.Name, req.Description, req.Price, req.ImageURL, req.CategoryID, *req.IsAvailable)
+		if err == nil {
+			menu = updated
+		}
 	}
 
 	return response.Success(c, "menu berhasil ditambahkan", menu)
 }
 
 type updateMenuRequest struct {
-	Name        string  `json:"name" validate:"required"`
-	Description string  `json:"description"`
-	Price       float64 `json:"price" validate:"required,gt=0"`
-	ImageURL    string  `json:"image_url"`
-	IsAvailable *bool   `json:"is_available" validate:"required"`
+	Name        string     `json:"name" validate:"required"`
+	Description string     `json:"description"`
+	Price       float64    `json:"price" validate:"required,gt=0"`
+	ImageURL    string     `json:"image_url"`
+	IsAvailable *bool      `json:"is_available" validate:"required"`
+	CategoryID  *uuid.UUID `json:"category_id,omitempty"`
 }
 
 func (h *Handler) UpdateMenu(c *fiber.Ctx) error {
@@ -431,7 +441,12 @@ func (h *Handler) UpdateMenu(c *fiber.Ctx) error {
 		return response.ValidationFailed(c, errs)
 	}
 
-	menu, err = h.service.UpdateMenu(c.Context(), id, req.Name, req.Description, req.Price, req.ImageURL, *req.IsAvailable)
+	// Jika ada category_id, pakai UpdateMenuFull agar kategori tersimpan
+	if req.CategoryID != nil {
+		menu, err = h.service.UpdateMenuFull(c.Context(), id, req.Name, req.Description, req.Price, req.ImageURL, req.CategoryID, *req.IsAvailable)
+	} else {
+		menu, err = h.service.UpdateMenu(c.Context(), id, req.Name, req.Description, req.Price, req.ImageURL, *req.IsAvailable)
+	}
 	if err != nil {
 		return response.InternalError(c, err.Error())
 	}
