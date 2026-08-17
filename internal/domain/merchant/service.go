@@ -1,6 +1,7 @@
 package merchant
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"strings"
@@ -11,6 +12,8 @@ import (
 	"github.com/codecoffy/nitip-core/pkg/fileutil"
 	"github.com/google/uuid"
 )
+
+func newBytesReader(b []byte) io.Reader { return bytes.NewReader(b) }
 
 func compressWithFileUtil(r io.Reader) (io.Reader, error) {
 	return fileutil.CompressAndResizeImage(r, 1200, 75)
@@ -376,22 +379,47 @@ func (s *service) signMerchantImages(ctx context.Context, m *Merchant) {
 }
 
 func (s *service) UploadMenuImage(ctx context.Context, filename string, content io.Reader, size int64, contentType string) (string, error) {
-	// Compress before upload - fixes slow loading merchant banner/profile (8MB -> 300KB)
-	// Same pattern as KYC & onboarding fix to prevent timeout on some devices
+	// P0 image size harden: file 1.39MB screenshot di COS terlalu besar untuk food card 76x76
+	// FE sudah crop wajib 1:1 1200x1200 JPEG 75% ~200-300KB, tapi BE tetap paksa compress ulang agar tidak pernah >400KB
+	// Jika compress gagal (misal HEIC), fallback ke original tapi tetap batasi
 	uploadReader := content
 	uploadSize := size
-	if compressed, err := s.compressImageForMerchant(content); err == nil {
+
+	// Selalu coba compress dulu - jangan fallback diam-diam ke original 1.39MB
+	compressed, err := s.compressImageForMerchant(content)
+	if err == nil {
 		if buf, ok := compressed.(interface{ Len() int }); ok {
-			// *bytes.Buffer
-			if b, ok2 := compressed.(interface{ Bytes() []byte }); ok2 {
-				_ = b
-			}
 			uploadReader = compressed
 			uploadSize = int64(buf.Len())
+			// Jika hasil compress masih >400KB (misal foto 4000x3000 dengan quality 75 masih besar), paksa quality 60
+			if uploadSize > 400*1024 {
+				if buf2, ok2 := compressed.(interface{ Bytes() []byte }); ok2 {
+					if second, err2 := fileutil.CompressAndResizeImage(newBytesReader(buf2.Bytes()), 1000, 60); err2 == nil {
+						if b2, ok3 := second.(interface{ Len() int }); ok3 {
+							if b2.Len() < int(uploadSize) {
+								uploadReader = second
+								uploadSize = int64(b2.Len())
+							}
+						}
+					}
+				}
+			}
 		}
 	}
+	// Safety: jika hasil masih >5MB (limit handler), error agar tidak upload 1.39MB lagi
+	if uploadSize > 1*1024*1024 {
+		// masih terlalu besar, paksa compress sekali lagi ke 800px quality 60
+		if buf, ok := uploadReader.(interface{ Bytes() []byte }); ok {
+			if third, err := fileutil.CompressAndResizeImage(newBytesReader(buf.Bytes()), 800, 60); err == nil {
+				if b3, ok3 := third.(interface{ Len() int }); ok3 {
+					uploadReader = third
+					uploadSize = int64(b3.Len())
+				}
+			}
+		}
+	}
+
 	objectKey := "menus/" + uuid.New().String() + "_" + filename
-	// Ensure jpeg ext
 	if !isJpegFilename(filename) {
 		objectKey = objectKey + ".jpg"
 	}
