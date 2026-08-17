@@ -39,18 +39,22 @@ type Repository interface {
 	UpdateVariantGroup(ctx context.Context, g *MenuVariantGroup) error
 	DeleteVariantGroup(ctx context.Context, id uuid.UUID) error
 	ListVariantGroupsByMenuID(ctx context.Context, menuID uuid.UUID) ([]MenuVariantGroup, error)
+	GetVariantGroupByID(ctx context.Context, id uuid.UUID) (*MenuVariantGroup, error)
 	CreateVariantOption(ctx context.Context, o *MenuVariantOption) error
 	UpdateVariantOption(ctx context.Context, o *MenuVariantOption) error
+	GetVariantOptionByID(ctx context.Context, id uuid.UUID) (*MenuVariantOption, error)
 	DeleteVariantOption(ctx context.Context, id uuid.UUID) error
 	ListVariantOptionsByGroupID(ctx context.Context, groupID uuid.UUID) ([]MenuVariantOption, error)
 
 	// ToppingGroups
 	CreateToppingGroup(ctx context.Context, g *MenuToppingGroup) error
 	UpdateToppingGroup(ctx context.Context, g *MenuToppingGroup) error
+	GetToppingGroupByID(ctx context.Context, id uuid.UUID) (*MenuToppingGroup, error)
 	DeleteToppingGroup(ctx context.Context, id uuid.UUID) error
 	ListToppingGroupsByMenuID(ctx context.Context, menuID uuid.UUID) ([]MenuToppingGroup, error)
 	CreateToppingOption(ctx context.Context, o *MenuToppingOption) error
 	UpdateToppingOption(ctx context.Context, o *MenuToppingOption) error
+	GetToppingOptionByID(ctx context.Context, id uuid.UUID) (*MenuToppingOption, error)
 	DeleteToppingOption(ctx context.Context, id uuid.UUID) error
 	ListToppingOptionsByGroupID(ctx context.Context, groupID uuid.UUID) ([]MenuToppingOption, error)
 
@@ -65,6 +69,7 @@ type Repository interface {
 	GetAddonMasterByID(ctx context.Context, id uuid.UUID) (*AddonMaster, error)
 	ListAddonMastersByMerchantID(ctx context.Context, merchantID uuid.UUID) ([]AddonMaster, error)
 	CreateAddonOption(ctx context.Context, o *AddonOption) error
+	GetAddonOptionByID(ctx context.Context, id uuid.UUID) (*AddonOption, error)
 	UpdateAddonOption(ctx context.Context, o *AddonOption) error
 	DeleteAddonOption(ctx context.Context, id uuid.UUID) error
 	ListAddonOptionsByMasterID(ctx context.Context, masterID uuid.UUID) ([]AddonOption, error)
@@ -239,8 +244,17 @@ func (r *repository) CreateVariantGroup(ctx context.Context, g *MenuVariantGroup
 	return err
 }
 func (r *repository) UpdateVariantGroup(ctx context.Context, g *MenuVariantGroup) error {
-	_, err := r.db.NewUpdate().Model(g).WherePK().Exec(ctx)
+	// Use explicit columns to avoid zeroing group_id etc - only update mutable fields
+	_, err := r.db.NewUpdate().Model(g).WherePK().Column("name", "type", "is_required", "min_select", "max_select", "sort_order", "updated_at").Exec(ctx)
 	return err
+}
+func (r *repository) GetVariantGroupByID(ctx context.Context, id uuid.UUID) (*MenuVariantGroup, error) {
+	g := new(MenuVariantGroup)
+	err := r.db.NewSelect().Model(g).Where("id = ?", id).Relation("Options").Scan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return g, nil
 }
 func (r *repository) DeleteVariantGroup(ctx context.Context, id uuid.UUID) error {
 	_, err := r.db.NewDelete().Model((*MenuVariantGroup)(nil)).Where("id = ?", id).Exec(ctx)
@@ -255,8 +269,17 @@ func (r *repository) CreateVariantOption(ctx context.Context, o *MenuVariantOpti
 	_, err := r.db.NewInsert().Model(o).Exec(ctx)
 	return err
 }
+func (r *repository) GetVariantOptionByID(ctx context.Context, id uuid.UUID) (*MenuVariantOption, error) {
+	o := new(MenuVariantOption)
+	err := r.db.NewSelect().Model(o).Where("id = ?", id).Scan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return o, nil
+}
 func (r *repository) UpdateVariantOption(ctx context.Context, o *MenuVariantOption) error {
-	_, err := r.db.NewUpdate().Model(o).WherePK().Exec(ctx)
+	// Explicit columns only - preserve group_id & created_at, avoid FK violation from zero group_id
+	_, err := r.db.NewUpdate().Model(o).WherePK().Column("label", "price_delta", "image_url", "is_default", "is_available", "sort_order", "updated_at").Exec(ctx)
 	return err
 }
 func (r *repository) DeleteVariantOption(ctx context.Context, id uuid.UUID) error {
@@ -275,8 +298,16 @@ func (r *repository) CreateToppingGroup(ctx context.Context, g *MenuToppingGroup
 	return err
 }
 func (r *repository) UpdateToppingGroup(ctx context.Context, g *MenuToppingGroup) error {
-	_, err := r.db.NewUpdate().Model(g).WherePK().Exec(ctx)
+	_, err := r.db.NewUpdate().Model(g).WherePK().Column("name", "type", "is_required", "min_select", "max_select", "sort_order", "updated_at").Exec(ctx)
 	return err
+}
+func (r *repository) GetToppingGroupByID(ctx context.Context, id uuid.UUID) (*MenuToppingGroup, error) {
+	g := new(MenuToppingGroup)
+	err := r.db.NewSelect().Model(g).Where("id = ?", id).Relation("Options").Scan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return g, nil
 }
 func (r *repository) DeleteToppingGroup(ctx context.Context, id uuid.UUID) error {
 	_, err := r.db.NewDelete().Model((*MenuToppingGroup)(nil)).Where("id = ?", id).Exec(ctx)
@@ -291,8 +322,16 @@ func (r *repository) CreateToppingOption(ctx context.Context, o *MenuToppingOpti
 	_, err := r.db.NewInsert().Model(o).Exec(ctx)
 	return err
 }
+func (r *repository) GetToppingOptionByID(ctx context.Context, id uuid.UUID) (*MenuToppingOption, error) {
+	o := new(MenuToppingOption)
+	err := r.db.NewSelect().Model(o).Where("id = ?", id).Scan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return o, nil
+}
 func (r *repository) UpdateToppingOption(ctx context.Context, o *MenuToppingOption) error {
-	_, err := r.db.NewUpdate().Model(o).WherePK().Exec(ctx)
+	_, err := r.db.NewUpdate().Model(o).WherePK().Column("label", "price_delta", "image_url", "is_available", "sort_order", "updated_at").Exec(ctx)
 	return err
 }
 func (r *repository) DeleteToppingOption(ctx context.Context, id uuid.UUID) error {
@@ -437,8 +476,16 @@ func (r *repository) CreateAddonOption(ctx context.Context, o *AddonOption) erro
 	_, err := r.db.NewInsert().Model(o).Exec(ctx)
 	return err
 }
+func (r *repository) GetAddonOptionByID(ctx context.Context, id uuid.UUID) (*AddonOption, error) {
+	o := new(AddonOption)
+	err := r.db.NewSelect().Model(o).Where("id = ?", id).Scan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return o, nil
+}
 func (r *repository) UpdateAddonOption(ctx context.Context, o *AddonOption) error {
-	_, err := r.db.NewUpdate().Model(o).WherePK().Exec(ctx)
+	_, err := r.db.NewUpdate().Model(o).WherePK().Column("label", "price_delta", "image_url", "is_available", "sort_order", "updated_at").Exec(ctx)
 	return err
 }
 func (r *repository) DeleteAddonOption(ctx context.Context, id uuid.UUID) error {

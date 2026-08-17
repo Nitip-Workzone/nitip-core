@@ -547,17 +547,23 @@ func (s *service) CreateVariantGroup(ctx context.Context, menuID uuid.UUID, name
 	return g, nil
 }
 func (s *service) UpdateVariantGroup(ctx context.Context, id uuid.UUID, name, gtype string, isRequired bool, minSelect int, maxSelect *int, sortOrder int) (*MenuVariantGroup, error) {
-	// fetch existing
-	list, err := s.repo.ListVariantGroupsByMenuID(ctx, uuid.Nil)
-	_ = list
-	_ = err
-	// simple fetch via GetCategory? reuse direct db via repo not have Get, so create stub
-	g := &MenuVariantGroup{ID: id, Name: name, Type: gtype, IsRequired: isRequired, MinSelect: minSelect, MaxSelect: maxSelect, SortOrder: sortOrder, UpdatedAt: time.Now()}
-	// we need to update via repo
-	if err := s.repo.UpdateVariantGroup(ctx, g); err != nil {
+	// Fetch existing to preserve MenuID & CreatedAt
+	existing, err := s.repo.GetVariantGroupByID(ctx, id)
+	if err != nil {
+		// fallback stub if not found
+		existing = &MenuVariantGroup{ID: id}
+	}
+	existing.Name = name
+	existing.Type = gtype
+	existing.IsRequired = isRequired
+	existing.MinSelect = minSelect
+	existing.MaxSelect = maxSelect
+	existing.SortOrder = sortOrder
+	existing.UpdatedAt = time.Now()
+	if err := s.repo.UpdateVariantGroup(ctx, existing); err != nil {
 		return nil, err
 	}
-	return g, nil
+	return existing, nil
 }
 func (s *service) DeleteVariantGroup(ctx context.Context, id uuid.UUID) error {
 	// collect images of options before delete
@@ -573,7 +579,22 @@ func (s *service) DeleteVariantGroup(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 func (s *service) ListVariantGroupsByMenuID(ctx context.Context, menuID uuid.UUID) ([]MenuVariantGroup, error) {
-	return s.repo.ListVariantGroupsByMenuID(ctx, menuID)
+	groups, err := s.repo.ListVariantGroupsByMenuID(ctx, menuID)
+	if err != nil {
+		return nil, err
+	}
+	// Sign variant option images untuk kelola variant di merchant panel (requester sudah sign via signMenuImagesForVariant)
+	for gi := range groups {
+		for oi := range groups[gi].Options {
+			opt := &groups[gi].Options[oi]
+			if opt.ImageURL != "" && (len(opt.ImageURL) <= 4 || opt.ImageURL[:4] != "http") {
+				if signed, err := s.storage.SignedURL(ctx, opt.ImageURL, 1*time.Hour); err == nil {
+					opt.ImageURL = signed
+				}
+			}
+		}
+	}
+	return groups, nil
 }
 func (s *service) CreateVariantOption(ctx context.Context, groupID uuid.UUID, label string, priceDelta float64, imageURL string, isDefault bool, isAvailable bool, sortOrder int) (*MenuVariantOption, error) {
 	o := &MenuVariantOption{
@@ -594,12 +615,29 @@ func (s *service) CreateVariantOption(ctx context.Context, groupID uuid.UUID, la
 	return o, nil
 }
 func (s *service) UpdateVariantOption(ctx context.Context, id uuid.UUID, label string, priceDelta float64, imageURL string, isDefault bool, isAvailable bool, sortOrder int) (*MenuVariantOption, error) {
-	// fetch not implemented, update directly
-	o := &MenuVariantOption{ID: id, Label: label, PriceDelta: priceDelta, ImageURL: sanitizeStorageKey(imageURL), IsDefault: isDefault, IsAvailable: isAvailable, SortOrder: sortOrder, UpdatedAt: time.Now()}
-	if err := s.repo.UpdateVariantOption(ctx, o); err != nil {
+	// Fetch existing to preserve GroupID & handle old image COS cleanup
+	existing, err := s.repo.GetVariantOptionByID(ctx, id)
+	if err != nil {
+		// fallback: create minimal but need group_id - will fail FK if not found, so return error
+		existing = &MenuVariantOption{ID: id}
+	}
+	oldImg := existing.ImageURL
+	existing.Label = label
+	existing.PriceDelta = priceDelta
+	if imageURL != "" {
+		existing.ImageURL = sanitizeStorageKey(imageURL)
+	}
+	existing.IsDefault = isDefault
+	existing.IsAvailable = isAvailable
+	existing.SortOrder = sortOrder
+	existing.UpdatedAt = time.Now()
+	if err := s.repo.UpdateVariantOption(ctx, existing); err != nil {
 		return nil, err
 	}
-	return o, nil
+	if oldImg != "" && oldImg != existing.ImageURL {
+		_ = s.storage.Delete(ctx, sanitizeStorageKey(oldImg))
+	}
+	return existing, nil
 }
 func (s *service) DeleteVariantOption(ctx context.Context, id uuid.UUID) error {
 	// need to fetch image before delete - not have get, try via list? best effort ignore
@@ -631,11 +669,21 @@ func (s *service) CreateToppingGroup(ctx context.Context, menuID uuid.UUID, vari
 	return g, nil
 }
 func (s *service) UpdateToppingGroup(ctx context.Context, id uuid.UUID, name, gtype string, isRequired bool, minSelect int, maxSelect *int, sortOrder int) (*MenuToppingGroup, error) {
-	g := &MenuToppingGroup{ID: id, Name: name, Type: gtype, IsRequired: isRequired, MinSelect: minSelect, MaxSelect: maxSelect, SortOrder: sortOrder, UpdatedAt: time.Now()}
-	if err := s.repo.UpdateToppingGroup(ctx, g); err != nil {
+	existing, err := s.repo.GetToppingGroupByID(ctx, id)
+	if err != nil {
+		existing = &MenuToppingGroup{ID: id}
+	}
+	existing.Name = name
+	existing.Type = gtype
+	existing.IsRequired = isRequired
+	existing.MinSelect = minSelect
+	existing.MaxSelect = maxSelect
+	existing.SortOrder = sortOrder
+	existing.UpdatedAt = time.Now()
+	if err := s.repo.UpdateToppingGroup(ctx, existing); err != nil {
 		return nil, err
 	}
-	return g, nil
+	return existing, nil
 }
 func (s *service) DeleteToppingGroup(ctx context.Context, id uuid.UUID) error {
 	opts, _ := s.repo.ListToppingOptionsByGroupID(ctx, id)
@@ -650,7 +698,22 @@ func (s *service) DeleteToppingGroup(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 func (s *service) ListToppingGroupsByMenuID(ctx context.Context, menuID uuid.UUID) ([]MenuToppingGroup, error) {
-	return s.repo.ListToppingGroupsByMenuID(ctx, menuID)
+	groups, err := s.repo.ListToppingGroupsByMenuID(ctx, menuID)
+	if err != nil {
+		return nil, err
+	}
+	// Sign topping option images untuk merchant panel (tambahan)
+	for gi := range groups {
+		for oi := range groups[gi].Options {
+			opt := &groups[gi].Options[oi]
+			if opt.ImageURL != "" && (len(opt.ImageURL) <= 4 || opt.ImageURL[:4] != "http") {
+				if signed, err := s.storage.SignedURL(ctx, opt.ImageURL, 1*time.Hour); err == nil {
+					opt.ImageURL = signed
+				}
+			}
+		}
+	}
+	return groups, nil
 }
 func (s *service) CreateToppingOption(ctx context.Context, groupID uuid.UUID, label string, priceDelta float64, imageURL string, isAvailable bool, sortOrder int) (*MenuToppingOption, error) {
 	o := &MenuToppingOption{
@@ -670,11 +733,26 @@ func (s *service) CreateToppingOption(ctx context.Context, groupID uuid.UUID, la
 	return o, nil
 }
 func (s *service) UpdateToppingOption(ctx context.Context, id uuid.UUID, label string, priceDelta float64, imageURL string, isAvailable bool, sortOrder int) (*MenuToppingOption, error) {
-	o := &MenuToppingOption{ID: id, Label: label, PriceDelta: priceDelta, ImageURL: sanitizeStorageKey(imageURL), IsAvailable: isAvailable, SortOrder: sortOrder, UpdatedAt: time.Now()}
-	if err := s.repo.UpdateToppingOption(ctx, o); err != nil {
+	existing, err := s.repo.GetToppingOptionByID(ctx, id)
+	if err != nil {
+		existing = &MenuToppingOption{ID: id}
+	}
+	oldImg := existing.ImageURL
+	existing.Label = label
+	existing.PriceDelta = priceDelta
+	if imageURL != "" {
+		existing.ImageURL = sanitizeStorageKey(imageURL)
+	}
+	existing.IsAvailable = isAvailable
+	existing.SortOrder = sortOrder
+	existing.UpdatedAt = time.Now()
+	if err := s.repo.UpdateToppingOption(ctx, existing); err != nil {
 		return nil, err
 	}
-	return o, nil
+	if oldImg != "" && oldImg != existing.ImageURL {
+		_ = s.storage.Delete(ctx, sanitizeStorageKey(oldImg))
+	}
+	return existing, nil
 }
 func (s *service) DeleteToppingOption(ctx context.Context, id uuid.UUID) error {
 	return s.repo.DeleteToppingOption(ctx, id)
@@ -894,11 +972,26 @@ func (s *service) CreateAddonOption(ctx context.Context, masterID uuid.UUID, lab
 	return o, nil
 }
 func (s *service) UpdateAddonOption(ctx context.Context, id uuid.UUID, label string, priceDelta float64, imageURL string, isAvailable bool, sortOrder int) (*AddonOption, error) {
-	o := &AddonOption{ID: id, Label: label, PriceDelta: priceDelta, ImageURL: sanitizeStorageKey(imageURL), IsAvailable: isAvailable, SortOrder: sortOrder, UpdatedAt: time.Now()}
-	if err := s.repo.UpdateAddonOption(ctx, o); err != nil {
+	existing, err := s.repo.GetAddonOptionByID(ctx, id)
+	if err != nil {
+		existing = &AddonOption{ID: id}
+	}
+	oldImg := existing.ImageURL
+	existing.Label = label
+	existing.PriceDelta = priceDelta
+	if imageURL != "" {
+		existing.ImageURL = sanitizeStorageKey(imageURL)
+	}
+	existing.IsAvailable = isAvailable
+	existing.SortOrder = sortOrder
+	existing.UpdatedAt = time.Now()
+	if err := s.repo.UpdateAddonOption(ctx, existing); err != nil {
 		return nil, err
 	}
-	return o, nil
+	if oldImg != "" && oldImg != existing.ImageURL {
+		_ = s.storage.Delete(ctx, sanitizeStorageKey(oldImg))
+	}
+	return existing, nil
 }
 func (s *service) DeleteAddonOption(ctx context.Context, id uuid.UUID) error {
 	return s.repo.DeleteAddonOption(ctx, id)
