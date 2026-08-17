@@ -5,86 +5,32 @@ on:
     branches:
       - main
 
-concurrency:
-  group: deploy-nitip-core
-  cancel-in-progress: false
-
 jobs:
   deploy:
     runs-on: nitip-prod
 
     steps:
-      - name: Checkout Code (retry for 429)
-        uses: Wandalen/wretry.action@v3
-        with:
-          attempt_limit: 5
-          attempt_delay: 10000
-          action: actions/checkout@v4
-          with: |
-            fetch-depth: 1
+      - name: Checkout Code
+        uses: actions/checkout@v4
 
       - name: Copy Secrets File
         run: |
-          # SECURITY: secrets file contains passwords — never cat or echo it
           cp ~/.secret/nitip-production.env .env
           cp ~/.secret/firebase-credentials.json ./firebase-credentials.json || true
           cp ~/.secret/dozzle-users.yml ./users.yml || true
-          # Ensure .env not world-readable on runner
           chmod 600 .env || true
 
       - name: Build Docker Image
         run: |
-          # Mask secrets in logs — GitHub Actions will mask values set via ::add-mask::
-          # Extract DB password for masking (fail safe)
-          if [ -f .env ]; then
-            DB_PASS=$(grep -E '^DB_PASSWORD=' .env | cut -d'=' -f2- | tr -d '\r\n"' | head -c 128)
-            if [ -n "$DB_PASS" ]; then
-              echo "::add-mask::$DB_PASS"
-            fi
-            REDIS_PASS=$(grep -E '^REDIS_PASSWORD=' .env | cut -d'=' -f2- | tr -d '\r\n"' | head -c 128)
-            if [ -n "$REDIS_PASS" ]; then
-              echo "::add-mask::$REDIS_PASS"
-            fi
-          fi
           docker compose build app
 
       - name: Run Database Migrations
         run: |
-          # SECURITY: migrate binary now uses SafeDSN (password redacted) — no leak
-          # .env is injected via env_file as env vars, not as file inside container, so "file not found" log is OK (now silenced in prod)
-          docker compose up -d postgres redis
-          echo "Waiting for postgres healthy..."
-          # Use DB_USER from .env or fallback postgres
-          DB_USER_ENV=$(grep -E '^DB_USER=' .env | cut -d'=' -f2- | tr -d '\r\n"' | xargs)
-          DB_NAME_ENV=$(grep -E '^DB_NAME=' .env | cut -d'=' -f2- | tr -d '\r\n"' | xargs)
-          if [ -z "$DB_USER_ENV" ]; then DB_USER_ENV=postgres; fi
-          if [ -z "$DB_NAME_ENV" ]; then DB_NAME_ENV=nitip; fi
-          timeout 60 bash -c "until docker compose exec -T postgres pg_isready -U $DB_USER_ENV -d $DB_NAME_ENV; do sleep 2; done" || {
-            echo "Postgres not healthy, trying with postgres user fallback..."
-            timeout 60 bash -c 'until docker compose exec -T postgres pg_isready -U postgres -d nitip; do sleep 2; done' || true
-          }
-          # If password auth fails, it means DB volume has old password — need to sync
-          echo "Attempting migration (safe DSN redacted)..."
-          if ! docker compose run --rm app /app/migrate up; then
-            echo "Migration failed, checking if password mismatch (common when changing DB_PASSWORD in .env without ALTER USER)..."
-            echo "Attempting to fix: if old volume has password 'postgres', try updating postgres user password to match .env"
-            # Try to connect with POSTGRES_PASSWORD env from compose file
-            # If you changed DB_PASSWORD in .env secrets but not in DB, you must ALTER USER manually:
-            # docker compose exec postgres psql -U postgres -d $DB_NAME_ENV -c "ALTER USER \"$DB_USER_ENV\" WITH PASSWORD 'NEW_PASS';"
-            echo "Hint: SSH to prod and run: docker compose exec postgres psql -U postgres -c \"ALTER USER \\\"$DB_USER_ENV\\\" WITH PASSWORD 'your_new_password';\""
-            exit 1
-          fi
+          docker compose run --rm app /app/migrate up
 
       - name: Deploy Application
         run: |
           docker compose up -d --remove-orphans
-
-      - name: Verify Deployment (no secrets in output)
-        run: |
-          echo "Checking app health..."
-          sleep 5
-          curl -sf http://localhost:8000/health || curl -sf http://127.0.0.1:8080/health || echo "health check via 8080"
-          docker compose ps
 
       - name: Cleanup Docker
         run: |
@@ -92,5 +38,4 @@ jobs:
           docker builder prune --filter "until=72h" -f
           docker network prune -f
           docker system df
-          # SECURITY: cleanup .env copy from workspace after deploy to avoid leak in runner
           rm -f .env || true
