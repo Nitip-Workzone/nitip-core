@@ -224,7 +224,7 @@ func (r *repository) GetCategoryByID(ctx context.Context, id uuid.UUID) (*MenuCa
 }
 func (r *repository) ListCategoriesByMerchantID(ctx context.Context, merchantID uuid.UUID) ([]MenuCategory, error) {
 	var list []MenuCategory
-	err := r.db.NewSelect().Model(&list).Where("merchant_id = ?", merchantID).Order("sort_order ASC, name ASC").Scan(ctx)
+	err := r.db.NewSelect().Model(&list).Where("merchant_id = ?", merchantID).OrderExpr("sort_order ASC, name ASC").Scan(ctx)
 	return list, err
 }
 func (r *repository) DeleteCategory(ctx context.Context, id uuid.UUID) error {
@@ -429,7 +429,7 @@ func (r *repository) GetAddonMasterByID(ctx context.Context, id uuid.UUID) (*Add
 }
 func (r *repository) ListAddonMastersByMerchantID(ctx context.Context, merchantID uuid.UUID) ([]AddonMaster, error) {
 	var list []AddonMaster
-	err := r.db.NewSelect().Model(&list).Where("merchant_id = ?", merchantID).Relation("Options").Order("sort_order ASC, name ASC").Scan(ctx)
+	err := r.db.NewSelect().Model(&list).Where("merchant_id = ?", merchantID).Relation("Options").OrderExpr("sort_order ASC, name ASC").Scan(ctx)
 	return list, err
 }
 func (r *repository) CreateAddonOption(ctx context.Context, o *AddonOption) error {
