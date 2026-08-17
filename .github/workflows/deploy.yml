@@ -5,13 +5,23 @@ on:
     branches:
       - main
 
+concurrency:
+  group: deploy-nitip-core
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: nitip-prod
 
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
+      - name: Checkout Code (retry for 429)
+        uses: Wandalen/wretry.action@v3
+        with:
+          attempt_limit: 5
+          attempt_delay: 10000
+          action: actions/checkout@v4
+          with: |
+            fetch-depth: 1
 
       - name: Copy Secrets File
         run: |

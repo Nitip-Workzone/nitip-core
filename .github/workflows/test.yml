@@ -8,20 +8,34 @@ on:
     branches:
       - main
 
+concurrency:
+  group: test-nitip-core-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     name: Run Go Unit Tests
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - name: Checkout Code (retry for 429)
+        uses: Wandalen/wretry.action@v3
         with:
-          go-version-file: 'go.mod'
-          cache: true
+          attempt_limit: 5
+          attempt_delay: 10000
+          action: actions/checkout@v4
+          with: |
+            fetch-depth: 1
+
+      - name: Set up Go (retry for 429)
+        uses: Wandalen/wretry.action@v3
+        with:
+          attempt_limit: 3
+          attempt_delay: 5000
+          action: actions/setup-go@v5
+          with: |
+            go-version-file: 'go.mod'
+            cache: true
 
       - name: Install Dependencies
         run: go mod download

@@ -719,8 +719,22 @@ func (s *service) Create(ctx context.Context, requesterID uuid.UUID, req CreateO
 	// Generate QRIS URL if unpaid QRIS order
 	s.populatePaymentInfo(ctx, order)
 
-	// Audit Log
-	s.auditSvc.Log(ctx, &requesterID, audit.ActionOrderCreate, "order", order.ID.String(), nil, order, "", "")
+	// Audit Log + Merchant Fee Audit Level
+	auditPayload := order
+	if order.MerchantID != nil {
+		// Include fee audit details in log for transparency
+		s.auditSvc.Log(ctx, &requesterID, audit.ActionOrderCreate, "order", order.ID.String(), nil, map[string]interface{}{
+			"order_id":             order.ID.String(),
+			"merchant_id":          order.MerchantID.String(),
+			"food_amount_original": order.FoodAmountOriginal,
+			"merchant_fee":         order.MerchantFee,
+			"merchant_fee_tier":    order.MerchantFeeTier,
+			"estimated_cost":       order.EstimatedCost,
+			"total_payment":        order.TotalPayment,
+			"note":                 "Opsi A: merchant bayar fee, buyer bayar murni, audit level",
+		}, "", "")
+	}
+	s.auditSvc.Log(ctx, &requesterID, audit.ActionOrderCreate, "order", order.ID.String(), nil, auditPayload, "", "")
 
 	// Trigger Smart Matching & Merchant Notifications only if order is PAID (escrow) or COD
 	if order.PaymentStatus == PaymentEscrow || order.PaymentMethod == MethodCOD {
