@@ -55,6 +55,30 @@ func (h *Handler) RegisterRoutes(router fiber.Router) {
 	owner.Delete("/menu/:id", h.DeleteMenu)
 	owner.Post("/menu/upload", h.UploadMenuImage)
 
+	// Category routes (Makanan, Minuman) + image optional crop 1:1
+	owner.Get("/categories", h.ListCategories)
+	owner.Post("/categories", h.CreateCategory)
+	owner.Put("/categories/:id", h.UpdateCategory)
+	owner.Delete("/categories/:id", h.DeleteCategory)
+
+	// Variant groups & options with image_url (varian bisa punya foto 600x600)
+	owner.Get("/menu/:id/variants", h.ListVariantGroups)
+	owner.Post("/menu/:id/variants", h.CreateVariantGroup)
+	owner.Put("/menu/variants/:id", h.UpdateVariantGroup)
+	owner.Delete("/menu/variants/:id", h.DeleteVariantGroup)
+	owner.Post("/menu/variants/:id/options", h.CreateVariantOption)
+	owner.Put("/menu/variants/options/:id", h.UpdateVariantOption)
+	owner.Delete("/menu/variants/options/:id", h.DeleteVariantOption)
+
+	// Topping groups & options with image_url (topping foto 400x400)
+	owner.Get("/menu/:id/toppings", h.ListToppingGroups)
+	owner.Post("/menu/:id/toppings", h.CreateToppingGroup)
+	owner.Put("/menu/toppings/:id", h.UpdateToppingGroup)
+	owner.Delete("/menu/toppings/:id", h.DeleteToppingGroup)
+	owner.Post("/menu/toppings/:id/options", h.CreateToppingOption)
+	owner.Put("/menu/toppings/options/:id", h.UpdateToppingOption)
+	owner.Delete("/menu/toppings/options/:id", h.DeleteToppingOption)
+
 	// Admin routes
 	admin := router.Group("/admin/merchants", middleware.Protected(h.db, h.redis), middleware.Role(user.RoleAdmin))
 	admin.Get("/", h.AdminList)
@@ -424,7 +448,7 @@ func (h *Handler) UploadMenuImage(c *fiber.Ctx) error {
 	}
 
 	if !fileutil.IsImage(file) {
-		return response.BadRequest(c, "file harus berupa gambar (jpg, jpeg, png)")
+		return response.BadRequest(c, "file harus berupa gambar (jpg, jpeg, png, webp)")
 	}
 
 	f, err := file.Open()
@@ -441,6 +465,362 @@ func (h *Handler) UploadMenuImage(c *fiber.Ctx) error {
 	return response.Success(c, "gambar menu berhasil diupload", fiber.Map{
 		"url": path,
 	})
+}
+
+// Category handlers (Makanan, Minuman) + image optional crop 1:1 400px
+type categoryRequest struct {
+	Name      string `json:"name" validate:"required"`
+	ImageURL  string `json:"image_url"`
+	SortOrder int    `json:"sort_order"`
+	IsActive  *bool  `json:"is_active"`
+}
+
+func (h *Handler) ListCategories(c *fiber.Ctx) error {
+	claims := jwt.GetClaims(c)
+	if claims == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
+	m, err := h.service.GetMerchantByOwnerID(c.Context(), claims.UserID)
+	if err != nil {
+		return response.NotFound(c, "merchant tidak ditemukan")
+	}
+	list, err := h.service.ListCategoriesByMerchantID(c.Context(), m.ID)
+	if err != nil {
+		return response.InternalError(c, err.Error())
+	}
+	return response.Success(c, "daftar kategori berhasil diambil", list)
+}
+
+func (h *Handler) CreateCategory(c *fiber.Ctx) error {
+	claims := jwt.GetClaims(c)
+	if claims == nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
+	m, err := h.service.GetMerchantByOwnerID(c.Context(), claims.UserID)
+	if err != nil {
+		return response.NotFound(c, "merchant tidak ditemukan")
+	}
+	var req categoryRequest
+	if err := c.BodyParser(&req); err != nil {
+		return response.BadRequest(c, "format tidak valid")
+	}
+	if errs := validator.Validate(req); errs != nil {
+		return response.ValidationFailed(c, errs)
+	}
+	cat, err := h.service.CreateCategory(c.Context(), m.ID, req.Name, req.ImageURL, req.SortOrder)
+	if err != nil {
+		return response.InternalError(c, err.Error())
+	}
+	return response.Success(c, "kategori berhasil ditambahkan", cat)
+}
+
+func (h *Handler) UpdateCategory(c *fiber.Ctx) error {
+	idStr := c.Params("id")
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		return response.BadRequest(c, "ID tidak valid")
+	}
+	var req categoryRequest
+	if err := c.BodyParser(&req); err != nil {
+		return response.BadRequest(c, "format tidak valid")
+	}
+	isActive := true
+	if req.IsActive != nil {
+		isActive = *req.IsActive
+	}
+	cat, err := h.service.UpdateCategory(c.Context(), id, req.Name, req.ImageURL, req.SortOrder, isActive)
+	if err != nil {
+		return response.InternalError(c, err.Error())
+	}
+	return response.Success(c, "kategori berhasil diperbarui", cat)
+}
+
+func (h *Handler) DeleteCategory(c *fiber.Ctx) error {
+	idStr := c.Params("id")
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		return response.BadRequest(c, "ID tidak valid")
+	}
+	if err := h.service.DeleteCategory(c.Context(), id); err != nil {
+		return response.InternalError(c, err.Error())
+	}
+	return response.Success(c, "kategori berhasil dihapus", nil)
+}
+
+// Variant groups + options with image_url 600x600
+type variantGroupRequest struct {
+	Name       string `json:"name" validate:"required"`
+	Type       string `json:"type" validate:"required"`
+	IsRequired bool   `json:"is_required"`
+	MinSelect  int    `json:"min_select"`
+	MaxSelect  *int   `json:"max_select"`
+	SortOrder  int    `json:"sort_order"`
+}
+
+type variantOptionRequest struct {
+	Label       string  `json:"label" validate:"required"`
+	PriceDelta  float64 `json:"price_delta"`
+	ImageURL    string  `json:"image_url"`
+	IsDefault   bool    `json:"is_default"`
+	IsAvailable *bool   `json:"is_available"`
+	SortOrder   int     `json:"sort_order"`
+}
+
+func (h *Handler) ListVariantGroups(c *fiber.Ctx) error {
+	idStr := c.Params("id")
+	menuID, err := uuid.Parse(idStr)
+	if err != nil {
+		return response.BadRequest(c, "ID menu tidak valid")
+	}
+	list, err := h.service.ListVariantGroupsByMenuID(c.Context(), menuID)
+	if err != nil {
+		return response.InternalError(c, err.Error())
+	}
+	return response.Success(c, "daftar varian berhasil diambil", list)
+}
+
+func (h *Handler) CreateVariantGroup(c *fiber.Ctx) error {
+	idStr := c.Params("id")
+	menuID, err := uuid.Parse(idStr)
+	if err != nil {
+		return response.BadRequest(c, "ID menu tidak valid")
+	}
+	var req variantGroupRequest
+	if err := c.BodyParser(&req); err != nil {
+		return response.BadRequest(c, "format tidak valid")
+	}
+	if errs := validator.Validate(req); errs != nil {
+		return response.ValidationFailed(c, errs)
+	}
+	g, err := h.service.CreateVariantGroup(c.Context(), menuID, req.Name, req.Type, req.IsRequired, req.MinSelect, req.MaxSelect, req.SortOrder)
+	if err != nil {
+		return response.InternalError(c, err.Error())
+	}
+	return response.Success(c, "grup varian berhasil ditambahkan", g)
+}
+
+func (h *Handler) UpdateVariantGroup(c *fiber.Ctx) error {
+	idStr := c.Params("id")
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		return response.BadRequest(c, "ID tidak valid")
+	}
+	var req variantGroupRequest
+	if err := c.BodyParser(&req); err != nil {
+		return response.BadRequest(c, "format tidak valid")
+	}
+	g, err := h.service.UpdateVariantGroup(c.Context(), id, req.Name, req.Type, req.IsRequired, req.MinSelect, req.MaxSelect, req.SortOrder)
+	if err != nil {
+		return response.InternalError(c, err.Error())
+	}
+	return response.Success(c, "grup varian berhasil diperbarui", g)
+}
+
+func (h *Handler) DeleteVariantGroup(c *fiber.Ctx) error {
+	idStr := c.Params("id")
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		return response.BadRequest(c, "ID tidak valid")
+	}
+	if err := h.service.DeleteVariantGroup(c.Context(), id); err != nil {
+		return response.InternalError(c, err.Error())
+	}
+	return response.Success(c, "grup varian berhasil dihapus", nil)
+}
+
+func (h *Handler) CreateVariantOption(c *fiber.Ctx) error {
+	idStr := c.Params("id")
+	groupID, err := uuid.Parse(idStr)
+	if err != nil {
+		return response.BadRequest(c, "ID tidak valid")
+	}
+	var req variantOptionRequest
+	if err := c.BodyParser(&req); err != nil {
+		return response.BadRequest(c, "format tidak valid")
+	}
+	if errs := validator.Validate(req); errs != nil {
+		return response.ValidationFailed(c, errs)
+	}
+	isAvail := true
+	if req.IsAvailable != nil {
+		isAvail = *req.IsAvailable
+	}
+	o, err := h.service.CreateVariantOption(c.Context(), groupID, req.Label, req.PriceDelta, req.ImageURL, req.IsDefault, isAvail, req.SortOrder)
+	if err != nil {
+		return response.InternalError(c, err.Error())
+	}
+	return response.Success(c, "opsi varian berhasil ditambahkan", o)
+}
+
+func (h *Handler) UpdateVariantOption(c *fiber.Ctx) error {
+	idStr := c.Params("id")
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		return response.BadRequest(c, "ID tidak valid")
+	}
+	var req variantOptionRequest
+	if err := c.BodyParser(&req); err != nil {
+		return response.BadRequest(c, "format tidak valid")
+	}
+	isAvail := true
+	if req.IsAvailable != nil {
+		isAvail = *req.IsAvailable
+	}
+	o, err := h.service.UpdateVariantOption(c.Context(), id, req.Label, req.PriceDelta, req.ImageURL, req.IsDefault, isAvail, req.SortOrder)
+	if err != nil {
+		return response.InternalError(c, err.Error())
+	}
+	return response.Success(c, "opsi varian berhasil diperbarui", o)
+}
+
+func (h *Handler) DeleteVariantOption(c *fiber.Ctx) error {
+	idStr := c.Params("id")
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		return response.BadRequest(c, "ID tidak valid")
+	}
+	if err := h.service.DeleteVariantOption(c.Context(), id); err != nil {
+		return response.InternalError(c, err.Error())
+	}
+	return response.Success(c, "opsi varian berhasil dihapus", nil)
+}
+
+// Topping groups + options with image_url 400x400
+type toppingGroupRequest struct {
+	VariantOptionID *uuid.UUID `json:"variant_option_id"`
+	Name            string     `json:"name" validate:"required"`
+	Type            string     `json:"type" validate:"required"`
+	IsRequired      bool       `json:"is_required"`
+	MinSelect       int        `json:"min_select"`
+	MaxSelect       *int       `json:"max_select"`
+	SortOrder       int        `json:"sort_order"`
+}
+
+type toppingOptionRequest struct {
+	Label       string  `json:"label" validate:"required"`
+	PriceDelta  float64 `json:"price_delta"`
+	ImageURL    string  `json:"image_url"`
+	IsAvailable *bool   `json:"is_available"`
+	SortOrder   int     `json:"sort_order"`
+}
+
+func (h *Handler) ListToppingGroups(c *fiber.Ctx) error {
+	idStr := c.Params("id")
+	menuID, err := uuid.Parse(idStr)
+	if err != nil {
+		return response.BadRequest(c, "ID menu tidak valid")
+	}
+	list, err := h.service.ListToppingGroupsByMenuID(c.Context(), menuID)
+	if err != nil {
+		return response.InternalError(c, err.Error())
+	}
+	return response.Success(c, "daftar topping berhasil diambil", list)
+}
+
+func (h *Handler) CreateToppingGroup(c *fiber.Ctx) error {
+	idStr := c.Params("id")
+	menuID, err := uuid.Parse(idStr)
+	if err != nil {
+		return response.BadRequest(c, "ID menu tidak valid")
+	}
+	var req toppingGroupRequest
+	if err := c.BodyParser(&req); err != nil {
+		return response.BadRequest(c, "format tidak valid")
+	}
+	if errs := validator.Validate(req); errs != nil {
+		return response.ValidationFailed(c, errs)
+	}
+	g, err := h.service.CreateToppingGroup(c.Context(), menuID, req.VariantOptionID, req.Name, req.Type, req.IsRequired, req.MinSelect, req.MaxSelect, req.SortOrder)
+	if err != nil {
+		return response.InternalError(c, err.Error())
+	}
+	return response.Success(c, "grup topping berhasil ditambahkan", g)
+}
+
+func (h *Handler) UpdateToppingGroup(c *fiber.Ctx) error {
+	idStr := c.Params("id")
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		return response.BadRequest(c, "ID tidak valid")
+	}
+	var req toppingGroupRequest
+	if err := c.BodyParser(&req); err != nil {
+		return response.BadRequest(c, "format tidak valid")
+	}
+	g, err := h.service.UpdateToppingGroup(c.Context(), id, req.Name, req.Type, req.IsRequired, req.MinSelect, req.MaxSelect, req.SortOrder)
+	if err != nil {
+		return response.InternalError(c, err.Error())
+	}
+	return response.Success(c, "grup topping berhasil diperbarui", g)
+}
+
+func (h *Handler) DeleteToppingGroup(c *fiber.Ctx) error {
+	idStr := c.Params("id")
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		return response.BadRequest(c, "ID tidak valid")
+	}
+	if err := h.service.DeleteToppingGroup(c.Context(), id); err != nil {
+		return response.InternalError(c, err.Error())
+	}
+	return response.Success(c, "grup topping berhasil dihapus", nil)
+}
+
+func (h *Handler) CreateToppingOption(c *fiber.Ctx) error {
+	idStr := c.Params("id")
+	groupID, err := uuid.Parse(idStr)
+	if err != nil {
+		return response.BadRequest(c, "ID tidak valid")
+	}
+	var req toppingOptionRequest
+	if err := c.BodyParser(&req); err != nil {
+		return response.BadRequest(c, "format tidak valid")
+	}
+	if errs := validator.Validate(req); errs != nil {
+		return response.ValidationFailed(c, errs)
+	}
+	isAvail := true
+	if req.IsAvailable != nil {
+		isAvail = *req.IsAvailable
+	}
+	o, err := h.service.CreateToppingOption(c.Context(), groupID, req.Label, req.PriceDelta, req.ImageURL, isAvail, req.SortOrder)
+	if err != nil {
+		return response.InternalError(c, err.Error())
+	}
+	return response.Success(c, "opsi topping berhasil ditambahkan", o)
+}
+
+func (h *Handler) UpdateToppingOption(c *fiber.Ctx) error {
+	idStr := c.Params("id")
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		return response.BadRequest(c, "ID tidak valid")
+	}
+	var req toppingOptionRequest
+	if err := c.BodyParser(&req); err != nil {
+		return response.BadRequest(c, "format tidak valid")
+	}
+	isAvail := true
+	if req.IsAvailable != nil {
+		isAvail = *req.IsAvailable
+	}
+	o, err := h.service.UpdateToppingOption(c.Context(), id, req.Label, req.PriceDelta, req.ImageURL, isAvail, req.SortOrder)
+	if err != nil {
+		return response.InternalError(c, err.Error())
+	}
+	return response.Success(c, "opsi topping berhasil diperbarui", o)
+}
+
+func (h *Handler) DeleteToppingOption(c *fiber.Ctx) error {
+	idStr := c.Params("id")
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		return response.BadRequest(c, "ID tidak valid")
+	}
+	if err := h.service.DeleteToppingOption(c.Context(), id); err != nil {
+		return response.InternalError(c, err.Error())
+	}
+	return response.Success(c, "opsi topping berhasil dihapus", nil)
 }
 
 // Admin Implementation

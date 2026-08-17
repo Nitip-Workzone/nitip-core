@@ -24,7 +24,39 @@ type Repository interface {
 	UpdateMenu(ctx context.Context, menu *Menu) error
 	GetMenuByID(ctx context.Context, id uuid.UUID) (*Menu, error)
 	ListMenusByMerchantID(ctx context.Context, merchantID uuid.UUID, onlyAvailable bool) ([]Menu, error)
+	ListMenusByMerchantIDWithVariants(ctx context.Context, merchantID uuid.UUID, onlyAvailable bool) ([]Menu, error)
 	DeleteMenu(ctx context.Context, id uuid.UUID) error
+
+	// Category
+	CreateCategory(ctx context.Context, c *MenuCategory) error
+	UpdateCategory(ctx context.Context, c *MenuCategory) error
+	GetCategoryByID(ctx context.Context, id uuid.UUID) (*MenuCategory, error)
+	ListCategoriesByMerchantID(ctx context.Context, merchantID uuid.UUID) ([]MenuCategory, error)
+	DeleteCategory(ctx context.Context, id uuid.UUID) error
+
+	// VariantGroups
+	CreateVariantGroup(ctx context.Context, g *MenuVariantGroup) error
+	UpdateVariantGroup(ctx context.Context, g *MenuVariantGroup) error
+	DeleteVariantGroup(ctx context.Context, id uuid.UUID) error
+	ListVariantGroupsByMenuID(ctx context.Context, menuID uuid.UUID) ([]MenuVariantGroup, error)
+	CreateVariantOption(ctx context.Context, o *MenuVariantOption) error
+	UpdateVariantOption(ctx context.Context, o *MenuVariantOption) error
+	DeleteVariantOption(ctx context.Context, id uuid.UUID) error
+	ListVariantOptionsByGroupID(ctx context.Context, groupID uuid.UUID) ([]MenuVariantOption, error)
+
+	// ToppingGroups
+	CreateToppingGroup(ctx context.Context, g *MenuToppingGroup) error
+	UpdateToppingGroup(ctx context.Context, g *MenuToppingGroup) error
+	DeleteToppingGroup(ctx context.Context, id uuid.UUID) error
+	ListToppingGroupsByMenuID(ctx context.Context, menuID uuid.UUID) ([]MenuToppingGroup, error)
+	CreateToppingOption(ctx context.Context, o *MenuToppingOption) error
+	UpdateToppingOption(ctx context.Context, o *MenuToppingOption) error
+	DeleteToppingOption(ctx context.Context, id uuid.UUID) error
+	ListToppingOptionsByGroupID(ctx context.Context, groupID uuid.UUID) ([]MenuToppingOption, error)
+
+	// Images cleanup helpers
+	ListAllImagesByMerchantID(ctx context.Context, merchantID uuid.UUID) ([]string, error)
+	ListImagesByMenuID(ctx context.Context, menuID uuid.UUID) ([]string, error)
 
 	// OrderItem
 	CreateOrderItems(ctx context.Context, items []OrderItem) error
@@ -153,6 +185,203 @@ func (r *repository) DeleteMenu(ctx context.Context, id uuid.UUID) error {
 	return err
 }
 
+func (r *repository) ListMenusByMerchantIDWithVariants(ctx context.Context, merchantID uuid.UUID, onlyAvailable bool) ([]Menu, error) {
+	var menus []Menu
+	q := r.db.NewSelect().Model(&menus).Where("merchant_id = ?", merchantID)
+	if onlyAvailable {
+		q = q.Where("is_available = ?", true)
+	}
+	// Preload variant groups + options + topping groups + options
+	q = q.Relation("VariantGroups").Relation("VariantGroups.Options").Relation("ToppingGroups").Relation("ToppingGroups.Options").Relation("Category")
+	err := q.Order("mn.name ASC").Scan(ctx)
+	return menus, err
+}
+
+// Category
+func (r *repository) CreateCategory(ctx context.Context, c *MenuCategory) error {
+	_, err := r.db.NewInsert().Model(c).Exec(ctx)
+	return err
+}
+func (r *repository) UpdateCategory(ctx context.Context, c *MenuCategory) error {
+	_, err := r.db.NewUpdate().Model(c).WherePK().Exec(ctx)
+	return err
+}
+func (r *repository) GetCategoryByID(ctx context.Context, id uuid.UUID) (*MenuCategory, error) {
+	c := new(MenuCategory)
+	err := r.db.NewSelect().Model(c).Where("id = ?", id).Scan(ctx)
+	return c, err
+}
+func (r *repository) ListCategoriesByMerchantID(ctx context.Context, merchantID uuid.UUID) ([]MenuCategory, error) {
+	var list []MenuCategory
+	err := r.db.NewSelect().Model(&list).Where("merchant_id = ?", merchantID).Order("sort_order ASC, name ASC").Scan(ctx)
+	return list, err
+}
+func (r *repository) DeleteCategory(ctx context.Context, id uuid.UUID) error {
+	_, err := r.db.NewDelete().Model((*MenuCategory)(nil)).Where("id = ?", id).Exec(ctx)
+	return err
+}
+
+// VariantGroups
+func (r *repository) CreateVariantGroup(ctx context.Context, g *MenuVariantGroup) error {
+	_, err := r.db.NewInsert().Model(g).Exec(ctx)
+	return err
+}
+func (r *repository) UpdateVariantGroup(ctx context.Context, g *MenuVariantGroup) error {
+	_, err := r.db.NewUpdate().Model(g).WherePK().Exec(ctx)
+	return err
+}
+func (r *repository) DeleteVariantGroup(ctx context.Context, id uuid.UUID) error {
+	_, err := r.db.NewDelete().Model((*MenuVariantGroup)(nil)).Where("id = ?", id).Exec(ctx)
+	return err
+}
+func (r *repository) ListVariantGroupsByMenuID(ctx context.Context, menuID uuid.UUID) ([]MenuVariantGroup, error) {
+	var list []MenuVariantGroup
+	err := r.db.NewSelect().Model(&list).Where("menu_id = ?", menuID).Relation("Options").Order("sort_order ASC").Scan(ctx)
+	return list, err
+}
+func (r *repository) CreateVariantOption(ctx context.Context, o *MenuVariantOption) error {
+	_, err := r.db.NewInsert().Model(o).Exec(ctx)
+	return err
+}
+func (r *repository) UpdateVariantOption(ctx context.Context, o *MenuVariantOption) error {
+	_, err := r.db.NewUpdate().Model(o).WherePK().Exec(ctx)
+	return err
+}
+func (r *repository) DeleteVariantOption(ctx context.Context, id uuid.UUID) error {
+	_, err := r.db.NewDelete().Model((*MenuVariantOption)(nil)).Where("id = ?", id).Exec(ctx)
+	return err
+}
+func (r *repository) ListVariantOptionsByGroupID(ctx context.Context, groupID uuid.UUID) ([]MenuVariantOption, error) {
+	var list []MenuVariantOption
+	err := r.db.NewSelect().Model(&list).Where("group_id = ?", groupID).Order("sort_order ASC").Scan(ctx)
+	return list, err
+}
+
+// ToppingGroups
+func (r *repository) CreateToppingGroup(ctx context.Context, g *MenuToppingGroup) error {
+	_, err := r.db.NewInsert().Model(g).Exec(ctx)
+	return err
+}
+func (r *repository) UpdateToppingGroup(ctx context.Context, g *MenuToppingGroup) error {
+	_, err := r.db.NewUpdate().Model(g).WherePK().Exec(ctx)
+	return err
+}
+func (r *repository) DeleteToppingGroup(ctx context.Context, id uuid.UUID) error {
+	_, err := r.db.NewDelete().Model((*MenuToppingGroup)(nil)).Where("id = ?", id).Exec(ctx)
+	return err
+}
+func (r *repository) ListToppingGroupsByMenuID(ctx context.Context, menuID uuid.UUID) ([]MenuToppingGroup, error) {
+	var list []MenuToppingGroup
+	err := r.db.NewSelect().Model(&list).Where("menu_id = ?", menuID).Relation("Options").Order("sort_order ASC").Scan(ctx)
+	return list, err
+}
+func (r *repository) CreateToppingOption(ctx context.Context, o *MenuToppingOption) error {
+	_, err := r.db.NewInsert().Model(o).Exec(ctx)
+	return err
+}
+func (r *repository) UpdateToppingOption(ctx context.Context, o *MenuToppingOption) error {
+	_, err := r.db.NewUpdate().Model(o).WherePK().Exec(ctx)
+	return err
+}
+func (r *repository) DeleteToppingOption(ctx context.Context, id uuid.UUID) error {
+	_, err := r.db.NewDelete().Model((*MenuToppingOption)(nil)).Where("id = ?", id).Exec(ctx)
+	return err
+}
+func (r *repository) ListToppingOptionsByGroupID(ctx context.Context, groupID uuid.UUID) ([]MenuToppingOption, error) {
+	var list []MenuToppingOption
+	err := r.db.NewSelect().Model(&list).Where("group_id = ?", groupID).Order("sort_order ASC").Scan(ctx)
+	return list, err
+}
+
+func (r *repository) ListAllImagesByMerchantID(ctx context.Context, merchantID uuid.UUID) ([]string, error) {
+	var urls []string
+	// menus
+	var menus []Menu
+	_ = r.db.NewSelect().Model(&menus).Where("merchant_id = ?", merchantID).Scan(ctx)
+	for _, m := range menus {
+		if m.ImageURL != "" {
+			urls = append(urls, m.ImageURL)
+		}
+	}
+	// categories
+	var cats []MenuCategory
+	_ = r.db.NewSelect().Model(&cats).Where("merchant_id = ?", merchantID).Scan(ctx)
+	for _, c := range cats {
+		if c.ImageURL != "" {
+			urls = append(urls, c.ImageURL)
+		}
+	}
+	// variant options
+	var vGroups []MenuVariantGroup
+	_ = r.db.NewSelect().Model(&vGroups).Where("menu_id IN (SELECT id FROM menus WHERE merchant_id = ?)", merchantID).Scan(ctx)
+	for _, vg := range vGroups {
+		var vOpts []MenuVariantOption
+		_ = r.db.NewSelect().Model(&vOpts).Where("group_id = ?", vg.ID).Scan(ctx)
+		for _, vo := range vOpts {
+			if vo.ImageURL != "" {
+				urls = append(urls, vo.ImageURL)
+			}
+		}
+	}
+	// topping options
+	var tGroups []MenuToppingGroup
+	_ = r.db.NewSelect().Model(&tGroups).Where("menu_id IN (SELECT id FROM menus WHERE merchant_id = ?)", merchantID).Scan(ctx)
+	for _, tg := range tGroups {
+		var tOpts []MenuToppingOption
+		_ = r.db.NewSelect().Model(&tOpts).Where("group_id = ?", tg.ID).Scan(ctx)
+		for _, to := range tOpts {
+			if to.ImageURL != "" {
+				urls = append(urls, to.ImageURL)
+			}
+		}
+	}
+	// merchant logo/cover
+	var merch Merchant
+	if err := r.db.NewSelect().Model(&merch).Where("id = ?", merchantID).Scan(ctx); err == nil {
+		if merch.ImageURL != "" {
+			urls = append(urls, merch.ImageURL)
+		}
+		if merch.CoverURL != "" {
+			urls = append(urls, merch.CoverURL)
+		}
+	}
+	return urls, nil
+}
+
+func (r *repository) ListImagesByMenuID(ctx context.Context, menuID uuid.UUID) ([]string, error) {
+	var urls []string
+	var m Menu
+	if err := r.db.NewSelect().Model(&m).Where("id = ?", menuID).Scan(ctx); err == nil {
+		if m.ImageURL != "" {
+			urls = append(urls, m.ImageURL)
+		}
+	}
+	// variants
+	var vGroups []MenuVariantGroup
+	_ = r.db.NewSelect().Model(&vGroups).Where("menu_id = ?", menuID).Scan(ctx)
+	for _, vg := range vGroups {
+		var vOpts []MenuVariantOption
+		_ = r.db.NewSelect().Model(&vOpts).Where("group_id = ?", vg.ID).Scan(ctx)
+		for _, vo := range vOpts {
+			if vo.ImageURL != "" {
+				urls = append(urls, vo.ImageURL)
+			}
+		}
+	}
+	var tGroups []MenuToppingGroup
+	_ = r.db.NewSelect().Model(&tGroups).Where("menu_id = ?", menuID).Scan(ctx)
+	for _, tg := range tGroups {
+		var tOpts []MenuToppingOption
+		_ = r.db.NewSelect().Model(&tOpts).Where("group_id = ?", tg.ID).Scan(ctx)
+		for _, to := range tOpts {
+			if to.ImageURL != "" {
+				urls = append(urls, to.ImageURL)
+			}
+		}
+	}
+	return urls, nil
+}
+
 // OrderItem Implementation
 
 func (r *repository) CreateOrderItems(ctx context.Context, items []OrderItem) error {
@@ -179,4 +408,3 @@ func (r *repository) CreateSurvey(ctx context.Context, s *MerchantSurvey) error 
 	_, err := r.db.NewInsert().Model(s).Exec(ctx)
 	return err
 }
-

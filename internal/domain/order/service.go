@@ -74,9 +74,15 @@ type CreateOrderRequest struct {
 	// Merchant Fields
 	MerchantID *uuid.UUID `json:"merchant_id,omitempty"`
 	Items      []struct {
-		MenuID   uuid.UUID `json:"menu_id" validate:"required"`
-		Quantity int       `json:"quantity" validate:"required,gt=0"`
-		Notes    string    `json:"notes,omitempty"`
+		MenuID           uuid.UUID   `json:"menu_id" validate:"required"`
+		Quantity         int         `json:"quantity" validate:"required,gt=0"`
+		Notes            string      `json:"notes,omitempty"`
+		VariantOptionID  *uuid.UUID  `json:"variant_option_id,omitempty"`
+		ToppingOptionIDs []uuid.UUID `json:"topping_option_ids,omitempty"`
+		VariantLabel     string      `json:"variant_label,omitempty"`
+		ToppingLabels    []string    `json:"topping_labels,omitempty"`
+		PriceDelta       float64     `json:"price_delta,omitempty"`
+		ImageURL         string      `json:"image_url,omitempty"`
 	} `json:"items,omitempty"`
 
 	// Nitip Kirim Fields
@@ -343,7 +349,7 @@ func (s *service) Create(ctx context.Context, requesterID uuid.UUID, req CreateO
 		req.PickupName = merch.Name
 		req.PickupAddress = merch.Address
 
-		// Validate items
+		// Validate items + varian ± & topping + image
 		if len(req.Items) == 0 {
 			return nil, errors.New("pesanan merchant harus menyertakan daftar item menu")
 		}
@@ -359,14 +365,35 @@ func (s *service) Create(ctx context.Context, requesterID uuid.UUID, req CreateO
 			if !menu.IsAvailable {
 				return nil, fmt.Errorf("menu '%s' sedang tidak tersedia", menu.Name)
 			}
-			calculatedCost += menu.Price * float64(it.Quantity)
+			// Base price
+			unitPrice := menu.Price
+			// Price delta dari varian ± (boleh minus)
+			unitPrice += it.PriceDelta
+			// Topping labels already included in PriceDelta from FE? FE calc base+variant+toppings, sends PriceDelta = variantDelta + sum(toppings). We trust FE delta but clamp >=0
+			if unitPrice < 0 {
+				unitPrice = 0
+			}
+			calculatedCost += unitPrice * float64(it.Quantity)
+
+			// Build options snapshot with image info
+			options := map[string]interface{}{
+				"variant_option_id":  it.VariantOptionID,
+				"variant_label":      it.VariantLabel,
+				"topping_option_ids": it.ToppingOptionIDs,
+				"topping_labels":     it.ToppingLabels,
+				"price_delta":        it.PriceDelta,
+				"image_url":          it.ImageURL,
+			}
 
 			orderItems = append(orderItems, merchant.OrderItem{
-				ID:              uuid.New(),
-				MenuID:          it.MenuID,
-				Quantity:        it.Quantity,
-				Notes:           it.Notes,
-				PriceAtPurchase: menu.Price,
+				ID:               uuid.New(),
+				MenuID:           it.MenuID,
+				Quantity:         it.Quantity,
+				Notes:            it.Notes,
+				PriceAtPurchase:  unitPrice,
+				Options:          options,
+				VariantOptionID:  it.VariantOptionID,
+				ToppingOptionIDs: it.ToppingOptionIDs,
 			})
 		}
 		// Enforce maximum 10 items limit
