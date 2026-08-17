@@ -168,6 +168,7 @@ type Service interface {
 	// Realtime pool
 	SetPoolBroadcaster(b PoolBroadcaster)
 	SetPromotionService(ps PromotionService)
+	SetFCMDispatcher(d FCMDispatcher)
 }
 
 type PoolBroadcaster interface {
@@ -178,24 +179,29 @@ type PoolBroadcaster interface {
 	BroadcastOrderStatus(orderID string, status string, eventType string)
 }
 
+type FCMDispatcher interface {
+	Enqueue(ctx context.Context, job notification.Job) error
+}
+
 type service struct {
-	repo         Repository
-	userSvc      user.Service
-	tripRepo     trip.Repository
-	matchingSvc  Matcher
-	walletSvc    wallet.Service
-	configSvc    systemconfig.Service
-	fcm          notification.Notifier
-	notifSvc     notifDomain.Service
-	redis        *cache.Redis
-	db           *bun.DB
-	auditSvc     audit.Service
-	storage      storage.Storage
-	merchantSvc  merchant.Service
-	promotionSvc PromotionService // optional, nil guard for minimal impact
-	paymentQueue chan PaymentJob
-	paymentOnce  sync.Once
-	poolHub      PoolBroadcaster
+	repo          Repository
+	userSvc       user.Service
+	tripRepo      trip.Repository
+	matchingSvc   Matcher
+	walletSvc     wallet.Service
+	configSvc     systemconfig.Service
+	fcm           notification.Notifier
+	fcmDispatcher FCMDispatcher
+	notifSvc      notifDomain.Service
+	redis         *cache.Redis
+	db            *bun.DB
+	auditSvc      audit.Service
+	storage       storage.Storage
+	merchantSvc   merchant.Service
+	promotionSvc  PromotionService // optional, nil guard for minimal impact
+	paymentQueue  chan PaymentJob
+	paymentOnce   sync.Once
+	poolHub       PoolBroadcaster
 }
 
 // PromotionService is an interface to avoid import cycle with promotion domain
@@ -230,6 +236,57 @@ func (s *service) SetPoolBroadcaster(b PoolBroadcaster) {
 
 func (s *service) SetPromotionService(ps PromotionService) {
 	s.promotionSvc = ps
+}
+
+func (s *service) SetFCMDispatcher(d FCMDispatcher) {
+	s.fcmDispatcher = d
+}
+
+func (s *service) enqueueFCM(ctx context.Context, userID uuid.UUID, title, body, notifType string, data map[string]string, collapseID string, high bool) {
+	// Always inbox first (BE only minimal impact)
+	_ = s.notifSvc.CreateNotification(ctx, notifDomain.CreateNotificationRequest{
+		UserID:   userID,
+		Title:    title,
+		Message:  body,
+		Type:     notifType,
+		Metadata: map[string]interface{}{"data": data, "collapse_id": collapseID},
+	})
+
+	job := notification.Job{
+		UserID:     userID,
+		Title:      title,
+		Body:       body,
+		Type:       notifType,
+		Data:       data,
+		CollapseID: collapseID,
+		Priority:   notification.PriorityNormal,
+	}
+	if high {
+		job.Priority = notification.PriorityHigh
+	}
+
+	if s.fcmDispatcher != nil {
+		_ = s.fcmDispatcher.Enqueue(ctx, job)
+		return
+	}
+	// Fallback direct FCM with collapse
+	if s.fcm != nil && config.App.FcmEnabled {
+		go func() {
+			bgCtx := context.Background()
+			u, _ := s.userSvc.GetByID(bgCtx, userID, userID)
+			if u != nil && u.FcmToken != nil && *u.FcmToken != "" {
+				if collapseID != "" {
+					if fc, ok := s.fcm.(interface {
+						SendToDeviceWithCollapse(ctx context.Context, token, title, body string, data map[string]string, collapseID string) error
+					}); ok {
+						_ = fc.SendToDeviceWithCollapse(bgCtx, *u.FcmToken, title, body, data, collapseID)
+						return
+					}
+				}
+				_ = s.fcm.SendToDevice(bgCtx, *u.FcmToken, title, body, data)
+			}
+		}()
+	}
 }
 
 func (s *service) Create(ctx context.Context, requesterID uuid.UUID, req CreateOrderRequest) (*Order, error) {
@@ -619,33 +676,16 @@ func (s *service) Create(ctx context.Context, requesterID uuid.UUID, req CreateO
 		} else if order.Status == StatusCooking {
 			s.matchingSvc.EnqueueMatching(order.ID)
 
-			// Send FCM notification to Merchant owner that a new auto-confirmed order is placed
-			if s.fcm != nil && config.App.FcmEnabled {
-				go func() {
-					bgCtx := context.Background()
-					ownerUser, _ := s.userSvc.GetByID(bgCtx, merch.OwnerID, merch.OwnerID)
-					if ownerUser != nil && ownerUser.FcmToken != nil && *ownerUser.FcmToken != "" {
-						_ = s.fcm.SendToDevice(bgCtx, *ownerUser.FcmToken, "Pesanan Baru Masuk (Otomatis)",
-							fmt.Sprintf("Pesanan %s diterima otomatis. Silakan mulai masak!", order.ItemDetails),
-							map[string]string{"order_id": order.ID.String(), "type": "merchant_order"})
-					}
-
-				}()
-			}
+			// Unified notification via enqueueFCM (inbox + push)
+			s.enqueueFCM(ctx, merch.OwnerID, "Pesanan Baru Masuk (Otomatis)",
+				fmt.Sprintf("Pesanan %s diterima otomatis. Silakan mulai masak!", order.ItemDetails),
+				"order", map[string]string{"order_id": order.ID.String(), "type": "merchant_order"},
+				fmt.Sprintf("order_%s", order.ID.String()), false)
 		} else {
-			// Send FCM notification to Merchant owner that a new order is waiting confirmation
-			if s.fcm != nil && config.App.FcmEnabled {
-				go func() {
-					bgCtx := context.Background()
-					ownerUser, _ := s.userSvc.GetByID(bgCtx, merch.OwnerID, merch.OwnerID)
-					if ownerUser != nil && ownerUser.FcmToken != nil && *ownerUser.FcmToken != "" {
-						_ = s.fcm.SendToDevice(bgCtx, *ownerUser.FcmToken, "Pesanan Baru Masuk",
-							fmt.Sprintf("Pesanan %s membutuhkan konfirmasi Anda.", order.ItemDetails),
-							map[string]string{"order_id": order.ID.String(), "type": "merchant_order"})
-					}
-
-				}()
-			}
+			s.enqueueFCM(ctx, merch.OwnerID, "Pesanan Baru Masuk",
+				fmt.Sprintf("Pesanan %s membutuhkan konfirmasi Anda.", order.ItemDetails),
+				"order", map[string]string{"order_id": order.ID.String(), "type": "merchant_order"},
+				fmt.Sprintf("order_%s", order.ID.String()), false)
 		}
 
 		// --- Realtime Pool Broadcast (new) ---
@@ -1067,56 +1107,19 @@ func (s *service) AcceptOrder(ctx context.Context, orderID, runnerID uuid.UUID) 
 	// Audit Log
 	s.auditSvc.Log(ctx, &runnerID, audit.ActionOrderAccept, "order", orderID.String(), map[string]interface{}{"status": oldStatus}, map[string]interface{}{"status": newStatus, "runner_id": runnerID}, "", "")
 
-	// Create In-App Notification for Requester
-	_ = s.notifSvc.CreateNotification(ctx, notifDomain.CreateNotificationRequest{
-		UserID:  order.RequesterID,
-		Title:   "Pesanan Diterima",
-		Message: fmt.Sprintf("Seorang Runner telah menerima pesanan Anda: %s", order.ItemDetails),
-		Type:    "order",
-		Metadata: map[string]interface{}{
-			"order_id": order.ID,
-		},
-	})
-
-	// Send Push Notification to Requester if token exists
-	if s.fcm != nil && config.App.FcmEnabled {
-		go func() {
-			bgCtx := context.Background()
-			reqUser, _ := s.userSvc.GetByID(bgCtx, order.RequesterID, order.RequesterID)
-			if reqUser != nil && reqUser.FcmToken != nil && *reqUser.FcmToken != "" {
-				_ = s.fcm.SendToDevice(bgCtx, *reqUser.FcmToken, "Pesanan Diterima",
-					fmt.Sprintf("Runner sedang memproses pesanan Anda (%s)", order.ItemDetails),
-					map[string]string{"order_id": order.ID.String()})
-			}
-
-		}()
-	}
+	s.enqueueFCM(ctx, order.RequesterID, "Pesanan Diterima",
+		fmt.Sprintf("Runner sedang memproses pesanan Anda (%s) - %s", order.ItemDetails, order.ID.String()),
+		"order", map[string]string{"order_id": order.ID.String()},
+		fmt.Sprintf("order_%s", order.ID.String()), true)
 
 	// Notify Merchant Owner if runner accepts confirmed order
 	if order.MerchantID != nil {
 		merch, err := s.merchantSvc.GetMerchantByID(ctx, *order.MerchantID)
 		if err == nil && merch != nil {
-			_ = s.notifSvc.CreateNotification(ctx, notifDomain.CreateNotificationRequest{
-				UserID:  merch.OwnerID,
-				Title:   "Runner Menuju Toko",
-				Message: fmt.Sprintf("Runner %s telah menerima pesanan: %s. Silakan mulai menyiapkan makanan!", r.Name, order.ItemDetails),
-				Type:    "order",
-				Metadata: map[string]interface{}{
-					"order_id": order.ID,
-				},
-			})
-			if s.fcm != nil && config.App.FcmEnabled {
-				go func() {
-					bgCtx := context.Background()
-					merchOwner, _ := s.userSvc.GetByID(bgCtx, merch.OwnerID, merch.OwnerID)
-					if merchOwner != nil && merchOwner.FcmToken != nil && *merchOwner.FcmToken != "" {
-						_ = s.fcm.SendToDevice(bgCtx, *merchOwner.FcmToken, "Mulai Masak Pesanan",
-							fmt.Sprintf("Runner %s menuju toko Anda. Silakan siapkan pesanan %s!", r.Name, order.ItemDetails),
-							map[string]string{"order_id": order.ID.String(), "type": "merchant_order"})
-					}
-
-				}()
-			}
+			s.enqueueFCM(ctx, merch.OwnerID, "Runner Menuju Toko",
+				fmt.Sprintf("Runner %s telah menerima pesanan: %s. Silakan mulai menyiapkan makanan!", r.Name, order.ItemDetails),
+				"order", map[string]string{"order_id": order.ID.String(), "type": "merchant_order"},
+				fmt.Sprintf("order_%s", order.ID.String()), false)
 		}
 	}
 
@@ -1171,30 +1174,10 @@ func (s *service) PickupOrder(ctx context.Context, orderID, runnerID uuid.UUID) 
 		go s.poolHub.BroadcastOrderStatus(orderID.String(), StatusDelivering, "order_status")
 	}
 
-	// In-app notification - runner menuju penitip
-	_ = s.notifSvc.CreateNotification(ctx, notifDomain.CreateNotificationRequest{
-		UserID:  order.RequesterID,
-		Title:   "Pesanan Dalam Perjalanan",
-		Message: fmt.Sprintf("Runner sedang mengantarkan pesanan Anda: %s", order.ItemDetails),
-		Type:    "order",
-		Metadata: map[string]interface{}{
-			"order_id": order.ID.String(),
-			"status":   StatusDelivering,
-		},
-	})
-
-	if s.fcm != nil && config.App.FcmEnabled {
-		go func() {
-			bgCtx := context.Background()
-			reqUser, _ := s.userSvc.GetByID(bgCtx, order.RequesterID, order.RequesterID)
-			if reqUser != nil && reqUser.FcmToken != nil && *reqUser.FcmToken != "" {
-				_ = s.fcm.SendToDevice(bgCtx, *reqUser.FcmToken, "Pesanan Dalam Perjalanan",
-					fmt.Sprintf("Runner sedang menuju lokasi Anda untuk pesanan %s", order.ItemDetails),
-					map[string]string{"order_id": order.ID.String(), "type": "order_delivering"})
-			}
-
-		}()
-	}
+	s.enqueueFCM(ctx, order.RequesterID, "Pesanan Dalam Perjalanan",
+		fmt.Sprintf("Runner sedang menuju lokasi Anda untuk pesanan %s", order.ItemDetails),
+		"order", map[string]string{"order_id": order.ID.String(), "type": "order_delivering"},
+		fmt.Sprintf("order_%s", order.ID.String()), true)
 
 	return nil
 }
@@ -1360,90 +1343,49 @@ func (s *service) CancelOrder(ctx context.Context, orderID, userID uuid.UUID, re
 			cacheKey := fmt.Sprintf("active_uniq:%.2f:%d", baseAmt, ord.UniqueCode)
 			_ = s.redis.Del(ctx, cacheKey)
 		}
-		// Notify other parties about cancellation
+		// Notify other parties about cancellation (unified via enqueueFCM)
 		if isRequester {
 			if ord.RunnerID != nil {
-				// Requester cancels -> notify runner
-				_ = s.notifSvc.CreateNotification(ctx, notifDomain.CreateNotificationRequest{
-					UserID:   *ord.RunnerID,
-					Title:    "Pesanan Dibatalkan",
-					Message:  fmt.Sprintf("Pesanan %s dibatalkan oleh penitip. Alasan: %s", ord.ItemDetails, reason),
-					Type:     "order",
-					Metadata: map[string]interface{}{"order_id": ord.ID.String(), "status": StatusCancelled, "reason": reason},
-				})
+				s.enqueueFCM(ctx, *ord.RunnerID, "Pesanan Dibatalkan",
+					fmt.Sprintf("Pesanan %s dibatalkan oleh penitip. Alasan: %s", ord.ItemDetails, reason),
+					"order", map[string]string{"order_id": ord.ID.String(), "type": "order_cancelled"},
+					fmt.Sprintf("order_%s", ord.ID.String()), true)
 			}
 			if ord.MerchantID != nil {
 				merch, _ := s.merchantSvc.GetMerchantByID(ctx, *ord.MerchantID)
 				if merch != nil {
-					_ = s.notifSvc.CreateNotification(ctx, notifDomain.CreateNotificationRequest{
-						UserID:   merch.OwnerID,
-						Title:    "Pesanan Dibatalkan",
-						Message:  fmt.Sprintf("Pesanan %s dibatalkan oleh penitip. Alasan: %s", ord.ItemDetails, reason),
-						Type:     "order",
-						Metadata: map[string]interface{}{"order_id": ord.ID.String(), "status": StatusCancelled, "reason": reason},
-					})
-					if s.fcm != nil && config.App.FcmEnabled {
-						go func() {
-							bgCtx := context.Background()
-							ownerUser, _ := s.userSvc.GetByID(bgCtx, merch.OwnerID, merch.OwnerID)
-							if ownerUser != nil && ownerUser.FcmToken != nil && *ownerUser.FcmToken != "" {
-								_ = s.fcm.SendToDevice(bgCtx, *ownerUser.FcmToken, "Pesanan Dibatalkan",
-									fmt.Sprintf("Pesanan %s dibatalkan oleh pelanggan. Alasan: %s", ord.ItemDetails, reason),
-									map[string]string{"order_id": ord.ID.String(), "type": "merchant_order"})
-							}
-						}()
-					}
+					s.enqueueFCM(ctx, merch.OwnerID, "Pesanan Dibatalkan",
+						fmt.Sprintf("Pesanan %s dibatalkan oleh pelanggan. Alasan: %s", ord.ItemDetails, reason),
+						"order", map[string]string{"order_id": ord.ID.String(), "type": "merchant_order"},
+						fmt.Sprintf("order_%s", ord.ID.String()), true)
 				}
 			}
 		}
 		if isRunner {
-			_ = s.notifSvc.CreateNotification(ctx, notifDomain.CreateNotificationRequest{
-				UserID:   ord.RequesterID,
-				Title:    "Pesanan Dibatalkan Runner",
-				Message:  fmt.Sprintf("Runner membatalkan pesanan %s. Alasan: %s", ord.ItemDetails, reason),
-				Type:     "order",
-				Metadata: map[string]interface{}{"order_id": ord.ID.String(), "status": StatusCancelled, "reason": reason},
-			})
+			s.enqueueFCM(ctx, ord.RequesterID, "Pesanan Dibatalkan Runner",
+				fmt.Sprintf("Runner membatalkan pesanan %s. Alasan: %s", ord.ItemDetails, reason),
+				"order", map[string]string{"order_id": ord.ID.String(), "type": "order_cancelled"},
+				fmt.Sprintf("order_%s", ord.ID.String()), true)
 			if ord.MerchantID != nil {
 				merch, _ := s.merchantSvc.GetMerchantByID(ctx, *ord.MerchantID)
 				if merch != nil {
-					_ = s.notifSvc.CreateNotification(ctx, notifDomain.CreateNotificationRequest{
-						UserID:   merch.OwnerID,
-						Title:    "Pesanan Dibatalkan Runner",
-						Message:  fmt.Sprintf("Runner membatalkan pesanan merchant %s. Alasan: %s", ord.ItemDetails, reason),
-						Type:     "order",
-						Metadata: map[string]interface{}{"order_id": ord.ID.String(), "status": StatusCancelled, "reason": reason},
-					})
-					if s.fcm != nil && config.App.FcmEnabled {
-						go func() {
-							bgCtx := context.Background()
-							ownerUser, _ := s.userSvc.GetByID(bgCtx, merch.OwnerID, merch.OwnerID)
-							if ownerUser != nil && ownerUser.FcmToken != nil && *ownerUser.FcmToken != "" {
-								_ = s.fcm.SendToDevice(bgCtx, *ownerUser.FcmToken, "Pesanan Dibatalkan Runner",
-									fmt.Sprintf("Runner membatalkan pesanan %s. Alasan: %s", ord.ItemDetails, reason),
-									map[string]string{"order_id": ord.ID.String(), "type": "merchant_order"})
-							}
-						}()
-					}
+					s.enqueueFCM(ctx, merch.OwnerID, "Pesanan Dibatalkan Runner",
+						fmt.Sprintf("Runner membatalkan pesanan %s. Alasan: %s", ord.ItemDetails, reason),
+						"order", map[string]string{"order_id": ord.ID.String(), "type": "merchant_order"},
+						fmt.Sprintf("order_%s", ord.ID.String()), true)
 				}
 			}
 		}
 		if isMerchantOwner {
-			_ = s.notifSvc.CreateNotification(ctx, notifDomain.CreateNotificationRequest{
-				UserID:   ord.RequesterID,
-				Title:    "Pesanan Dibatalkan Merchant",
-				Message:  fmt.Sprintf("Merchant membatalkan pesanan %s. Alasan: %s", ord.ItemDetails, reason),
-				Type:     "order",
-				Metadata: map[string]interface{}{"order_id": ord.ID.String(), "status": StatusCancelled, "reason": reason},
-			})
+			s.enqueueFCM(ctx, ord.RequesterID, "Pesanan Dibatalkan Merchant",
+				fmt.Sprintf("Merchant membatalkan pesanan %s. Alasan: %s", ord.ItemDetails, reason),
+				"order", map[string]string{"order_id": ord.ID.String(), "type": "order_cancelled"},
+				fmt.Sprintf("order_%s", ord.ID.String()), true)
 			if ord.RunnerID != nil {
-				_ = s.notifSvc.CreateNotification(ctx, notifDomain.CreateNotificationRequest{
-					UserID:   *ord.RunnerID,
-					Title:    "Pesanan Merchant Dibatalkan",
-					Message:  fmt.Sprintf("Merchant membatalkan pesanan %s: %s", ord.ItemDetails, reason),
-					Type:     "order",
-					Metadata: map[string]interface{}{"order_id": ord.ID.String(), "status": StatusCancelled, "reason": reason},
-				})
+				s.enqueueFCM(ctx, *ord.RunnerID, "Pesanan Merchant Dibatalkan",
+					fmt.Sprintf("Merchant membatalkan pesanan %s: %s", ord.ItemDetails, reason),
+					"order", map[string]string{"order_id": ord.ID.String(), "type": "order_cancelled"},
+					fmt.Sprintf("order_%s", ord.ID.String()), true)
 			}
 		}
 		// Realtime: remove cancelled order from pool
@@ -1557,60 +1499,26 @@ func (s *service) runnerCancelForReassign(ctx context.Context, ord *Order, runne
 		}
 	}
 
-	// Notifications
-	// Requester: runner cancel, searching replacement
-	_ = s.notifSvc.CreateNotification(ctx, notifDomain.CreateNotificationRequest{
-		UserID:   ord.RequesterID,
-		Title:    "Runner Membatalkan, Mencari Pengganti",
-		Message:  fmt.Sprintf("Runner membatalkan pesanan %s (alasan: %s). Kami sedang mencarikan runner terdekat yang aktif/online untuk pengiriman %s.", ord.ItemDetails, reason, map[bool]string{true: "instant", false: "reguler"}[ord.OrderType == TypeInstant]),
-		Type:     "order",
-		Metadata: map[string]interface{}{"order_id": ord.ID.String(), "status": oldStatus, "reassign": true, "reason": reason},
-	})
-	if s.fcm != nil && config.App.FcmEnabled {
-		go func() {
-			bgCtx := context.Background()
-			reqUser, _ := s.userSvc.GetByID(bgCtx, ord.RequesterID, ord.RequesterID)
-			if reqUser != nil && reqUser.FcmToken != nil && *reqUser.FcmToken != "" {
-				_ = s.fcm.SendToDevice(bgCtx, *reqUser.FcmToken, "Mencari Runner Pengganti",
-					fmt.Sprintf("Runner membatalkan pesanan %s, kami cari pengganti terdekat.", ord.ItemDetails),
-					map[string]string{"order_id": ord.ID.String(), "type": "order_reassigned"})
-			}
-		}()
-	}
+	// Unified via enqueueFCM
+	s.enqueueFCM(ctx, ord.RequesterID, "Mencari Runner Pengganti",
+		fmt.Sprintf("Runner membatalkan pesanan %s, kami cari pengganti terdekat.", ord.ItemDetails),
+		"order", map[string]string{"order_id": ord.ID.String(), "type": "order_reassigned"},
+		fmt.Sprintf("order_%s", ord.ID.String()), true)
 
-	// Merchant: runner batal, makanan tetap lanjut, mencari driver lain (Food priority)
 	if ord.MerchantID != nil {
 		merch, _ := s.merchantSvc.GetMerchantByID(ctx, *ord.MerchantID)
 		if merch != nil {
-			_ = s.notifSvc.CreateNotification(ctx, notifDomain.CreateNotificationRequest{
-				UserID:   merch.OwnerID,
-				Title:    "Runner Batal, Mencari Pengganti",
-				Message:  fmt.Sprintf("Runner membatalkan pesanan %s (alasan: %s). Makanan tetap lanjut dimasak (%s). Kami mencarikan driver online terdekat.", ord.ItemDetails, reason, oldStatus),
-				Type:     "order",
-				Metadata: map[string]interface{}{"order_id": ord.ID.String(), "status": oldStatus, "reassign": true},
-			})
-			if s.fcm != nil && config.App.FcmEnabled {
-				go func() {
-					bgCtx := context.Background()
-					ownerUser, _ := s.userSvc.GetByID(bgCtx, merch.OwnerID, merch.OwnerID)
-					if ownerUser != nil && ownerUser.FcmToken != nil && *ownerUser.FcmToken != "" {
-						_ = s.fcm.SendToDevice(bgCtx, *ownerUser.FcmToken, "Runner Batal - Tetap Masak",
-							fmt.Sprintf("Runner batal pesanan %s, tetap lanjut masak, kami cari pengganti.", ord.ItemDetails),
-							map[string]string{"order_id": ord.ID.String(), "type": "merchant_order_requeued"})
-					}
-				}()
-			}
+			s.enqueueFCM(ctx, merch.OwnerID, "Runner Batal - Tetap Masak",
+				fmt.Sprintf("Runner batal pesanan %s, tetap lanjut masak, kami cari pengganti.", ord.ItemDetails),
+				"order", map[string]string{"order_id": ord.ID.String(), "type": "merchant_order_requeued"},
+				fmt.Sprintf("order_%s", ord.ID.String()), true)
 		}
 	}
 
-	// Old runner ack
-	_ = s.notifSvc.CreateNotification(ctx, notifDomain.CreateNotificationRequest{
-		UserID:   runnerID,
-		Title:    "Pesanan Dialihkan ke Runner Lain",
-		Message:  fmt.Sprintf("Pembatalan pesanan %s diterima, pesanan akan dialihkan ke runner terdekat yang online. Alasan: %s", ord.ItemDetails, reason),
-		Type:     "order",
-		Metadata: map[string]interface{}{"order_id": ord.ID.String(), "reassigned": true},
-	})
+	s.enqueueFCM(ctx, runnerID, "Pesanan Dialihkan ke Runner Lain",
+		fmt.Sprintf("Pembatalan pesanan %s diterima, pesanan akan dialihkan ke runner terdekat yang online. Alasan: %s", ord.ItemDetails, reason),
+		"order", map[string]string{"order_id": ord.ID.String(), "type": "order_reassigned"},
+		fmt.Sprintf("order_%s", ord.ID.String()), false)
 
 	return nil
 }
@@ -1709,6 +1617,16 @@ func (s *service) SubmitPurchaseReceipt(ctx context.Context, orderID, runnerID u
 	s.auditSvc.Log(ctx, &runnerID, audit.ActionOrderPurchased, "order", orderID.String(),
 		map[string]interface{}{"status": StatusAccepted},
 		map[string]interface{}{"status": StatusPurchasing, "receipt_image_url": path}, "", "")
+
+	// Missing push: notify requester that runner submitted receipt (beli)
+	s.enqueueFCM(ctx, order.RequesterID, "Pembelian Selesai - Menunggu Pickup",
+		fmt.Sprintf("Runner telah membeli pesanan %s. Kwitansi diunggah.", order.ItemDetails),
+		"order", map[string]string{"order_id": order.ID.String(), "type": "order_purchased"},
+		fmt.Sprintf("order_%s", order.ID.String()), true)
+
+	if s.poolHub != nil {
+		go s.poolHub.BroadcastOrderStatus(orderID.String(), StatusPurchasing, "purchased")
+	}
 
 	return nil
 }
@@ -1833,48 +1751,21 @@ func (s *service) CompleteOrder(ctx context.Context, orderID, runnerID uuid.UUID
 	})
 
 	if err == nil {
-		// Realtime push completed – low burden async
 		if s.poolHub != nil {
 			go s.poolHub.BroadcastOrderStatus(orderID.String(), StatusCompleted, "completed")
 		}
-		// In-app notifications untuk penyelesaian
-		_ = s.notifSvc.CreateNotification(ctx, notifDomain.CreateNotificationRequest{
-			UserID:  order.RequesterID,
-			Title:   "Pesanan Selesai",
-			Message: fmt.Sprintf("Pesanan Anda telah selesai: %s. Beri ulasan untuk Runner!", order.ItemDetails),
-			Type:    "order",
-			Metadata: map[string]interface{}{
-				"order_id": order.ID.String(),
-				"status":   StatusCompleted,
-			},
-		})
+		s.enqueueFCM(ctx, order.RequesterID, "Pesanan Selesai",
+			fmt.Sprintf("Pesanan %s selesai! Beri ulasan sekarang.", order.ItemDetails),
+			"order", map[string]string{"order_id": order.ID.String(), "type": "order_completed"},
+			fmt.Sprintf("order_%s", order.ID.String()), true)
 		if order.MerchantID != nil {
 			merch, err := s.merchantSvc.GetMerchantByID(ctx, *order.MerchantID)
 			if err == nil && merch != nil {
-				_ = s.notifSvc.CreateNotification(ctx, notifDomain.CreateNotificationRequest{
-					UserID:  merch.OwnerID,
-					Title:   "Pesanan Selesai",
-					Message: fmt.Sprintf("Pesanan %s telah selesai dan dana telah masuk ke saldo Anda.", order.ItemDetails),
-					Type:    "order",
-					Metadata: map[string]interface{}{
-						"order_id": order.ID.String(),
-						"status":   StatusCompleted,
-					},
-				})
+				s.enqueueFCM(ctx, merch.OwnerID, "Pesanan Selesai",
+					fmt.Sprintf("Pesanan %s telah selesai dan dana telah masuk ke saldo Anda.", order.ItemDetails),
+					"order", map[string]string{"order_id": order.ID.String(), "type": "order_completed"},
+					fmt.Sprintf("order_%s", order.ID.String()), true)
 			}
-		}
-
-		if s.fcm != nil && config.App.FcmEnabled {
-			go func() {
-				bgCtx := context.Background()
-				reqUser, _ := s.userSvc.GetByID(bgCtx, order.RequesterID, order.RequesterID)
-				if reqUser != nil && reqUser.FcmToken != nil && *reqUser.FcmToken != "" {
-					_ = s.fcm.SendToDevice(bgCtx, *reqUser.FcmToken, "Pesanan Selesai",
-						fmt.Sprintf("Pesanan %s selesai! Beri ulasan sekarang.", order.ItemDetails),
-						map[string]string{"order_id": order.ID.String(), "type": "order_completed"})
-				}
-
-			}()
 		}
 	}
 
@@ -1970,34 +1861,15 @@ func (s *service) processPayment(ctx context.Context, orderID uuid.UUID, payment
 					orderObj.Status = StatusCooking
 					_ = s.repo.Update(ctx, s.db, orderObj)
 					s.matchingSvc.EnqueueMatching(orderID)
-
-					// Notify merchant owner of auto-confirmed order
-					if s.fcm != nil && config.App.FcmEnabled {
-						go func() {
-							bgCtx := context.Background()
-							ownerUser, _ := s.userSvc.GetByID(bgCtx, merch.OwnerID, merch.OwnerID)
-							if ownerUser != nil && ownerUser.FcmToken != nil && *ownerUser.FcmToken != "" {
-								_ = s.fcm.SendToDevice(bgCtx, *ownerUser.FcmToken, "Pesanan Baru Masuk (Otomatis)",
-									fmt.Sprintf("Pesanan %s diterima otomatis. Silakan mulai masak!", orderObj.ItemDetails),
-									map[string]string{"order_id": orderObj.ID.String(), "type": "merchant_order"})
-							}
-
-						}()
-					}
+					s.enqueueFCM(ctx, merch.OwnerID, "Pesanan Baru Masuk (Otomatis)",
+						fmt.Sprintf("Pesanan %s diterima otomatis. Silakan mulai masak!", orderObj.ItemDetails),
+						"order", map[string]string{"order_id": orderObj.ID.String(), "type": "merchant_order"},
+						fmt.Sprintf("order_%s", orderObj.ID.String()), false)
 				} else {
-					// Notify merchant owner of pending manual confirmation
-					if s.fcm != nil && config.App.FcmEnabled {
-						go func() {
-							bgCtx := context.Background()
-							ownerUser, _ := s.userSvc.GetByID(bgCtx, merch.OwnerID, merch.OwnerID)
-							if ownerUser != nil && ownerUser.FcmToken != nil && *ownerUser.FcmToken != "" {
-								_ = s.fcm.SendToDevice(bgCtx, *ownerUser.FcmToken, "Pesanan Baru Masuk",
-									fmt.Sprintf("Pesanan %s membutuhkan konfirmasi Anda.", orderObj.ItemDetails),
-									map[string]string{"order_id": orderObj.ID.String(), "type": "merchant_order"})
-							}
-
-						}()
-					}
+					s.enqueueFCM(ctx, merch.OwnerID, "Pesanan Baru Masuk",
+						fmt.Sprintf("Pesanan %s membutuhkan konfirmasi Anda.", orderObj.ItemDetails),
+						"order", map[string]string{"order_id": orderObj.ID.String(), "type": "merchant_order"},
+						fmt.Sprintf("order_%s", orderObj.ID.String()), false)
 				}
 			}
 		} else {
@@ -2140,26 +2012,11 @@ func (s *service) DisputeOrder(ctx context.Context, orderID, requesterID uuid.UU
 	order.UpdatedAt = now
 
 	err = s.repo.Update(ctx, s.db, order)
-	if err == nil {
-		if order.RunnerID != nil {
-			_ = s.notifSvc.CreateNotification(ctx, notifDomain.CreateNotificationRequest{
-				UserID:   *order.RunnerID,
-				Title:    "Pesanan Disengketakan",
-				Message:  fmt.Sprintf("Penitip membuka sengketa untuk pesanan %s. Alasan: %s", order.ItemDetails, reason),
-				Type:     "order",
-				Metadata: map[string]interface{}{"order_id": order.ID.String(), "type": "order_disputed"},
-			})
-		}
-		if s.fcm != nil && config.App.FcmEnabled && order.RunnerID != nil {
-			runner, _ := s.userSvc.GetByID(ctx, *order.RunnerID, *order.RunnerID)
-			if runner != nil && runner.FcmToken != nil && *runner.FcmToken != "" {
-				_ = s.fcm.SendToDevice(ctx, *runner.FcmToken, "Pesanan Disengketakan",
-					"Penitip membuka sengketa untuk pesanan Anda. Admin akan segera meninjau.", map[string]string{
-						"type":     "order_disputed",
-						"order_id": order.ID.String(),
-					})
-			}
-		}
+	if err == nil && order.RunnerID != nil {
+		s.enqueueFCM(ctx, *order.RunnerID, "Pesanan Disengketakan",
+			fmt.Sprintf("Penitip membuka sengketa untuk pesanan %s. Alasan: %s", order.ItemDetails, reason),
+			"order", map[string]string{"order_id": order.ID.String(), "type": "order_disputed"},
+			fmt.Sprintf("order_%s", order.ID.String()), true)
 	}
 	return err
 }
@@ -2225,46 +2082,21 @@ func (s *service) ResolveDispute(ctx context.Context, orderID uuid.UUID, side st
 		return s.repo.Update(ctx, tx, order)
 	})
 	if err == nil {
-		// In-app notification
 		msg := "Sengketa pesanan telah diselesaikan oleh Admin."
 		if side == user.RoleRequester {
 			msg += " Dana dikembalikan ke Penitip."
 		} else {
 			msg += " Dana dilepaskan ke Runner."
 		}
-
-		_ = s.notifSvc.CreateNotification(ctx, notifDomain.CreateNotificationRequest{
-			UserID:   order.RequesterID,
-			Title:    "Sengketa Selesai",
-			Message:  msg + fmt.Sprintf(" Pesanan: %s", order.ItemDetails),
-			Type:     "order",
-			Metadata: map[string]interface{}{"order_id": order.ID.String(), "type": "dispute_resolved", "winner": side},
-		})
+		s.enqueueFCM(ctx, order.RequesterID, "Sengketa Selesai",
+			msg+fmt.Sprintf(" Pesanan: %s", order.ItemDetails),
+			"order", map[string]string{"order_id": order.ID.String(), "type": "dispute_resolved"},
+			fmt.Sprintf("order_%s", order.ID.String()), true)
 		if order.RunnerID != nil {
-			_ = s.notifSvc.CreateNotification(ctx, notifDomain.CreateNotificationRequest{
-				UserID:   *order.RunnerID,
-				Title:    "Sengketa Selesai",
-				Message:  msg + fmt.Sprintf(" Pesanan: %s", order.ItemDetails),
-				Type:     "order",
-				Metadata: map[string]interface{}{"order_id": order.ID.String(), "type": "dispute_resolved", "winner": side},
-			})
-		}
-
-		if s.fcm != nil && config.App.FcmEnabled {
-			go func() {
-				bgCtx := context.Background()
-				reqUser, _ := s.userSvc.GetByID(bgCtx, order.RequesterID, order.RequesterID)
-				if reqUser != nil && reqUser.FcmToken != nil && *reqUser.FcmToken != "" {
-					_ = s.fcm.SendToDevice(bgCtx, *reqUser.FcmToken, "Sengketa Selesai", msg, map[string]string{"order_id": order.ID.String()})
-				}
-				if order.RunnerID != nil {
-					runUser, _ := s.userSvc.GetByID(bgCtx, *order.RunnerID, *order.RunnerID)
-					if runUser != nil && runUser.FcmToken != nil && *runUser.FcmToken != "" {
-						_ = s.fcm.SendToDevice(bgCtx, *runUser.FcmToken, "Sengketa Selesai", msg, map[string]string{"order_id": order.ID.String()})
-					}
-				}
-
-			}()
+			s.enqueueFCM(ctx, *order.RunnerID, "Sengketa Selesai",
+				msg+fmt.Sprintf(" Pesanan: %s", order.ItemDetails),
+				"order", map[string]string{"order_id": order.ID.String(), "type": "dispute_resolved"},
+				fmt.Sprintf("order_%s", order.ID.String()), true)
 		}
 	}
 
@@ -2588,29 +2420,10 @@ func (s *service) RequestPriceAdjustment(ctx context.Context, orderID, runnerID 
 
 	err = s.repo.Update(ctx, s.db, order)
 	if err == nil {
-		_ = s.notifSvc.CreateNotification(ctx, notifDomain.CreateNotificationRequest{
-			UserID:  order.RequesterID,
-			Title:   "Penyesuaian Harga",
-			Message: fmt.Sprintf("Runner meminta penyesuaian harga dari Rp %.0f menjadi Rp %.0f. Alasan: %s", order.EstimatedCost, adjustedCost, reason),
-			Type:    "order",
-			Metadata: map[string]interface{}{
-				"order_id": order.ID.String(),
-				"type":     "price_adjustment",
-			},
-		})
-		if s.fcm != nil && config.App.FcmEnabled {
-			go func() {
-				bgCtx := context.Background()
-				requester, errReq := s.userSvc.GetByID(bgCtx, order.RequesterID, order.RequesterID)
-				if errReq == nil && requester.FcmToken != nil && *requester.FcmToken != "" {
-					_ = s.fcm.SendToDevice(bgCtx, *requester.FcmToken, "Penyesuaian Harga", "Runner meminta penyesuaian harga untuk pesanan Anda.", map[string]string{
-						"type":     "price_adjustment",
-						"order_id": order.ID.String(),
-					})
-				}
-
-			}()
-		}
+		s.enqueueFCM(ctx, order.RequesterID, "Penyesuaian Harga",
+			fmt.Sprintf("Runner meminta penyesuaian harga dari Rp %.0f menjadi Rp %.0f. Alasan: %s", order.EstimatedCost, adjustedCost, reason),
+			"order", map[string]string{"order_id": order.ID.String(), "type": "price_adjustment"},
+			fmt.Sprintf("order_%s", order.ID.String()), true)
 	}
 	return err
 }
@@ -2660,24 +2473,11 @@ func (s *service) ApprovePriceAdjustment(ctx context.Context, orderID, requester
 		return err
 	}
 	if ord.RunnerID != nil {
-		_ = s.notifSvc.CreateNotification(ctx, notifDomain.CreateNotificationRequest{
-			UserID:   *ord.RunnerID,
-			Title:    "Penyesuaian Disetujui",
-			Message:  fmt.Sprintf("Penitip menyetujui penyesuaian harga pesanan %s menjadi Rp %.0f", ord.ItemDetails, ord.EstimatedCost),
-			Type:     "order",
-			Metadata: map[string]interface{}{"order_id": orderID.String(), "type": "price_adjustment_approved"},
-		})
+		s.enqueueFCM(ctx, *ord.RunnerID, "Penyesuaian Disetujui",
+			fmt.Sprintf("Penitip menyetujui penyesuaian harga pesanan %s menjadi Rp %.0f", ord.ItemDetails, ord.EstimatedCost),
+			"order", map[string]string{"order_id": ord.ID.String(), "type": "price_adjustment_approved"},
+			fmt.Sprintf("order_%s", ord.ID.String()), true)
 	}
-	if s.fcm != nil && config.App.FcmEnabled && ord.RunnerID != nil {
-		runner, errRun := s.userSvc.GetByID(ctx, *ord.RunnerID, *ord.RunnerID)
-		if errRun == nil && runner.FcmToken != nil && *runner.FcmToken != "" {
-			_ = s.fcm.SendToDevice(ctx, *runner.FcmToken, "Penyesuaian Disetujui", "Penitip telah menyetujui penyesuaian harga Anda.", map[string]string{
-				"type":     "price_adjustment_approved",
-				"order_id": orderID.String(),
-			})
-		}
-	}
-
 	return err
 }
 
@@ -2742,18 +2542,10 @@ func (s *service) RejectPriceAdjustment(ctx context.Context, orderID, requesterI
 			title = "Pesanan Dibatalkan Setelah Penyesuaian Ditolak"
 			msg = fmt.Sprintf("Penitip menolak penyesuaian harga dan membatalkan pesanan %s", ord.ItemDetails)
 		}
-		_ = s.notifSvc.CreateNotification(ctx, notifDomain.CreateNotificationRequest{
-			UserID:  *ord.RunnerID,
-			Title:   title,
-			Message: msg,
-			Type:    "order",
-			Metadata: map[string]interface{}{
-				"order_id": ord.ID.String(),
-				"type":     "price_adjustment_rejected",
-			},
-		})
+		s.enqueueFCM(ctx, *ord.RunnerID, title, msg,
+			"order", map[string]string{"order_id": ord.ID.String(), "type": "price_adjustment_rejected"},
+			fmt.Sprintf("order_%s", ord.ID.String()), true)
 	}
-
 	return err
 }
 
@@ -3219,30 +3011,11 @@ func (s *service) MerchantAcceptOrder(ctx context.Context, orderID, ownerID uuid
 		go s.poolHub.BroadcastOrderStatus(orderID.String(), StatusMerchantAccepted, "order_status")
 	}
 
-	// Trigger runner matching now that merchant accepted
 	s.matchingSvc.EnqueueMatching(orderID)
-
-	// Send notification to Penitip
-	_ = s.notifSvc.CreateNotification(ctx, notifDomain.CreateNotificationRequest{
-		UserID:   order.RequesterID,
-		Title:    "Pesanan Diterima Merchant",
-		Message:  fmt.Sprintf("Merchant telah menyetujui pesanan Anda: %s. Sistem sedang mencari runner terdekat.", order.ItemDetails),
-		Type:     "order",
-		Metadata: map[string]interface{}{"order_id": order.ID},
-	})
-	if s.fcm != nil && config.App.FcmEnabled {
-		go func() {
-			bgCtx := context.Background()
-			reqUser, _ := s.userSvc.GetByID(bgCtx, order.RequesterID, order.RequesterID)
-			if reqUser != nil && reqUser.FcmToken != nil && *reqUser.FcmToken != "" {
-				_ = s.fcm.SendToDevice(bgCtx, *reqUser.FcmToken, "Pesanan Diterima Merchant",
-					fmt.Sprintf("Merchant menyetujui pesanan Anda: %s. Menunggu runner menjemput.", order.ItemDetails),
-					map[string]string{"order_id": order.ID.String()})
-			}
-
-		}()
-	}
-
+	s.enqueueFCM(ctx, order.RequesterID, "Pesanan Diterima Merchant",
+		fmt.Sprintf("Merchant menyetujui pesanan Anda: %s. Menunggu runner menjemput.", order.ItemDetails),
+		"order", map[string]string{"order_id": order.ID.String()},
+		fmt.Sprintf("order_%s", order.ID.String()), true)
 	return nil
 }
 
@@ -3271,50 +3044,15 @@ func (s *service) MerchantReadyOrder(ctx context.Context, orderID, ownerID uuid.
 	if s.poolHub != nil {
 		go s.poolHub.BroadcastOrderStatus(orderID.String(), StatusReady, "order_status")
 	}
-
-	// Notify Penitip
-	_ = s.notifSvc.CreateNotification(ctx, notifDomain.CreateNotificationRequest{
-		UserID:   order.RequesterID,
-		Title:    "Makanan Siap Diambil",
-		Message:  fmt.Sprintf("Pesanan Anda di %s sudah selesai disiapkan!", merch.Name),
-		Type:     "order",
-		Metadata: map[string]interface{}{"order_id": order.ID},
-	})
-	if s.fcm != nil && config.App.FcmEnabled {
-		go func() {
-			bgCtx := context.Background()
-			reqUser, _ := s.userSvc.GetByID(bgCtx, order.RequesterID, order.RequesterID)
-			if reqUser != nil && reqUser.FcmToken != nil && *reqUser.FcmToken != "" {
-				_ = s.fcm.SendToDevice(bgCtx, *reqUser.FcmToken, "Makanan Siap Diambil",
-					fmt.Sprintf("Pesanan Anda di %s sudah selesai disiapkan!", merch.Name),
-					map[string]string{"order_id": order.ID.String()})
-			}
-
-		}()
-	}
-
-	// Notify Runner if assigned
+	s.enqueueFCM(ctx, order.RequesterID, "Makanan Siap Diambil",
+		fmt.Sprintf("Pesanan Anda di %s sudah selesai disiapkan!", merch.Name),
+		"order", map[string]string{"order_id": order.ID.String()},
+		fmt.Sprintf("order_%s", order.ID.String()), true)
 	if order.RunnerID != nil {
-		_ = s.notifSvc.CreateNotification(ctx, notifDomain.CreateNotificationRequest{
-			UserID:   *order.RunnerID,
-			Title:    "Pesanan Siap Diambil",
-			Message:  fmt.Sprintf("Makanan untuk pesanan %s siap diambil di %s.", order.ItemDetails, merch.Name),
-			Type:     "order",
-			Metadata: map[string]interface{}{"order_id": order.ID},
-		})
-		if s.fcm != nil && config.App.FcmEnabled {
-			go func() {
-				bgCtx := context.Background()
-				runUser, _ := s.userSvc.GetByID(bgCtx, *order.RunnerID, *order.RunnerID)
-				if runUser != nil && runUser.FcmToken != nil && *runUser.FcmToken != "" {
-					_ = s.fcm.SendToDevice(bgCtx, *runUser.FcmToken, "Pesanan Siap Diambil",
-						fmt.Sprintf("Silakan ambil pesanan %s di %s.", order.ItemDetails, merch.Name),
-						map[string]string{"order_id": order.ID.String()})
-				}
-
-			}()
-		}
+		s.enqueueFCM(ctx, *order.RunnerID, "Pesanan Siap Diambil",
+			fmt.Sprintf("Silakan ambil pesanan %s di %s.", order.ItemDetails, merch.Name),
+			"order", map[string]string{"order_id": order.ID.String()},
+			fmt.Sprintf("order_%s", order.ID.String()), true)
 	}
-
 	return nil
 }

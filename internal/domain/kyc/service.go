@@ -38,13 +38,18 @@ type Service interface {
 	Review(ctx context.Context, kycID, actorID uuid.UUID, approved bool, note string) error
 }
 
+type dispatcherIface interface {
+	Enqueue(ctx context.Context, job notification.Job) error
+}
+
 type service struct {
-	repo     Repository
-	userSvc  user.Service
-	storage  storage.Storage
-	fcm      notification.Notifier
-	notifSvc notifDomain.Service
-	auditSvc audit.Service
+	repo          Repository
+	userSvc       user.Service
+	storage       storage.Storage
+	fcm           notification.Notifier
+	fcmDispatcher dispatcherIface
+	notifSvc      notifDomain.Service
+	auditSvc      audit.Service
 }
 
 func NewService(repo Repository, userSvc user.Service, storage storage.Storage, fcm notification.Notifier, notifSvc notifDomain.Service, auditSvc audit.Service) Service {
@@ -55,6 +60,39 @@ func NewService(repo Repository, userSvc user.Service, storage storage.Storage, 
 		fcm:      fcm,
 		notifSvc: notifSvc,
 		auditSvc: auditSvc,
+	}
+}
+
+func (s *service) SetFCMDispatcher(d dispatcherIface) {
+	s.fcmDispatcher = d
+}
+
+func (s *service) enqueueKYC(ctx context.Context, userID uuid.UUID, title, body string, extra map[string]string) {
+	// inbox
+	_ = s.notifSvc.CreateNotification(ctx, notifDomain.CreateNotificationRequest{
+		UserID:   userID,
+		Title:    title,
+		Message:  body,
+		Type:     "kyc",
+		Metadata: map[string]interface{}{"status": extra["status"]},
+	})
+	if s.fcmDispatcher != nil {
+		_ = s.fcmDispatcher.Enqueue(ctx, notification.Job{
+			UserID:     userID,
+			Title:      title,
+			Body:       body,
+			Type:       "kyc_result",
+			Data:       extra,
+			CollapseID: fmt.Sprintf("kyc_%s", userID.String()),
+			Priority:   notification.PriorityHigh,
+		})
+		return
+	}
+	if s.fcm != nil {
+		u, err := s.userSvc.GetByID(ctx, userID, userID)
+		if err == nil && u.FcmToken != nil && *u.FcmToken != "" {
+			_ = s.fcm.SendToDevice(ctx, *u.FcmToken, title, body, extra)
+		}
 	}
 }
 
@@ -205,38 +243,16 @@ func (s *service) Review(ctx context.Context, kycID, actorID uuid.UUID, approved
 		// Use actorID for audit log
 		s.auditSvc.Log(ctx, &actorID, action, "kyc", kyc.ID.String(), map[string]interface{}{"status": StatusPending}, map[string]interface{}{"status": kyc.Status, "note": note}, "", "")
 	}
-	if err == nil && s.fcm != nil {
-		// Notify User
-		u, errUser := s.userSvc.GetByID(ctx, kyc.UserID, kyc.UserID)
-		if errUser == nil && u.FcmToken != nil && *u.FcmToken != "" {
-			title := "Verifikasi Identitas Selesai"
-			body := "Selamat! Identitas Anda telah berhasil diverifikasi."
-			if !approved {
-				title = "Verifikasi Identitas Ditolak"
-				body = "Mohon maaf, verifikasi Identitas Anda ditolak. Alasan: " + note
-			}
-
-			_ = s.fcm.SendToDevice(ctx, *u.FcmToken, title, body, map[string]string{
-				"type":   "kyc_result",
-				"status": kyc.Status,
-			})
-		}
-
-		// Create In-App Notification
+	if err == nil {
 		title := "Verifikasi Identitas Selesai"
 		body := "Selamat! Identitas Anda telah berhasil diverifikasi."
 		if !approved {
 			title = "Verifikasi Identitas Ditolak"
 			body = "Mohon maaf, verifikasi Identitas Anda ditolak. Alasan: " + note
 		}
-		_ = s.notifSvc.CreateNotification(ctx, notifDomain.CreateNotificationRequest{
-			UserID:  kyc.UserID,
-			Title:   title,
-			Message: body,
-			Type:    "kyc",
-			Metadata: map[string]interface{}{
-				"status": kyc.Status,
-			},
+		s.enqueueKYC(ctx, kyc.UserID, title, body, map[string]string{
+			"type":   "kyc_result",
+			"status": kyc.Status,
 		})
 	}
 
@@ -259,7 +275,7 @@ func sanitizeStorageKey(urlStr string) string {
 		if slashIdx != -1 {
 			path := temp[slashIdx+1:]
 			path = strings.TrimPrefix(path, "uploads/")
-			
+
 			// Strip query parameters
 			if qIdx := strings.Index(path, "?"); qIdx != -1 {
 				path = path[:qIdx]

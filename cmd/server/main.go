@@ -184,12 +184,20 @@ func main() {
 	matchingSvc := matching.NewService(userRepo, tripRepo, orderRepo, redisCache, fcmClient)
 	// Worker pool will be started gracefully in the background workers section
 
-	// Notification History
+	// Notification History + FCM Dispatcher (Opsi A - BE only queue with per-device bucket 20 burst + collapse_id)
 	notifRepo := notificationDomain.NewRepository(db)
 	notifSvc := notificationDomain.NewService(notifRepo)
 	notifHandler := notificationDomain.NewHandler(notifSvc, db, redisCache)
 	fiberApp.RegisterRoutes(notifHandler.RegisterRoutes)
 	notifSvc.StartCleanupWorker(context.Background())
+
+	// Dispatcher injected into domain services for free-tier efficiency: unlimited total, 600k/min downstream, 20 burst per device refill 1/3min, topic 1000/sec, 4KB payload
+	var fcmDispatcher notification.Dispatcher
+	if redisCache != nil && fcmClient != nil {
+		fcmDispatcher = notification.NewDispatcher(redisCache, fcmClient, userRepo, auditSvc, logger)
+		// Worker pool started in background workers section
+		logger.Info("FCM dispatcher wired", zap.String("queue", notification.FCMQueueGlobal), zap.Int("burst", notification.FCMBurstLimit))
+	}
 
 	// Realtime pool hub (SSE for order pool + merchant stream) - reuses chat hub pattern from chat/hub.go
 	poolHub := realtime.NewPoolHub()
@@ -248,8 +256,11 @@ func main() {
 	promoSvc := promotion.NewService(promoRepo, userRepo, merchantRepo, auditSvc, redisCache, db)
 	promoHandler := promotion.NewHandler(promoSvc, db, redisCache)
 	fiberApp.RegisterRoutes(promoHandler.RegisterRoutes)
-	// Inject promotion service into order service (optional nil guard protects if not wired)
+	// Inject promotion service + FCM dispatcher into order service (optional nil guard)
 	orderSvc.SetPromotionService(promoSvc)
+	if fcmDispatcher != nil {
+		orderSvc.SetFCMDispatcher(fcmDispatcher)
+	}
 
 	wallet.OnPaymentSuccess = func(ctx context.Context, reference string) error {
 		id, err := uuid.Parse(reference)
@@ -274,6 +285,30 @@ func main() {
 	// KYC Domain
 	kycRepo := kyc.NewRepository(db)
 	kycSvc := kyc.NewService(kycRepo, userSvc, storageSvc, fcmClient, notifSvc, auditSvc)
+	if fcmDispatcher != nil {
+		// wire dispatcher into kyc & matching & wallet (SetFCMDispatcher optional via interface)
+		if ks, ok := interface{}(kycSvc).(interface {
+			SetFCMDispatcher(interface {
+				Enqueue(context.Context, notification.Job) error
+			})
+		}); ok {
+			ks.SetFCMDispatcher(fcmDispatcher)
+		}
+		if ms, ok := interface{}(matchingSvc).(interface {
+			SetFCMDispatcher(interface {
+				Enqueue(context.Context, notification.Job) error
+			})
+		}); ok {
+			ms.SetFCMDispatcher(fcmDispatcher)
+		}
+		if ws, ok := interface{}(walletSvc).(interface {
+			SetFCMDispatcher(interface {
+				Enqueue(context.Context, notification.Job) error
+			})
+		}); ok {
+			ws.SetFCMDispatcher(fcmDispatcher)
+		}
+	}
 	kycHandler := kyc.NewHandler(kycSvc, db, redisCache)
 	fiberApp.RegisterRoutes(kycHandler.RegisterRoutes)
 
@@ -304,6 +339,9 @@ func main() {
 	orderSvc.StartBackgroundCleanup(ctx)
 	orderSvc.StartPaymentWorkerPool(ctx, 5)
 	supportSvc.StartAutoCloseWorker(ctx)
+	if fcmDispatcher != nil {
+		fcmDispatcher.Start(ctx, 10)
+	}
 	_ = walletSvc.RecoverPendingWithdrawals(ctx)
 
 	// 9. Start server in a goroutine

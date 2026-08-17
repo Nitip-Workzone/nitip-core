@@ -2,6 +2,7 @@ package matching
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"sort"
 	"sync"
@@ -32,14 +33,19 @@ type rankedRunner struct {
 	score float64
 }
 
+type dispatcherIface interface {
+	Enqueue(ctx context.Context, job notification.Job) error
+}
+
 type service struct {
-	userRepo   user.Repository
-	tripRepo   trip.Repository
-	orderRepo  order.Repository
-	redis      *cache.Redis
-	fcm        notification.Notifier
-	jobQueue   chan uuid.UUID
-	workerOnce sync.Once
+	userRepo      user.Repository
+	tripRepo      trip.Repository
+	orderRepo     order.Repository
+	redis         *cache.Redis
+	fcm           notification.Notifier
+	fcmDispatcher dispatcherIface
+	jobQueue      chan uuid.UUID
+	workerOnce    sync.Once
 }
 
 func NewService(userRepo user.Repository, tripRepo trip.Repository, orderRepo order.Repository, redis *cache.Redis, fcm notification.Notifier) Service {
@@ -51,6 +57,10 @@ func NewService(userRepo user.Repository, tripRepo trip.Repository, orderRepo or
 		fcm:       fcm,
 		jobQueue:  make(chan uuid.UUID, 1000), // Buffered channel to prevent blocking
 	}
+}
+
+func (s *service) SetFCMDispatcher(d dispatcherIface) {
+	s.fcmDispatcher = d
 }
 
 func (s *service) EnqueueMatching(orderID uuid.UUID) {
@@ -306,24 +316,62 @@ func (s *service) FindNearestRunnersManual(ctx context.Context, lat, lng float64
 }
 
 func (s *service) DispatchOrder(ctx context.Context, orderID string, runners []user.User) error {
+	// Deduplicate per order-runner cooldown 5min to avoid spamming same runner for same order
+	cooldownKeyFmt := "fcm:cooldown:%s:%s"
+	collapseID := fmt.Sprintf("order_%s", orderID)
+
+	// Use dispatcher per-runner with collapse to respect 20 burst/device
+	if s.fcmDispatcher != nil {
+		// Limit to top 5 nearest to avoid fanout spam (free tier 1000/sec topic, but per device burst 20)
+		if len(runners) > 5 {
+			runners = runners[:5]
+		}
+		for _, r := range runners {
+			if r.FcmToken == nil || *r.FcmToken == "" {
+				continue
+			}
+			// Cooldown check
+			if s.redis != nil {
+				key := fmt.Sprintf(cooldownKeyFmt, r.ID.String(), orderID)
+				if exists, _ := s.redis.Client().Exists(ctx, key).Result(); exists > 0 {
+					continue
+				}
+				_ = s.redis.Client().Set(ctx, key, 1, 5*time.Minute).Err()
+			}
+			_ = s.fcmDispatcher.Enqueue(ctx, notification.Job{
+				UserID:     r.ID,
+				Title:      "Order Baru di Sekitarmu!",
+				Body:       "Ada penitip yang membutuhkan bantuanmu.",
+				Type:       "order_dispatch",
+				Data:       map[string]string{"order_id": orderID},
+				CollapseID: collapseID,
+				Priority:   notification.PriorityHigh,
+			})
+		}
+		return nil
+	}
+
+	// Fallback bulk multicast if dispatcher not wired (dev)
 	if s.fcm == nil || !config.App.FcmEnabled {
 		return nil
 	}
-
 	var tokens []string
 	for _, r := range runners {
 		if r.FcmToken != nil && *r.FcmToken != "" {
+			if s.redis != nil {
+				key := fmt.Sprintf(cooldownKeyFmt, r.ID.String(), orderID)
+				if exists, _ := s.redis.Client().Exists(ctx, key).Result(); exists > 0 {
+					continue
+				}
+				_ = s.redis.Client().Set(ctx, key, 1, 5*time.Minute).Err()
+			}
 			tokens = append(tokens, *r.FcmToken)
 		}
 	}
-
 	if len(tokens) == 0 {
 		return nil
 	}
-
-	err := s.fcm.SendMulticast(ctx, tokens, "Order Baru di Sekitarmu!", "Ada penitip yang membutuhkan bantuanmu.", map[string]string{
+	return s.fcm.SendMulticast(ctx, tokens, "Order Baru di Sekitarmu!", "Ada penitip yang membutuhkan bantuanmu.", map[string]string{
 		"order_id": orderID,
 	})
-
-	return err
 }

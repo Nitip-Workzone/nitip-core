@@ -76,15 +76,20 @@ type Service interface {
 	RecoverPendingWithdrawals(ctx context.Context) error
 }
 
+type dispatcherIface interface {
+	Enqueue(ctx context.Context, job notification.Job) error
+}
+
 type service struct {
-	repo      Repository
-	userSvc   user.Service
-	configSvc systemconfig.Service
-	db        *bun.DB
-	redis     *cache.Redis
-	auditSvc  audit.Service
-	fcm       notification.Notifier
-	notifSvc  notificationDomain.Service
+	repo          Repository
+	userSvc       user.Service
+	configSvc     systemconfig.Service
+	db            *bun.DB
+	redis         *cache.Redis
+	auditSvc      audit.Service
+	fcm           notification.Notifier
+	fcmDispatcher dispatcherIface
+	notifSvc      notificationDomain.Service
 }
 
 func NewService(repo Repository, userSvc user.Service, configSvc systemconfig.Service, db *bun.DB, redis *cache.Redis, auditSvc audit.Service, fcm notification.Notifier, notifSvc notificationDomain.Service) Service {
@@ -97,6 +102,54 @@ func NewService(repo Repository, userSvc user.Service, configSvc systemconfig.Se
 		auditSvc:  auditSvc,
 		fcm:       fcm,
 		notifSvc:  notifSvc,
+	}
+}
+
+func (s *service) SetFCMDispatcher(d dispatcherIface) {
+	s.fcmDispatcher = d
+}
+
+func (s *service) enqueueFCM(ctx context.Context, userID uuid.UUID, title, body string, data map[string]string, collapseID string, high bool) {
+	// inbox always
+	_ = s.notifSvc.CreateNotification(ctx, notificationDomain.CreateNotificationRequest{
+		UserID:   userID,
+		Title:    title,
+		Message:  body,
+		Type:     data["type"],
+		Metadata: map[string]interface{}{"data": data, "collapse_id": collapseID},
+	})
+	if s.fcmDispatcher != nil {
+		pr := notification.PriorityNormal
+		if high {
+			pr = notification.PriorityHigh
+		}
+		_ = s.fcmDispatcher.Enqueue(ctx, notification.Job{
+			UserID:     userID,
+			Title:      title,
+			Body:       body,
+			Type:       data["type"],
+			Data:       data,
+			CollapseID: collapseID,
+			Priority:   pr,
+		})
+		return
+	}
+	if s.fcm != nil && config.App.FcmEnabled {
+		go func() {
+			bgCtx := context.Background()
+			u, _ := s.userSvc.GetByID(bgCtx, userID, userID)
+			if u != nil && u.FcmToken != nil && *u.FcmToken != "" {
+				if collapseID != "" {
+					if fc, ok := s.fcm.(interface {
+						SendToDeviceWithCollapse(context.Context, string, string, string, map[string]string, string) error
+					}); ok {
+						_ = fc.SendToDeviceWithCollapse(bgCtx, *u.FcmToken, title, body, data, collapseID)
+						return
+					}
+				}
+				_ = s.fcm.SendToDevice(bgCtx, *u.FcmToken, title, body, data)
+			}
+		}()
 	}
 }
 
@@ -396,34 +449,14 @@ func (s *service) FinalizeTopUp(ctx context.Context, reference string, notificat
 			return
 		}
 
-		userObj, err := s.userSvc.GetByID(bgCtx, wallet.UserID, uuid.Nil)
-		if err != nil {
-			log.Printf("[FCM-TOPUP] Gagal mendapatkan data user: %v", err)
-			return
-		}
-
 		title := "Top Up Berhasil"
 		msg := fmt.Sprintf("Top up sebesar Rp%s berhasil ditambahkan ke saldo Anda.", strconv.FormatFloat(wtx.Amount, 'f', 0, 64))
 
-		// Write to database in-app notification
-		_ = s.notifSvc.CreateNotification(bgCtx, notificationDomain.CreateNotificationRequest{
-			UserID:  wallet.UserID,
-			Title:   title,
-			Message: msg,
-			Type:    "wallet",
-			Metadata: map[string]interface{}{
-				"amount":       wtx.Amount,
-				"reference_id": wtx.Reference,
-			},
-		})
-
-		// Send push notification via FCM
-		if userObj.FcmToken != nil && *userObj.FcmToken != "" {
-			_ = s.fcm.SendToDevice(bgCtx, *userObj.FcmToken, title, msg, map[string]string{
-				"type":   "wallet_update",
-				"amount": strconv.FormatFloat(wtx.Amount, 'f', 0, 64),
-			})
-		}
+		// Use unified enqueue which creates inbox + dispatcher with collapse wallet_{userID}
+		s.enqueueFCM(bgCtx, wallet.UserID, title, msg, map[string]string{
+			"type":   "wallet_update",
+			"amount": strconv.FormatFloat(wtx.Amount, 'f', 0, 64),
+		}, fmt.Sprintf("wallet_%s", wallet.UserID.String()), false)
 	}()
 
 	return s.repo.GetTransactionByReference(ctx, s.db, reference)
