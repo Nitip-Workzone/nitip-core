@@ -10,13 +10,14 @@ CREATE TABLE IF NOT EXISTS menu_categories (
     sort_order INT NOT NULL DEFAULT 0,
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE(merchant_id, LOWER(name))
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_menu_categories_merchant ON menu_categories(merchant_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_menu_categories_merchant_lower_name ON menu_categories(merchant_id, LOWER(name));
 
 -- Add category_id to menus (nullable for minimal impact)
-ALTER TABLE menus ADD COLUMN IF NOT EXISTS category_id UUID NULL REFERENCES menu_categories(id) ON DELETE SET NULL;
+ALTER TABLE menus ADD COLUMN IF NOT EXISTS category_id UUID NULL;
+ALTER TABLE menus ADD CONSTRAINT fk_menus_category_id FOREIGN KEY (category_id) REFERENCES menu_categories(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS idx_menus_category ON menus(category_id) WHERE category_id IS NOT NULL;
 
 -- Variant groups per menu (e.g. Ukuran, Rasa)
@@ -82,7 +83,8 @@ CREATE INDEX IF NOT EXISTS idx_topping_options_group ON menu_topping_options(gro
 
 -- OrderItems add options JSONB snapshot + variant/topping refs for calc
 ALTER TABLE order_items ADD COLUMN IF NOT EXISTS options JSONB NULL;
-ALTER TABLE order_items ADD COLUMN IF NOT EXISTS variant_option_id UUID NULL REFERENCES menu_variant_options(id) ON DELETE SET NULL;
+ALTER TABLE order_items ADD COLUMN IF NOT EXISTS variant_option_id UUID NULL;
+ALTER TABLE order_items ADD CONSTRAINT fk_order_items_variant_option FOREIGN KEY (variant_option_id) REFERENCES menu_variant_options(id) ON DELETE SET NULL;
 ALTER TABLE order_items ADD COLUMN IF NOT EXISTS topping_option_ids UUID[] NULL;
 
 -- +goose StatementEnd
