@@ -408,6 +408,32 @@ func (s *service) Create(ctx context.Context, requesterID uuid.UUID, req CreateO
 		req.EstimatedCost = calculatedCost
 	}
 
+	// === Merchant Fee Audit (Opsi A: merchant bayar, bukan buyer) ===
+	var merchantFeeAudit float64
+	var merchantFeeTierAudit int
+	var foodOriginalAudit float64
+	if req.MerchantID != nil {
+		t1Limit, _ := strconv.ParseFloat(s.configSvc.GetValue(ctx, "merchant_fee_tier1_limit", "50000"), 64)
+		t2Limit, _ := strconv.ParseFloat(s.configSvc.GetValue(ctx, "merchant_fee_tier2_limit", "100000"), 64)
+		t1Amount, _ := strconv.ParseFloat(s.configSvc.GetValue(ctx, "merchant_fee_tier1_amount", "1000"), 64)
+		t2Amount, _ := strconv.ParseFloat(s.configSvc.GetValue(ctx, "merchant_fee_tier2_amount", "3000"), 64)
+		t3Amount, _ := strconv.ParseFloat(s.configSvc.GetValue(ctx, "merchant_fee_tier3_amount", "5000"), 64)
+		foodOriginalAudit = req.EstimatedCost
+		if foodOriginalAudit < t1Limit {
+			merchantFeeAudit = t1Amount
+			merchantFeeTierAudit = 1
+		} else if foodOriginalAudit <= t2Limit {
+			merchantFeeAudit = t2Amount
+			merchantFeeTierAudit = 2
+		} else {
+			merchantFeeAudit = t3Amount
+			merchantFeeTierAudit = 3
+		}
+		if merchantFeeAudit > foodOriginalAudit {
+			merchantFeeAudit = foodOriginalAudit
+		}
+	}
+
 	if req.ServiceCategory == CategoryBeli && req.EstimatedCost <= 0 {
 		return nil, errors.New("estimasi harga barang (estimated_cost) wajib diisi untuk kategori pembelian")
 	}
@@ -508,36 +534,39 @@ func (s *service) Create(ctx context.Context, requesterID uuid.UUID, req CreateO
 	}
 
 	order := &Order{
-		ID:              uuid.New(),
-		RequesterID:     requesterID,
-		ItemDetails:     req.ItemDetails,
-		ReceiverName:    receiverName,
-		ReceiverPhone:   receiverPhone,
-		PickupLat:       req.PickupLat,
-		PickupLng:       req.PickupLng,
-		PickupName:      req.PickupName,
-		PickupAddress:   req.PickupAddress,
-		DeliveryLat:     req.DeliveryLat,
-		DeliveryLng:     req.DeliveryLng,
-		DeliveryName:    req.DeliveryName,
-		DeliveryAddress: req.DeliveryAddress,
-		EstimatedCost:   req.EstimatedCost,
-		DeliveryFee:     deliveryFee,
-		PaymentMethod:   req.PaymentMethod,
-		PaymentSource:   paymentSource,
-		PaymentStatus:   PaymentUnpaid,
-		Status:          StatusPending,
-		WeightKg:        req.WeightKg,
-		VolumeLiters:    req.VolumeLiters,
-		ServiceFee:      serviceFee,
-		CheckingFee:     checkingFee,
-		OrderType:       orderType,
-		DistanceKm:      distance,
-		ServiceCategory: req.ServiceCategory,
-		CompletionCode:  completionCode,
-		MerchantID:      req.MerchantID,
-		CreatedAt:       now,
-		UpdatedAt:       now,
+		ID:                 uuid.New(),
+		RequesterID:        requesterID,
+		ItemDetails:        req.ItemDetails,
+		ReceiverName:       receiverName,
+		ReceiverPhone:      receiverPhone,
+		PickupLat:          req.PickupLat,
+		PickupLng:          req.PickupLng,
+		PickupName:         req.PickupName,
+		PickupAddress:      req.PickupAddress,
+		DeliveryLat:        req.DeliveryLat,
+		DeliveryLng:        req.DeliveryLng,
+		DeliveryName:       req.DeliveryName,
+		DeliveryAddress:    req.DeliveryAddress,
+		EstimatedCost:      req.EstimatedCost,
+		DeliveryFee:        deliveryFee,
+		PaymentMethod:      req.PaymentMethod,
+		PaymentSource:      paymentSource,
+		PaymentStatus:      PaymentUnpaid,
+		Status:             StatusPending,
+		WeightKg:           req.WeightKg,
+		VolumeLiters:       req.VolumeLiters,
+		ServiceFee:         serviceFee,
+		CheckingFee:        checkingFee,
+		OrderType:          orderType,
+		DistanceKm:         distance,
+		ServiceCategory:    req.ServiceCategory,
+		CompletionCode:     completionCode,
+		MerchantID:         req.MerchantID,
+		MerchantFee:        merchantFeeAudit,
+		MerchantFeeTier:    merchantFeeTierAudit,
+		FoodAmountOriginal: foodOriginalAudit,
+		CreatedAt:          now,
+		UpdatedAt:          now,
 	}
 
 	// Calculate Total Payment based on Category

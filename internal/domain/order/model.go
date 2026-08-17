@@ -69,6 +69,11 @@ type Order struct {
 	OriginalTotal  *float64   `bun:"original_total" json:"original_total,omitempty"`
 	DiscountType   *string    `bun:"discount_type" json:"discount_type,omitempty"`
 
+	// Merchant Fee Audit (Opsi A: merchant bayar, display tetap murni, audit level)
+	MerchantFee        float64 `bun:"merchant_fee,notnull,default:0" json:"merchant_fee"`
+	MerchantFeeTier    int     `bun:"merchant_fee_tier,notnull,default:0" json:"merchant_fee_tier"`
+	FoodAmountOriginal float64 `bun:"food_amount_original,notnull,default:0" json:"food_amount_original"`
+
 	// Virtual fields (populated dynamically, not stored in DB)
 	RunnerName      string         `bun:"-" json:"runner_name,omitempty"`
 	RunnerPhone     string         `bun:"-" json:"runner_phone,omitempty"`
