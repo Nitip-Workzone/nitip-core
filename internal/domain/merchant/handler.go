@@ -149,7 +149,13 @@ func (h *Handler) ListMenuPublic(c *fiber.Ctx) error {
 		return response.BadRequest(c, "ID merchant tidak valid")
 	}
 
-	menus, err := h.service.ListMenusByMerchantID(c.Context(), id, true)
+	withVariants := c.Query("with_variants", "true") == "true"
+	var menus []Menu
+	if withVariants {
+		menus, err = h.service.ListMenusByMerchantIDWithVariants(c.Context(), id, true)
+	} else {
+		menus, err = h.service.ListMenusByMerchantID(c.Context(), id, true)
+	}
 	if err != nil {
 		return response.InternalError(c, err.Error())
 	}
