@@ -316,7 +316,7 @@ func (s *service) FindNearestRunnersManual(ctx context.Context, lat, lng float64
 }
 
 func (s *service) DispatchOrder(ctx context.Context, orderID string, runners []user.User) error {
-	// Deduplicate per order-runner cooldown 5min to avoid spamming same runner for same order
+	// Deduplicate per order-runner cooldown 5min to avoid spamming same runner - SETNX atomic to prevent race 20 burst/device
 	cooldownKeyFmt := "fcm:cooldown:%s:%s"
 	collapseID := fmt.Sprintf("order_%s", orderID)
 
@@ -330,13 +330,13 @@ func (s *service) DispatchOrder(ctx context.Context, orderID string, runners []u
 			if r.FcmToken == nil || *r.FcmToken == "" {
 				continue
 			}
-			// Cooldown check
+			// Atomic cooldown SET NX EX 5m - prevents duplicate dispatch from concurrent orders
 			if s.redis != nil {
 				key := fmt.Sprintf(cooldownKeyFmt, r.ID.String(), orderID)
-				if exists, _ := s.redis.Client().Exists(ctx, key).Result(); exists > 0 {
-					continue
+				ok, _ := s.redis.Client().SetNX(ctx, key, 1, 5*time.Minute).Result()
+				if !ok {
+					continue // already dispatched this order to this runner
 				}
-				_ = s.redis.Client().Set(ctx, key, 1, 5*time.Minute).Err()
 			}
 			_ = s.fcmDispatcher.Enqueue(ctx, notification.Job{
 				UserID:     r.ID,
@@ -360,10 +360,10 @@ func (s *service) DispatchOrder(ctx context.Context, orderID string, runners []u
 		if r.FcmToken != nil && *r.FcmToken != "" {
 			if s.redis != nil {
 				key := fmt.Sprintf(cooldownKeyFmt, r.ID.String(), orderID)
-				if exists, _ := s.redis.Client().Exists(ctx, key).Result(); exists > 0 {
+				ok, _ := s.redis.Client().SetNX(ctx, key, 1, 5*time.Minute).Result()
+				if !ok {
 					continue
 				}
-				_ = s.redis.Client().Set(ctx, key, 1, 5*time.Minute).Err()
 			}
 			tokens = append(tokens, *r.FcmToken)
 		}
