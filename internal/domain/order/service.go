@@ -2979,11 +2979,6 @@ func (s *service) GetMerchantOrders(ctx context.Context, ownerID uuid.UUID) ([]O
 		return nil, err
 	}
 	var orders []Order
-	// FIX merchant hilang:
-	// - include merchant_accepted (waiting runner) — was orphan
-	// - completed was hidden because payment_status=released not escrow: allow released/refunded/unpaid/escrow + cod
-	// - merchant should see all payment_status for history, so whitelist all relevant payment_status
-	// - limit 100 to prevent OOM
 	err = s.db.NewSelect().
 		Model(&orders).
 		Where("merchant_id = ?", merch.ID).
@@ -2998,15 +2993,67 @@ func (s *service) GetMerchantOrders(ctx context.Context, ownerID uuid.UUID) ([]O
 			StatusCompleted,
 		})).
 		Where("payment_status IN (?) OR payment_method = ?", bun.List([]string{
-			PaymentEscrow,   // masih escrow (belum release)
-			PaymentReleased, // sudah selesai & dana release — ini yang bikin completed hilang sebelumnya
-			PaymentRefunded, // refunded tetap terlihat
-			PaymentUnpaid,   // QRIS unpaid biar merchant lihat
+			PaymentEscrow,
+			PaymentReleased,
+			PaymentRefunded,
+			PaymentUnpaid,
 		}), MethodCOD).
 		Order("created_at DESC").
 		Limit(100).
 		Scan(ctx)
-	return orders, err
+	if err != nil {
+		return nil, err
+	}
+	// Enrich with order_items detail (variant & tambahan) for merchant view
+	for i := range orders {
+		items, err := s.merchantSvc.ListOrderItemsByOrderID(ctx, orders[i].ID)
+		if err == nil && len(items) > 0 {
+			var dtos []OrderItemDTO
+			for _, it := range items {
+				dto := OrderItemDTO{
+					ID:              it.ID.String(),
+					MenuID:          it.MenuID.String(),
+					MenuName:        it.MenuName,
+					Quantity:        it.Quantity,
+					Notes:           it.Notes,
+					PriceAtPurchase: it.PriceAtPurchase,
+					Options:         it.Options,
+				}
+				if it.VariantOptionID != nil {
+					s := it.VariantOptionID.String()
+					dto.VariantOptionID = &s
+				}
+				if len(it.ToppingOptionIDs) > 0 {
+					for _, tid := range it.ToppingOptionIDs {
+						dto.ToppingOptionIDs = append(dto.ToppingOptionIDs, tid.String())
+					}
+				}
+				if it.Options != nil {
+					if v, ok := it.Options["variant_label"].(string); ok {
+						dto.VariantLabel = v
+					}
+					if tl, ok := it.Options["topping_labels"].([]interface{}); ok {
+						for _, t := range tl {
+							if str, ok := t.(string); ok {
+								dto.ToppingLabels = append(dto.ToppingLabels, str)
+							}
+						}
+					} else if tl2, ok := it.Options["topping_labels"].([]string); ok {
+						dto.ToppingLabels = tl2
+					}
+					if pd, ok := it.Options["price_delta"].(float64); ok {
+						dto.PriceDelta = pd
+					}
+					if img, ok := it.Options["image_url"].(string); ok {
+						dto.ImageURL = img
+					}
+				}
+				dtos = append(dtos, dto)
+			}
+			orders[i].Items = dtos
+		}
+	}
+	return orders, nil
 }
 
 func (s *service) MerchantAcceptOrder(ctx context.Context, orderID, ownerID uuid.UUID) error {

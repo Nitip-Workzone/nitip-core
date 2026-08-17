@@ -94,7 +94,7 @@ func (r *repository) FindActiveByMerchant(ctx context.Context, merchantID *uuid.
 			return sq
 		})
 	}
-	q = q.Order("p.auto_apply DESC, p.created_at ASC")
+	q = q.OrderExpr("p.auto_apply DESC, p.created_at ASC")
 	err := q.Scan(ctx)
 	return list, err
 }

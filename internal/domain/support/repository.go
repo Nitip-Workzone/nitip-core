@@ -297,7 +297,7 @@ func (r *repository) FindMessagesByTicketID(ctx context.Context, ticketID uuid.U
 		q = q.Where("created_at > ?", *afterTime)
 	}
 
-	q = q.Order("created_at ASC", "id ASC")
+	q = q.OrderExpr("created_at ASC, id ASC")
 	if limit > 0 {
 		q = q.Limit(limit)
 	} else {

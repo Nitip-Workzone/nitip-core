@@ -183,7 +183,7 @@ func (r *repository) GetActiveWithdrawalChannels(ctx context.Context, db bun.IDB
 	var channels []WithdrawalChannel
 	err := db.NewSelect().Model(&channels).
 		Where("is_active = ?", true).
-		Order("type ASC", "name ASC").
+		OrderExpr("type ASC, name ASC").
 		Scan(ctx)
 	return channels, err
 }

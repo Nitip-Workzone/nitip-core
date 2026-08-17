@@ -70,14 +70,31 @@ type Order struct {
 	DiscountType   *string    `bun:"discount_type" json:"discount_type,omitempty"`
 
 	// Virtual fields (populated dynamically, not stored in DB)
-	RunnerName      string   `bun:"-" json:"runner_name,omitempty"`
-	RunnerPhone     string   `bun:"-" json:"runner_phone,omitempty"`
-	RunnerLastLat   *float64 `bun:"-" json:"runner_last_lat,omitempty"`
-	RunnerLastLng   *float64 `bun:"-" json:"runner_last_lng,omitempty"`
-	FeedbackRating  *int     `bun:"-" json:"feedback_rating,omitempty"`
-	FeedbackComment string   `bun:"-" json:"feedback_comment,omitempty"`
-	QRISData        string   `bun:"qris_data,nullzero" json:"qris_data,omitempty"`
-	PromotionCode   string   `bun:"-" json:"promotion_code,omitempty"`
+	RunnerName      string         `bun:"-" json:"runner_name,omitempty"`
+	RunnerPhone     string         `bun:"-" json:"runner_phone,omitempty"`
+	RunnerLastLat   *float64       `bun:"-" json:"runner_last_lat,omitempty"`
+	RunnerLastLng   *float64       `bun:"-" json:"runner_last_lng,omitempty"`
+	FeedbackRating  *int           `bun:"-" json:"feedback_rating,omitempty"`
+	FeedbackComment string         `bun:"-" json:"feedback_comment,omitempty"`
+	QRISData        string         `bun:"qris_data,nullzero" json:"qris_data,omitempty"`
+	PromotionCode   string         `bun:"-" json:"promotion_code,omitempty"`
+	Items           []OrderItemDTO `bun:"-" json:"items,omitempty"`
+}
+
+type OrderItemDTO struct {
+	ID               string                 `json:"id"`
+	MenuID           string                 `json:"menu_id"`
+	MenuName         string                 `json:"menu_name,omitempty"`
+	Quantity         int                    `json:"quantity"`
+	Notes            string                 `json:"notes,omitempty"`
+	PriceAtPurchase  float64                `json:"price_at_purchase"`
+	VariantOptionID  *string                `json:"variant_option_id,omitempty"`
+	VariantLabel     string                 `json:"variant_label,omitempty"`
+	ToppingOptionIDs []string               `json:"topping_option_ids,omitempty"`
+	ToppingLabels    []string               `json:"topping_labels,omitempty"`
+	PriceDelta       float64                `json:"price_delta,omitempty"`
+	ImageURL         string                 `json:"image_url,omitempty"`
+	Options          map[string]interface{} `json:"options,omitempty"`
 }
 
 var (

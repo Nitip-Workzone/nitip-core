@@ -183,11 +183,11 @@ func (r *repository) GetMenuByID(ctx context.Context, id uuid.UUID) (*Menu, erro
 
 func (r *repository) ListMenusByMerchantID(ctx context.Context, merchantID uuid.UUID, onlyAvailable bool) ([]Menu, error) {
 	var menus []Menu
-	q := r.db.NewSelect().Model(&menus).Where("merchant_id = ?", merchantID)
+	q := r.db.NewSelect().Model(&menus).Where("mn.merchant_id = ?", merchantID)
 	if onlyAvailable {
-		q = q.Where("is_available = ?", true)
+		q = q.Where("mn.is_available = ?", true)
 	}
-	err := q.Order("name ASC").Scan(ctx)
+	err := q.Order("mn.name ASC").Scan(ctx)
 	return menus, err
 }
 
@@ -198,9 +198,10 @@ func (r *repository) DeleteMenu(ctx context.Context, id uuid.UUID) error {
 
 func (r *repository) ListMenusByMerchantIDWithVariants(ctx context.Context, merchantID uuid.UUID, onlyAvailable bool) ([]Menu, error) {
 	var menus []Menu
-	q := r.db.NewSelect().Model(&menus).Where("merchant_id = ?", merchantID)
+	// Fix ambiguous merchant_id: use mn.merchant_id explicit, because Category relation also has merchant_id column in join
+	q := r.db.NewSelect().Model(&menus).Where("mn.merchant_id = ?", merchantID)
 	if onlyAvailable {
-		q = q.Where("is_available = ?", true)
+		q = q.Where("mn.is_available = ?", true)
 	}
 	// Preload variant groups + options + topping groups + options
 	q = q.Relation("VariantGroups").Relation("VariantGroups.Options").Relation("ToppingGroups").Relation("ToppingGroups.Options").Relation("Category")
