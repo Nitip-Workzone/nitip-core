@@ -158,6 +158,33 @@ type OrderItem struct {
 	MenuImage string `bun:"-" json:"menu_image,omitempty"`
 }
 
+type AddonMaster struct {
+	bun.BaseModel `bun:"table:addon_masters,alias:am"`
+	ID            uuid.UUID `bun:"id,pk,type:uuid" json:"id"`
+	MerchantID    uuid.UUID `bun:"merchant_id,type:uuid,notnull" json:"merchant_id"`
+	Name          string    `bun:"name,notnull" json:"name"`
+	ImageURL      string    `bun:"image_url" json:"image_url,omitempty"`
+	SortOrder     int       `bun:"sort_order,notnull,default:0" json:"sort_order"`
+	IsActive      bool      `bun:"is_active,notnull,default:true" json:"is_active"`
+	CreatedAt     time.Time `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"created_at"`
+	UpdatedAt     time.Time `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updated_at"`
+
+	Options []AddonOption `bun:"rel:has-many,join:id=master_id" json:"options,omitempty"`
+}
+
+type AddonOption struct {
+	bun.BaseModel `bun:"table:addon_options,alias:ao"`
+	ID            uuid.UUID `bun:"id,pk,type:uuid" json:"id"`
+	MasterID      uuid.UUID `bun:"master_id,type:uuid,notnull" json:"master_id"`
+	Label         string    `bun:"label,notnull" json:"label"`
+	PriceDelta    float64   `bun:"price_delta,notnull,default:0" json:"price_delta"`
+	ImageURL      string    `bun:"image_url" json:"image_url,omitempty"`
+	IsAvailable   bool      `bun:"is_available,notnull,default:true" json:"is_available"`
+	SortOrder     int       `bun:"sort_order,notnull,default:0" json:"sort_order"`
+	CreatedAt     time.Time `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"created_at"`
+	UpdatedAt     time.Time `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updated_at"`
+}
+
 type MerchantSurvey struct {
 	bun.BaseModel `bun:"table:merchant_surveys,alias:ms"`
 

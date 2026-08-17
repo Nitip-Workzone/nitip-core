@@ -58,6 +58,17 @@ type Repository interface {
 	ListAllImagesByMerchantID(ctx context.Context, merchantID uuid.UUID) ([]string, error)
 	ListImagesByMenuID(ctx context.Context, menuID uuid.UUID) ([]string, error)
 
+	// Addon Masters (Tambahan - independent shared per merchant, bahasa Indonesia lebih cocok daripada Topping)
+	CreateAddonMaster(ctx context.Context, m *AddonMaster) error
+	UpdateAddonMaster(ctx context.Context, m *AddonMaster) error
+	DeleteAddonMaster(ctx context.Context, id uuid.UUID) error
+	GetAddonMasterByID(ctx context.Context, id uuid.UUID) (*AddonMaster, error)
+	ListAddonMastersByMerchantID(ctx context.Context, merchantID uuid.UUID) ([]AddonMaster, error)
+	CreateAddonOption(ctx context.Context, o *AddonOption) error
+	UpdateAddonOption(ctx context.Context, o *AddonOption) error
+	DeleteAddonOption(ctx context.Context, id uuid.UUID) error
+	ListAddonOptionsByMasterID(ctx context.Context, masterID uuid.UUID) ([]AddonOption, error)
+
 	// OrderItem
 	CreateOrderItems(ctx context.Context, items []OrderItem) error
 	ListOrderItemsByOrderID(ctx context.Context, orderID uuid.UUID) ([]OrderItem, error)
@@ -335,6 +346,19 @@ func (r *repository) ListAllImagesByMerchantID(ctx context.Context, merchantID u
 			}
 		}
 	}
+	// addon masters (Tambahan)
+	var addons []AddonMaster
+	_ = r.db.NewSelect().Model(&addons).Where("merchant_id = ?", merchantID).Relation("Options").Scan(ctx)
+	for _, am := range addons {
+		if am.ImageURL != "" {
+			urls = append(urls, am.ImageURL)
+		}
+		for _, ao := range am.Options {
+			if ao.ImageURL != "" {
+				urls = append(urls, ao.ImageURL)
+			}
+		}
+	}
 	// merchant logo/cover
 	var merch Merchant
 	if err := r.db.NewSelect().Model(&merch).Where("id = ?", merchantID).Scan(ctx); err == nil {
@@ -380,6 +404,50 @@ func (r *repository) ListImagesByMenuID(ctx context.Context, menuID uuid.UUID) (
 		}
 	}
 	return urls, nil
+}
+
+// Addon Masters (Tambahan)
+func (r *repository) CreateAddonMaster(ctx context.Context, m *AddonMaster) error {
+	_, err := r.db.NewInsert().Model(m).Exec(ctx)
+	return err
+}
+func (r *repository) UpdateAddonMaster(ctx context.Context, m *AddonMaster) error {
+	_, err := r.db.NewUpdate().Model(m).WherePK().Exec(ctx)
+	return err
+}
+func (r *repository) DeleteAddonMaster(ctx context.Context, id uuid.UUID) error {
+	_, err := r.db.NewDelete().Model((*AddonMaster)(nil)).Where("id = ?", id).Exec(ctx)
+	return err
+}
+func (r *repository) GetAddonMasterByID(ctx context.Context, id uuid.UUID) (*AddonMaster, error) {
+	m := new(AddonMaster)
+	err := r.db.NewSelect().Model(m).Where("id = ?", id).Relation("Options").Scan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+func (r *repository) ListAddonMastersByMerchantID(ctx context.Context, merchantID uuid.UUID) ([]AddonMaster, error) {
+	var list []AddonMaster
+	err := r.db.NewSelect().Model(&list).Where("merchant_id = ?", merchantID).Relation("Options").Order("sort_order ASC, name ASC").Scan(ctx)
+	return list, err
+}
+func (r *repository) CreateAddonOption(ctx context.Context, o *AddonOption) error {
+	_, err := r.db.NewInsert().Model(o).Exec(ctx)
+	return err
+}
+func (r *repository) UpdateAddonOption(ctx context.Context, o *AddonOption) error {
+	_, err := r.db.NewUpdate().Model(o).WherePK().Exec(ctx)
+	return err
+}
+func (r *repository) DeleteAddonOption(ctx context.Context, id uuid.UUID) error {
+	_, err := r.db.NewDelete().Model((*AddonOption)(nil)).Where("id = ?", id).Exec(ctx)
+	return err
+}
+func (r *repository) ListAddonOptionsByMasterID(ctx context.Context, masterID uuid.UUID) ([]AddonOption, error) {
+	var list []AddonOption
+	err := r.db.NewSelect().Model(&list).Where("master_id = ?", masterID).Order("sort_order ASC").Scan(ctx)
+	return list, err
 }
 
 // OrderItem Implementation

@@ -90,7 +90,7 @@ type Service interface {
 	UpdateVariantOption(ctx context.Context, id uuid.UUID, label string, priceDelta float64, imageURL string, isDefault bool, isAvailable bool, sortOrder int) (*MenuVariantOption, error)
 	DeleteVariantOption(ctx context.Context, id uuid.UUID) error
 
-	// Topping
+	// Topping (per-menu, tetap support untuk backward compat, istilah baru: Tambahan per menu)
 	CreateToppingGroup(ctx context.Context, menuID uuid.UUID, variantOptionID *uuid.UUID, name, gtype string, isRequired bool, minSelect int, maxSelect *int, sortOrder int) (*MenuToppingGroup, error)
 	UpdateToppingGroup(ctx context.Context, id uuid.UUID, name, gtype string, isRequired bool, minSelect int, maxSelect *int, sortOrder int) (*MenuToppingGroup, error)
 	DeleteToppingGroup(ctx context.Context, id uuid.UUID) error
@@ -98,6 +98,16 @@ type Service interface {
 	CreateToppingOption(ctx context.Context, groupID uuid.UUID, label string, priceDelta float64, imageURL string, isAvailable bool, sortOrder int) (*MenuToppingOption, error)
 	UpdateToppingOption(ctx context.Context, id uuid.UUID, label string, priceDelta float64, imageURL string, isAvailable bool, sortOrder int) (*MenuToppingOption, error)
 	DeleteToppingOption(ctx context.Context, id uuid.UUID) error
+
+	// Addon Master (Tambahan - independent shared, istilah Indonesia yang lebih cocok daripada Topping)
+	CreateAddonMaster(ctx context.Context, merchantID uuid.UUID, name, imageURL string, sortOrder int) (*AddonMaster, error)
+	UpdateAddonMaster(ctx context.Context, id uuid.UUID, name, imageURL string, sortOrder int, isActive bool) (*AddonMaster, error)
+	DeleteAddonMaster(ctx context.Context, id uuid.UUID) error
+	ListAddonMastersByMerchantID(ctx context.Context, merchantID uuid.UUID) ([]AddonMaster, error)
+	GetAddonMasterByID(ctx context.Context, id uuid.UUID) (*AddonMaster, error)
+	CreateAddonOption(ctx context.Context, masterID uuid.UUID, label string, priceDelta float64, imageURL string, isAvailable bool, sortOrder int) (*AddonOption, error)
+	UpdateAddonOption(ctx context.Context, id uuid.UUID, label string, priceDelta float64, imageURL string, isAvailable bool, sortOrder int) (*AddonOption, error)
+	DeleteAddonOption(ctx context.Context, id uuid.UUID) error
 
 	// OrderItem
 	CreateOrderItems(ctx context.Context, items []OrderItem) error
@@ -789,4 +799,124 @@ func (s *service) CreateSurvey(ctx context.Context, merchantID uuid.UUID, monthl
 		return nil, err
 	}
 	return survey, nil
+}
+
+// ===== Addon Masters (Tambahan - independent shared) =====
+func (s *service) CreateAddonMaster(ctx context.Context, merchantID uuid.UUID, name, imageURL string, sortOrder int) (*AddonMaster, error) {
+	m := &AddonMaster{
+		ID:         uuid.New(),
+		MerchantID: merchantID,
+		Name:       name,
+		ImageURL:   sanitizeStorageKey(imageURL),
+		SortOrder:  sortOrder,
+		IsActive:   true,
+		CreatedAt:  time.Now(),
+		UpdatedAt:  time.Now(),
+	}
+	if err := s.repo.CreateAddonMaster(ctx, m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+func (s *service) UpdateAddonMaster(ctx context.Context, id uuid.UUID, name, imageURL string, sortOrder int, isActive bool) (*AddonMaster, error) {
+	m, err := s.repo.GetAddonMasterByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	oldImg := m.ImageURL
+	m.Name = name
+	if imageURL != "" {
+		m.ImageURL = sanitizeStorageKey(imageURL)
+	}
+	m.SortOrder = sortOrder
+	m.IsActive = isActive
+	m.UpdatedAt = time.Now()
+	if err := s.repo.UpdateAddonMaster(ctx, m); err != nil {
+		return nil, err
+	}
+	if oldImg != "" && oldImg != m.ImageURL {
+		_ = s.storage.Delete(ctx, sanitizeStorageKey(oldImg))
+	}
+	return m, nil
+}
+func (s *service) DeleteAddonMaster(ctx context.Context, id uuid.UUID) error {
+	// collect images before delete
+	m, _ := s.repo.GetAddonMasterByID(ctx, id)
+	if err := s.repo.DeleteAddonMaster(ctx, id); err != nil {
+		return err
+	}
+	if m != nil {
+		if m.ImageURL != "" {
+			_ = s.storage.Delete(ctx, sanitizeStorageKey(m.ImageURL))
+		}
+		for _, o := range m.Options {
+			if o.ImageURL != "" {
+				_ = s.storage.Delete(ctx, sanitizeStorageKey(o.ImageURL))
+			}
+		}
+	}
+	return nil
+}
+func (s *service) ListAddonMastersByMerchantID(ctx context.Context, merchantID uuid.UUID) ([]AddonMaster, error) {
+	list, err := s.repo.ListAddonMastersByMerchantID(ctx, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	// sign urls
+	for i := range list {
+		s.signAddonMasterImages(ctx, &list[i])
+	}
+	return list, nil
+}
+func (s *service) GetAddonMasterByID(ctx context.Context, id uuid.UUID) (*AddonMaster, error) {
+	m, err := s.repo.GetAddonMasterByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	s.signAddonMasterImages(ctx, m)
+	return m, nil
+}
+func (s *service) CreateAddonOption(ctx context.Context, masterID uuid.UUID, label string, priceDelta float64, imageURL string, isAvailable bool, sortOrder int) (*AddonOption, error) {
+	o := &AddonOption{
+		ID:          uuid.New(),
+		MasterID:    masterID,
+		Label:       label,
+		PriceDelta:  priceDelta,
+		ImageURL:    sanitizeStorageKey(imageURL),
+		IsAvailable: isAvailable,
+		SortOrder:   sortOrder,
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
+	}
+	if err := s.repo.CreateAddonOption(ctx, o); err != nil {
+		return nil, err
+	}
+	return o, nil
+}
+func (s *service) UpdateAddonOption(ctx context.Context, id uuid.UUID, label string, priceDelta float64, imageURL string, isAvailable bool, sortOrder int) (*AddonOption, error) {
+	o := &AddonOption{ID: id, Label: label, PriceDelta: priceDelta, ImageURL: sanitizeStorageKey(imageURL), IsAvailable: isAvailable, SortOrder: sortOrder, UpdatedAt: time.Now()}
+	if err := s.repo.UpdateAddonOption(ctx, o); err != nil {
+		return nil, err
+	}
+	return o, nil
+}
+func (s *service) DeleteAddonOption(ctx context.Context, id uuid.UUID) error {
+	return s.repo.DeleteAddonOption(ctx, id)
+}
+func (s *service) signAddonMasterImages(ctx context.Context, m *AddonMaster) {
+	if m == nil {
+		return
+	}
+	if m.ImageURL != "" && (len(m.ImageURL) <= 4 || m.ImageURL[:4] != "http") {
+		if signed, err := s.storage.SignedURL(ctx, m.ImageURL, 1*time.Hour); err == nil {
+			m.ImageURL = signed
+		}
+	}
+	for i := range m.Options {
+		if m.Options[i].ImageURL != "" && (len(m.Options[i].ImageURL) <= 4 || m.Options[i].ImageURL[:4] != "http") {
+			if signed, err := s.storage.SignedURL(ctx, m.Options[i].ImageURL, 1*time.Hour); err == nil {
+				m.Options[i].ImageURL = signed
+			}
+		}
+	}
 }

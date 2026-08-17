@@ -70,7 +70,7 @@ func (h *Handler) RegisterRoutes(router fiber.Router) {
 	owner.Put("/menu/variants/options/:id", h.UpdateVariantOption)
 	owner.Delete("/menu/variants/options/:id", h.DeleteVariantOption)
 
-	// Topping groups & options with image_url (topping foto 400x400)
+	// Topping groups & options with image_url (topping foto 400x400) - alias lama, tetap support, istilah baru Tambahan
 	owner.Get("/menu/:id/toppings", h.ListToppingGroups)
 	owner.Post("/menu/:id/toppings", h.CreateToppingGroup)
 	owner.Put("/menu/toppings/:id", h.UpdateToppingGroup)
@@ -78,6 +78,34 @@ func (h *Handler) RegisterRoutes(router fiber.Router) {
 	owner.Post("/menu/toppings/:id/options", h.CreateToppingOption)
 	owner.Put("/menu/toppings/options/:id", h.UpdateToppingOption)
 	owner.Delete("/menu/toppings/options/:id", h.DeleteToppingOption)
+	// Alias baru bahasa Indonesia: Tambahan per-menu
+	owner.Get("/menu/:id/addons", h.ListToppingGroups)
+	owner.Post("/menu/:id/addons", h.CreateToppingGroup)
+	owner.Put("/menu/addons/:id", h.UpdateToppingGroup)
+	owner.Delete("/menu/addons/:id", h.DeleteToppingGroup)
+	owner.Post("/menu/addons/:id/options", h.CreateToppingOption)
+	owner.Put("/menu/addons/options/:id", h.UpdateToppingOption)
+	owner.Delete("/menu/addons/options/:id", h.DeleteToppingOption)
+
+	// Addon Masters (Tambahan) - independent shared per merchant, istilah Indonesia lebih cocok daripada Topping
+	// Endpoint baru v2: /merchant/addons, backward compat: /merchant/toppings (yang sebelumnya 404)
+	owner.Get("/addons", h.ListAddonMasters)
+	owner.Post("/addons", h.CreateAddonMaster)
+	owner.Get("/addons/:id", h.GetAddonMaster)
+	owner.Put("/addons/:id", h.UpdateAddonMaster)
+	owner.Delete("/addons/:id", h.DeleteAddonMaster)
+	owner.Post("/addons/:id/options", h.CreateAddonOption)
+	owner.Put("/addons/options/:id", h.UpdateAddonOption)
+	owner.Delete("/addons/options/:id", h.DeleteAddonOption)
+	// Backward compat alias for frontend lama yang call /merchant/toppings
+	owner.Get("/toppings", h.ListAddonMasters)
+	owner.Post("/toppings", h.CreateAddonMaster)
+	owner.Get("/toppings/:id", h.GetAddonMaster)
+	owner.Put("/toppings/:id", h.UpdateAddonMaster)
+	owner.Delete("/toppings/:id", h.DeleteAddonMaster)
+	owner.Post("/toppings/:id/options", h.CreateAddonOption)
+	owner.Put("/toppings/options/:id", h.UpdateAddonOption)
+	owner.Delete("/toppings/options/:id", h.DeleteAddonOption)
 
 	// Admin routes
 	admin := router.Group("/admin/merchants", middleware.Protected(h.db, h.redis), middleware.Role(user.RoleAdmin))
@@ -940,4 +968,183 @@ func (h *Handler) ToggleMenuAvailability(c *fiber.Ctx) error {
 	}
 
 	return response.Success(c, "status ketersediaan menu berhasil diperbarui", menu)
+}
+
+// ===== Addon Masters (Tambahan) - istilah Indonesia lebih cocok daripada Topping =====
+type addonMasterRequest struct {
+	Name      string                  `json:"name" validate:"required"`
+	ImageURL  string                  `json:"image_url"`
+	SortOrder int                     `json:"sort_order"`
+	IsActive  *bool                   `json:"is_active"`
+	Options   []addonOptionReqWrapper `json:"options"` // untuk create sekaligus dengan opsi
+}
+type addonOptionReqWrapper struct {
+	Label       string  `json:"label" validate:"required"`
+	PriceDelta  float64 `json:"price_delta"`
+	ImageURL    string  `json:"image_url"`
+	IsAvailable *bool   `json:"is_available"`
+	SortOrder   int     `json:"sort_order"`
+}
+type addonOptionRequest struct {
+	Label       string  `json:"label" validate:"required"`
+	PriceDelta  float64 `json:"price_delta"`
+	ImageURL    string  `json:"image_url"`
+	IsAvailable *bool   `json:"is_available"`
+	SortOrder   int     `json:"sort_order"`
+}
+
+func (h *Handler) getMerchantIDFromOwner(c *fiber.Ctx) (uuid.UUID, error) {
+	claims := jwt.GetClaims(c)
+	if claims == nil {
+		return uuid.Nil, fiber.NewError(fiber.StatusUnauthorized, "sesi tidak valid")
+	}
+	m, err := h.service.GetMerchantByOwnerID(c.Context(), claims.UserID)
+	if err != nil {
+		return uuid.Nil, fiber.NewError(fiber.StatusNotFound, "profil merchant tidak ditemukan")
+	}
+	return m.ID, nil
+}
+
+func (h *Handler) ListAddonMasters(c *fiber.Ctx) error {
+	merchantID, err := h.getMerchantIDFromOwner(c)
+	if err != nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
+	list, err := h.service.ListAddonMastersByMerchantID(c.Context(), merchantID)
+	if err != nil {
+		return response.InternalError(c, err.Error())
+	}
+	return response.Success(c, "daftar tambahan berhasil diambil", list)
+}
+
+func (h *Handler) GetAddonMaster(c *fiber.Ctx) error {
+	idStr := c.Params("id")
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		return response.BadRequest(c, "ID tambahan tidak valid")
+	}
+	m, err := h.service.GetAddonMasterByID(c.Context(), id)
+	if err != nil {
+		return response.NotFound(c, err.Error())
+	}
+	return response.Success(c, "detail tambahan berhasil diambil", m)
+}
+
+func (h *Handler) CreateAddonMaster(c *fiber.Ctx) error {
+	merchantID, err := h.getMerchantIDFromOwner(c)
+	if err != nil {
+		return response.Unauthorized(c, "sesi tidak valid")
+	}
+	var req addonMasterRequest
+	if err := c.BodyParser(&req); err != nil {
+		return response.BadRequest(c, "format permintaan tidak valid")
+	}
+	if errs := validator.Validate(req); errs != nil {
+		return response.ValidationFailed(c, errs)
+	}
+	master, err := h.service.CreateAddonMaster(c.Context(), merchantID, req.Name, req.ImageURL, req.SortOrder)
+	if err != nil {
+		return response.InternalError(c, err.Error())
+	}
+	// create options if any (Keju, Bobba, Eskrim etc)
+	for i, opt := range req.Options {
+		isAvail := true
+		if opt.IsAvailable != nil {
+			isAvail = *opt.IsAvailable
+		}
+		_, _ = h.service.CreateAddonOption(c.Context(), master.ID, opt.Label, opt.PriceDelta, opt.ImageURL, isAvail, opt.SortOrder+i)
+	}
+	// reload with options
+	master, _ = h.service.GetAddonMasterByID(c.Context(), master.ID)
+	return response.Success(c, "tambahan berhasil ditambahkan", master)
+}
+
+func (h *Handler) UpdateAddonMaster(c *fiber.Ctx) error {
+	idStr := c.Params("id")
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		return response.BadRequest(c, "ID tambahan tidak valid")
+	}
+	var req addonMasterRequest
+	if err := c.BodyParser(&req); err != nil {
+		return response.BadRequest(c, "format permintaan tidak valid")
+	}
+	isActive := true
+	if req.IsActive != nil {
+		isActive = *req.IsActive
+	}
+	master, err := h.service.UpdateAddonMaster(c.Context(), id, req.Name, req.ImageURL, req.SortOrder, isActive)
+	if err != nil {
+		return response.InternalError(c, err.Error())
+	}
+	return response.Success(c, "tambahan berhasil diperbarui", master)
+}
+
+func (h *Handler) DeleteAddonMaster(c *fiber.Ctx) error {
+	idStr := c.Params("id")
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		return response.BadRequest(c, "ID tambahan tidak valid")
+	}
+	if err := h.service.DeleteAddonMaster(c.Context(), id); err != nil {
+		return response.InternalError(c, err.Error())
+	}
+	return response.Success(c, "tambahan berhasil dihapus beserta semua gambar COS", nil)
+}
+
+func (h *Handler) CreateAddonOption(c *fiber.Ctx) error {
+	idStr := c.Params("id")
+	masterID, err := uuid.Parse(idStr)
+	if err != nil {
+		return response.BadRequest(c, "ID tambahan tidak valid")
+	}
+	var req addonOptionRequest
+	if err := c.BodyParser(&req); err != nil {
+		return response.BadRequest(c, "format tidak valid")
+	}
+	if errs := validator.Validate(req); errs != nil {
+		return response.ValidationFailed(c, errs)
+	}
+	isAvail := true
+	if req.IsAvailable != nil {
+		isAvail = *req.IsAvailable
+	}
+	o, err := h.service.CreateAddonOption(c.Context(), masterID, req.Label, req.PriceDelta, req.ImageURL, isAvail, req.SortOrder)
+	if err != nil {
+		return response.InternalError(c, err.Error())
+	}
+	return response.Success(c, "opsi tambahan berhasil ditambahkan", o)
+}
+
+func (h *Handler) UpdateAddonOption(c *fiber.Ctx) error {
+	idStr := c.Params("id")
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		return response.BadRequest(c, "ID opsi tambahan tidak valid")
+	}
+	var req addonOptionRequest
+	if err := c.BodyParser(&req); err != nil {
+		return response.BadRequest(c, "format tidak valid")
+	}
+	isAvail := true
+	if req.IsAvailable != nil {
+		isAvail = *req.IsAvailable
+	}
+	o, err := h.service.UpdateAddonOption(c.Context(), id, req.Label, req.PriceDelta, req.ImageURL, isAvail, req.SortOrder)
+	if err != nil {
+		return response.InternalError(c, err.Error())
+	}
+	return response.Success(c, "opsi tambahan berhasil diperbarui", o)
+}
+
+func (h *Handler) DeleteAddonOption(c *fiber.Ctx) error {
+	idStr := c.Params("id")
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		return response.BadRequest(c, "ID opsi tambahan tidak valid")
+	}
+	if err := h.service.DeleteAddonOption(c.Context(), id); err != nil {
+		return response.InternalError(c, err.Error())
+	}
+	return response.Success(c, "opsi tambahan berhasil dihapus", nil)
 }
