@@ -147,19 +147,18 @@ func (s *service) DeleteBanner(ctx context.Context, id uuid.UUID) error {
 }
 
 func (s *service) UploadImage(ctx context.Context, filename string, content io.Reader, size int64, contentType string) (string, error) {
-	// Cache-busting: tiap upload unik agar CDN https://upload.nihtip.com/ tidak cache lama saat update image
 	// Compress <1MB with bounded concurrency to prevent VPS OOM (Lighthouse 2C4G app 512MB)
 	compressed, compSize, err := fileutil.CompressToLimit(content, 1920, fileutil.DefaultMaxUpload)
 	if err != nil {
 		return "", fmt.Errorf("banner image compress failed: %w", err)
 	}
-	// Ensure size <1MB
 	if compSize > fileutil.DefaultMaxUpload {
 		return "", fmt.Errorf("banner image still >1MB after compress (%dKB), coba foto lebih kecil", compSize/1024)
 	}
-	objectKey := "banners/" + uuid.New().String() + "_" + fmt.Sprintf("%d", time.Now().UnixNano()) + "_" + filename
-	if !strings.HasSuffix(strings.ToLower(filename), ".jpg") && !strings.HasSuffix(strings.ToLower(filename), ".jpeg") {
-		objectKey = objectKey + ".jpg"
-	}
+	// Penamaan clean tanpa nama aneh: banners/<uuid>_<nano>.jpg (tanpa filename asli berantakan)
+	// Sebelumnya pakai filename asli ChatGPT%20Image%20... menyebabkan 403 SignatureDoesNotMatch
+	// Penamaan clean tanpa nama aneh — hanya uuid_nano.jpg tanpa filename asli berantakan
+	// Sebelumnya ChatGPT%20Image%20... menyebabkan 403 SignatureDoesNotMatch + gagal load di localhost
+	objectKey := "banners/" + uuid.New().String() + "_" + fmt.Sprintf("%d", time.Now().UnixNano()) + ".jpg"
 	return s.storage.Upload(ctx, objectKey, compressed, compSize, "image/jpeg")
 }

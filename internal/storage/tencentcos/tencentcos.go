@@ -132,25 +132,27 @@ func (s *CosStorage) SignedURL(ctx context.Context, objectKey string, expire tim
 		return "", fmt.Errorf("generate signed URL on cos: %w", err)
 	}
 
-	// CDN cache optimization: jika COS_CDN_BASE_URL diset, rewrite signed URL ke CDN domain
+	// CDN cache optimization: jika COS_CDN_BASE_URL / ASSET_BASE_URL diset, rewrite signed URL ke CDN domain https://upload.nihtip.com/
 	// Flow: client -> CDN edge (cache 30d, X-Cache: HIT) -> origin COS hanya 1x per file
 	// Contoh: https://nihtip-user-upload-xxx.cos.ap-singapore.myqcloud.com/merchants/a.jpg?sign=xxx
-	//      => https://cdn.nihtip.com/merchants/a.jpg?sign=xxx  (CDN akan forward sign ke origin & cache hasil)
+	//      => https://upload.nihtip.com/merchants/a.jpg?sign=xxx  (CDN akan forward sign ke origin & cache hasil)
 	// Hemat: 1000 user buka list 15 merchant = 1x MISS + 999x HIT = 99.9% hemat GET + traffic
+	// Fix bug: sebelumnya u.Path di-overwrite dengan raw key (mengandung spasi/koma) tanpa URL-encode → signature mismatch 403
+	// Sekarang pakai presignedURL.Path yang sudah encoded dengan benar oleh cos-go-sdk, hanya ganti host
 	if s.cdnBaseURL != "" {
 		cdnBase := strings.TrimSuffix(s.cdnBaseURL, "/")
-		// Replace bucket host dengan CDN host, keep path + query (signature)
-		// presignedURL.String() = https://bucket.cos.region.myqcloud.com/key?sign...
-		// kita ganti host-nya saja
-		u := presignedURL
 		if cdnURL, parseErr := url.Parse(cdnBase); parseErr == nil {
+			// Preserve encoded path from presigned URL (sudah % encoded oleh SDK), jangan reconstruct dari raw key
+			u := presignedURL
 			u.Scheme = cdnURL.Scheme
 			u.Host = cdnURL.Host
-			u.Path = cdnURL.Path + "/" + key
-			// jika cdnURL.Path kosong (hanya domain), tetap /key
-			if cdnURL.Path == "" || cdnURL.Path == "/" {
-				u.Path = "/" + key
+			// Jika cdnBase punya path prefix (e.g. https://cdn.example.com/prefix), prepend prefix + keep original encoded path
+			if cdnURL.Path != "" && cdnURL.Path != "/" {
+				// presignedURL.Path sudah /<key encoded>, jadi gabung: /prefix + /<key>
+				prefix := strings.TrimSuffix(cdnURL.Path, "/")
+				u.Path = prefix + presignedURL.Path
 			}
+			// else keep presignedURL.Path as-is (sudah encoded)
 			return u.String(), nil
 		}
 	}

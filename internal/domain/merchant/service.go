@@ -22,11 +22,6 @@ func compressWithFileUtil(r io.Reader) (io.Reader, error) {
 var _ = bytes.NewReader
 var _ = compressWithFileUtil
 
-func isJpegFilename(name string) bool {
-	lower := strings.ToLower(name)
-	return strings.HasSuffix(lower, ".jpg") || strings.HasSuffix(lower, ".jpeg")
-}
-
 func sanitizeStorageKey(urlStr string) string {
 	if urlStr == "" {
 		return ""
@@ -859,11 +854,9 @@ func (s *service) UploadMenuImage(ctx context.Context, filename string, content 
 		return "", fmt.Errorf("gambar menu masih >1MB (%dKB), coba foto lebih kecil", compSize/1024)
 	}
 
-	// Cache-busting: uuid + nano agar CDN https://upload.nihtip.com/ tidak serve file lama saat re-upload nama sama
-	objectKey := "menus/" + uuid.New().String() + "_" + fmt.Sprintf("%d", time.Now().UnixNano()) + "_" + filename
-	if !isJpegFilename(filename) {
-		objectKey = objectKey + ".jpg"
-	}
+	// Penamaan clean tanpa nama aneh — hanya uuid_nano.jpg (tanpa filename asli berantakan seperti banner sebelumnya)
+	// Sebelumnya pakai filename asli menyebabkan 403 SignatureDoesNotMatch kalau ada spasi/koma
+	objectKey := "menus/" + uuid.New().String() + "_" + fmt.Sprintf("%d", time.Now().UnixNano()) + ".jpg"
 	return s.storage.Upload(ctx, objectKey, compressed, compSize, "image/jpeg")
 }
 

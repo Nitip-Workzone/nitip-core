@@ -180,12 +180,8 @@ func (s *service) UploadImage(ctx context.Context, orderID, userID uuid.UUID, fi
 		return "", fmt.Errorf("gambar chat masih >1MB (%dKB), coba foto lebih kecil", compSize/1024)
 	}
 
-	// Cache-busting: unik per upload agar CDN https://upload.nihtip.com/ tidak serve file lama saat re-upload nama sama
-	safeFilename := filename
-	if safeFilename == "" {
-		safeFilename = "image.jpg"
-	}
-	objectKey := fmt.Sprintf("chat/%s/%s_%d_%s", orderID.String(), uuid.New().String()[:8], time.Now().UnixNano(), safeFilename)
+	// Penamaan clean tanpa nama aneh — chat/<orderID>/<uuid8>_<nano>.jpg (tanpa filename asli)
+	objectKey := fmt.Sprintf("chat/%s/%s_%d.jpg", orderID.String(), uuid.New().String()[:8], time.Now().UnixNano())
 	path, err := s.storage.Upload(ctx, objectKey, compressed, compSize, "image/jpeg")
 	if err != nil {
 		return "", err
