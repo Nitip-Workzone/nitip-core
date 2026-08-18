@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/joho/godotenv"
 )
@@ -67,6 +68,8 @@ type Config struct {
 	CosBucket           string
 	CosBaseURL          string
 	CosSignExpire       string
+	CosCDNBaseURL       string // CDN domain e.g. https://cdn.nihtip.com - jika diisi, image URL pakai CDN (hemat traffic COS)
+	AssetBaseURL        string // Final base URL untuk read image e.g. https://upload.nihtip.com/ — configurable, default https://upload.nihtip.com/
 }
 
 var App *Config
@@ -140,6 +143,24 @@ func Load() *Config {
 		CosBucket:           getEnv("COS_BUCKET", ""),
 		CosBaseURL:          getEnv("COS_BASE_URL", ""),
 		CosSignExpire:       getEnv("COS_SIGN_EXPIRE", "5m"),
+		CosCDNBaseURL:       getEnv("COS_CDN_BASE_URL", ""), // legacy alias untuk CDN
+		AssetBaseURL: getEnv("ASSET_BASE_URL", func() string {
+			// fallback chain: ASSET_BASE_URL > COS_CDN_BASE_URL > COS_BASE_URL > default https://upload.nihtip.com/
+			if v := os.Getenv("ASSET_BASE_URL"); v != "" {
+				return v
+			}
+			if v := os.Getenv("COS_CDN_BASE_URL"); v != "" {
+				return v
+			}
+			if v := os.Getenv("COS_BASE_URL"); v != "" {
+				// jika COS_BASE_URL adalah myqcloud endpoint, jangan pakai sebagai asset base — pakai default
+				if strings.Contains(v, "myqcloud.com") {
+					return "https://upload.nihtip.com/"
+				}
+				return v
+			}
+			return "https://upload.nihtip.com/"
+		}()),
 	}
 
 	App = cfg

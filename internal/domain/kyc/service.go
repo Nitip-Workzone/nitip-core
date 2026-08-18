@@ -122,7 +122,8 @@ func (s *service) Submit(ctx context.Context, userID uuid.UUID, req SubmitKycReq
 				idCardContentType = "image/jpeg"
 			}
 		}
-		idCardKey := fmt.Sprintf("kyc/%s/id_card.jpg", userID.String())
+		// Cache-busting: tiap re-upload nama unik baru agar CDN https://upload.nihtip.com/ tidak cache file lama
+		idCardKey := fmt.Sprintf("kyc/%s/id_card_%s_%d.jpg", userID.String(), uuid.New().String()[:8], time.Now().UnixNano())
 		idCardPath, err = s.storage.Upload(ctx, idCardKey, &idCardBuf, idCardSize, idCardContentType)
 		if err != nil {
 			return nil, err
@@ -140,7 +141,7 @@ func (s *service) Submit(ctx context.Context, userID uuid.UUID, req SubmitKycReq
 		return nil, fmt.Errorf("failed to read compressed selfie: %w", err)
 	}
 	selfieContentType := "image/jpeg"
-	selfieKey := fmt.Sprintf("kyc/%s/selfie.jpg", userID.String())
+	selfieKey := fmt.Sprintf("kyc/%s/selfie_%s_%d.jpg", userID.String(), uuid.New().String()[:8], time.Now().UnixNano())
 	selfiePath, err := s.storage.Upload(ctx, selfieKey, &selfieBuf, selfieSize, selfieContentType)
 	if err != nil {
 		return nil, err
@@ -159,7 +160,7 @@ func (s *service) Submit(ctx context.Context, userID uuid.UUID, req SubmitKycReq
 			return nil, fmt.Errorf("failed to read compressed facebook screenshot: %w", err)
 		}
 		fbContentType := "image/jpeg"
-		fbKey := fmt.Sprintf("kyc/%s/facebook_screenshot.jpg", userID.String())
+		fbKey := fmt.Sprintf("kyc/%s/facebook_%s_%d.jpg", userID.String(), uuid.New().String()[:8], time.Now().UnixNano())
 		facebookScreenshotPath, err = s.storage.Upload(ctx, fbKey, &fbBuf, fbSize, fbContentType)
 		if err != nil {
 			return nil, err

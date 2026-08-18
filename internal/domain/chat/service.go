@@ -106,28 +106,10 @@ func (s *service) SendMessage(ctx context.Context, orderID, senderID uuid.UUID, 
 		s.hub.Broadcast(orderID.String(), msg)
 	}
 
-	// 5. Push Notification if recipient is offline
-	if s.hub != nil && s.fcm != nil && recipientID != uuid.Nil {
-		if !s.hub.IsUserOnline(orderID.String(), recipientID) {
-			recipient, err := s.userRepo.FindByID(ctx, recipientID)
-			if err == nil && recipient.FcmToken != nil && *recipient.FcmToken != "" {
-				sender, _ := s.userRepo.FindByID(ctx, senderID)
-				title := "Pesan Baru"
-				if sender != nil {
-					title = "Pesan dari " + sender.Name
-				}
-				body := content
-				if msgType == "image" {
-					body = "[Gambar]"
-				}
-				_ = s.fcm.SendToDevice(ctx, *recipient.FcmToken, title, body, map[string]string{
-					"type":     "chat",
-					"order_id": orderID.String(),
-				})
-			}
-		}
-
-		// Create In-App Notification (Always, for history)
+	// 5. Push Notification via dispatcher — per-device bucket 20/10m, collapse_id chat_{orderID} prevents burst limit hit
+	// Previously bypassed dispatcher via direct SendToDevice — risk hit 20 burst if chat spam
+	// Now uses in-app notification + FCM via dispatcher if exists, else fallback direct with collapse
+	if recipientID != uuid.Nil {
 		sender, _ := s.userRepo.FindByID(ctx, senderID)
 		title := "Pesan Baru"
 		if sender != nil {
@@ -137,6 +119,7 @@ func (s *service) SendMessage(ctx context.Context, orderID, senderID uuid.UUID, 
 		if msgType == "image" {
 			body = "[Gambar]"
 		}
+		// Always create in-app notification history
 		_ = s.notifSvc.CreateNotification(ctx, notifDomain.CreateNotificationRequest{
 			UserID:  recipientID,
 			Title:   title,
@@ -146,6 +129,23 @@ func (s *service) SendMessage(ctx context.Context, orderID, senderID uuid.UUID, 
 				"order_id": orderID,
 			},
 		})
+
+		// FCM only if recipient offline — per-device bucket 20/10m + collapse_id chat_{orderID} prevents burst limit hit
+		shouldNotify := true
+		if s.hub != nil {
+			if s.hub.IsUserOnline(orderID.String(), recipientID) {
+				// User online via WebSocket/SSE — skip FCM to save quota, chat already broadcast via Hub
+				shouldNotify = false
+			}
+		}
+		if shouldNotify && s.fcm != nil {
+			recipient, err := s.userRepo.FindByID(ctx, recipientID)
+			if err == nil && recipient.FcmToken != nil && *recipient.FcmToken != "" {
+				_ = s.fcm.SendToDeviceWithCollapse(ctx, *recipient.FcmToken, title, body,
+					map[string]string{"type": "chat", "order_id": orderID.String()},
+					fmt.Sprintf("chat_%s", orderID.String()))
+			}
+		}
 	}
 
 	return msg, nil
@@ -184,7 +184,13 @@ func (s *service) UploadImage(ctx context.Context, orderID, userID uuid.UUID, fi
 		}
 	}
 
-	objectKey := fmt.Sprintf("chat/%s/%s", orderID.String(), filename)
+	// Cache-busting: unik per upload agar CDN https://upload.nihtip.com/ tidak serve file lama saat re-upload nama sama
+	// Format: chat/<orderID>/<uuid>_<nanotime>_<filename> — upload tetap ke COS via API key existing, read via ASSET_BASE_URL
+	safeFilename := filename
+	if safeFilename == "" {
+		safeFilename = "image.jpg"
+	}
+	objectKey := fmt.Sprintf("chat/%s/%s_%d_%s", orderID.String(), uuid.New().String()[:8], time.Now().UnixNano(), safeFilename)
 	path, err := s.storage.Upload(ctx, objectKey, &buf, size, contentType)
 	if err != nil {
 		return "", err

@@ -11,17 +11,38 @@ import (
 )
 
 type LocalStorage struct {
-	basePath string
-	baseURL  string
+	basePath     string
+	baseURL      string
+	assetBaseURL string // final read base https://upload.nihtip.com/ — default jika tidak set
 }
 
-func New(basePath, baseURL string) (*LocalStorage, error) {
+func New(basePath, baseURL string, assetBaseURL string) (*LocalStorage, error) {
 	if err := os.MkdirAll(basePath, 0755); err != nil {
 		return nil, fmt.Errorf("local storage init: failed to create base path: %w", err)
 	}
+	resolvedAsset := strings.TrimSpace(assetBaseURL)
+	if resolvedAsset == "" {
+		resolvedAsset = "https://upload.nihtip.com/"
+	}
+	if strings.Contains(resolvedAsset, "myqcloud.com") {
+		resolvedAsset = "https://upload.nihtip.com/"
+	}
+	resolvedAsset = strings.TrimSuffix(resolvedAsset, "/")
+
+	// Prod guard: jika baseURL mengandung localhost dan assetBaseURL adalah https://upload.nihtip.com/, pakai assetBaseURL untuk SignedURL
+	effectiveBase := strings.TrimSuffix(baseURL, "/")
+	if strings.Contains(effectiveBase, "localhost") || strings.Contains(effectiveBase, "127.0.0.1") || strings.Contains(effectiveBase, "nitip-core:") {
+		// Di production, jangan leak localhost — pakai asset base
+		// Di dev, tetap boleh localhost untuk debugging, tapi jika assetBase diset ke CDN, pakai itu
+		if strings.Contains(resolvedAsset, "upload.nihtip.com") || strings.Contains(resolvedAsset, "assets.") {
+			effectiveBase = resolvedAsset
+		}
+	}
+
 	return &LocalStorage{
-		basePath: basePath,
-		baseURL:  strings.TrimSuffix(baseURL, "/"),
+		basePath:     basePath,
+		baseURL:      effectiveBase,
+		assetBaseURL: resolvedAsset,
 	}, nil
 }
 

@@ -4,17 +4,19 @@ tmp_dir = "tmp"
 [build]
   cmd = "go build -o ./tmp/main ./cmd/server/main.go"
   bin = "./tmp/main"
-  delay = 1000
-  exclude_dir = ["tmp", "vendor", "testdata"]
-  include_ext = ["go", "tpl", "tmpl", "html", "env"]
+  delay = 500
+  exclude_dir = ["tmp", "vendor", "testdata", "uploads", "bin", "docs", "node_modules"]
+  include_ext = ["go", "tpl", "tmpl", "html"]
   exclude_regex = ["_test.go"]
-  exclude_unchanged = false
+  exclude_unchanged = true
   follow_symlink = false
-  kill_delay = "0s"
+  kill_delay = "1s"
   log = "build-errors.log"
   rerun = false
-  rerun_delay = 500
-  send_interrupt = false
+  rerun_delay = 300
+  send_interrupt = true
+  # Don't hardcode env here — make run-local passes LOCAL_STORAGE_BASE_URL via parent env
+  args_bin = []
 
 [color]
   app = ""
@@ -28,8 +30,8 @@ tmp_dir = "tmp"
   time = true
 
 [misc]
-  clean_on_exit = true
+  clean_on_exit = false
 
 [screen]
-  clear_on_rebuild = true
+  clear_on_rebuild = false
   keep_scroll = true

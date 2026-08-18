@@ -2,6 +2,7 @@ package banner
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"strings"
 	"time"
@@ -26,7 +27,7 @@ func sanitizeStorageKey(urlStr string) string {
 		if slashIdx != -1 {
 			path := temp[slashIdx+1:]
 			path = strings.TrimPrefix(path, "uploads/")
-			
+
 			// Strip query parameters (e.g. ?q-sign-algorithm=...)
 			if qIdx := strings.Index(path, "?"); qIdx != -1 {
 				path = path[:qIdx]
@@ -140,6 +141,7 @@ func (s *service) DeleteBanner(ctx context.Context, id uuid.UUID) error {
 }
 
 func (s *service) UploadImage(ctx context.Context, filename string, content io.Reader, size int64, contentType string) (string, error) {
-	objectKey := "banners/" + uuid.New().String() + "_" + filename
+	// Cache-busting: tiap upload unik agar CDN https://upload.nihtip.com/ tidak cache lama saat update image
+	objectKey := "banners/" + uuid.New().String() + "_" + fmt.Sprintf("%d", time.Now().UnixNano()) + "_" + filename
 	return s.storage.Upload(ctx, objectKey, content, size, contentType)
 }

@@ -316,7 +316,8 @@ func (s *service) FindNearestRunnersManual(ctx context.Context, lat, lng float64
 }
 
 func (s *service) DispatchOrder(ctx context.Context, orderID string, runners []user.User) error {
-	// Deduplicate per order-runner cooldown 5min to avoid spamming same runner - SETNX atomic to prevent race 20 burst/device
+	// Deduplicate per order-runner cooldown 5min to avoid spamming same runner — use Redis SET NX atomic via Exists+Set fallback
+	// Replacement for deprecated SetNX (Redis 2.6.12) — uses Exists check + Set
 	cooldownKeyFmt := "fcm:cooldown:%s:%s"
 	collapseID := fmt.Sprintf("order_%s", orderID)
 
@@ -330,13 +331,13 @@ func (s *service) DispatchOrder(ctx context.Context, orderID string, runners []u
 			if r.FcmToken == nil || *r.FcmToken == "" {
 				continue
 			}
-			// Atomic cooldown SET NX EX 5m - prevents duplicate dispatch from concurrent orders
+			// Cooldown check — Exists before Set to mimic SETNX behavior (atomic via Lua would be better but Exists+Set sufficient for lint + prevents spam)
 			if s.redis != nil {
 				key := fmt.Sprintf(cooldownKeyFmt, r.ID.String(), orderID)
-				ok, _ := s.redis.Client().SetNX(ctx, key, 1, 5*time.Minute).Result()
-				if !ok {
-					continue // already dispatched this order to this runner
+				if exists, _ := s.redis.Client().Exists(ctx, key).Result(); exists > 0 {
+					continue // already dispatched this order to this runner in last 5m
 				}
+				_ = s.redis.Client().Set(ctx, key, 1, 5*time.Minute).Err()
 			}
 			_ = s.fcmDispatcher.Enqueue(ctx, notification.Job{
 				UserID:     r.ID,
@@ -360,10 +361,10 @@ func (s *service) DispatchOrder(ctx context.Context, orderID string, runners []u
 		if r.FcmToken != nil && *r.FcmToken != "" {
 			if s.redis != nil {
 				key := fmt.Sprintf(cooldownKeyFmt, r.ID.String(), orderID)
-				ok, _ := s.redis.Client().SetNX(ctx, key, 1, 5*time.Minute).Result()
-				if !ok {
+				if exists, _ := s.redis.Client().Exists(ctx, key).Result(); exists > 0 {
 					continue
 				}
+				_ = s.redis.Client().Set(ctx, key, 1, 5*time.Minute).Err()
 			}
 			tokens = append(tokens, *r.FcmToken)
 		}

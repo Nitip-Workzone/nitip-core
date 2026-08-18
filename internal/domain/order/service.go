@@ -984,16 +984,27 @@ func (s *service) bulkPopulateOrders(ctx context.Context, orders []Order) {
 	}
 }
 
-// signURLsCached version with cache map to avoid duplicate HMAC presign per request
+// signURLsCached version with cache map to avoid duplicate HMAC presign per request — ensures https://upload.nihtip.com/
 func (s *service) signURLsCached(ctx context.Context, o *Order, cache map[string]string) {
 	if o == nil {
 		return
 	}
 	sign := func(key string) string {
+		if key == "" {
+			return ""
+		}
 		if v, ok := cache[key]; ok {
 			return v
 		}
+		// Already final CDN? keep
+		if strings.HasPrefix(key, "https://upload.nihtip.com/") {
+			cache[key] = key
+			return key
+		}
 		sanitized := sanitizeStorageKey(key)
+		if sanitized == "" {
+			return key
+		}
 		if signed, err := s.storage.SignedURL(ctx, sanitized, 1*time.Hour); err == nil {
 			cache[key] = signed
 			return signed
@@ -1008,6 +1019,14 @@ func (s *service) signURLsCached(ctx context.Context, o *Order, cache map[string
 	}
 	if o.DisputeProofURL != "" {
 		o.DisputeProofURL = sign(o.DisputeProofURL)
+	}
+	// Order items image_url — ensure https://upload.nihtip.com/ too
+	if o.Items != nil {
+		for i := range o.Items {
+			if o.Items[i].ImageURL != "" {
+				o.Items[i].ImageURL = sign(o.Items[i].ImageURL)
+			}
+		}
 	}
 }
 
@@ -1669,8 +1688,9 @@ func (s *service) SubmitPurchaseReceipt(ctx context.Context, orderID, runnerID u
 		size = int64(buf.Len())
 	}
 
-	// Upload using storage driver to orders/{orderID}/receipt_{timestamp}.jpg
-	objectKey := fmt.Sprintf("orders/%s/receipt_%d.jpg", orderID.String(), time.Now().Unix())
+	// Cache-busting: unik per upload agar CDN https://upload.nihtip.com/ tidak serve file lama saat re-upload
+	// Format: orders/<orderID>/receipt_<uuid>_<nanotime>.jpg — upload langsung ke COS, read via ASSET_BASE_URL
+	objectKey := fmt.Sprintf("orders/%s/receipt_%s_%d.jpg", orderID.String(), uuid.New().String()[:8], time.Now().UnixNano())
 	path, err := s.storage.Upload(ctx, objectKey, compressed, size, "image/jpeg")
 	if err != nil {
 		return fmt.Errorf("gagal mengunggah kwitansi ke penyimpanan: %w", err)
@@ -1745,8 +1765,8 @@ func (s *service) CompleteOrder(ctx context.Context, orderID, runnerID uuid.UUID
 			size = int64(buf.Len())
 		}
 
-		// Upload to orders/{orderID}/delivery_{timestamp}.jpg
-		objectKey := fmt.Sprintf("orders/%s/delivery_%d.jpg", orderID.String(), time.Now().Unix())
+		// Cache-busting unik: orders/<orderID>/delivery_<uuid>_<nanotime>.jpg — bust CDN cache
+		objectKey := fmt.Sprintf("orders/%s/delivery_%s_%d.jpg", orderID.String(), uuid.New().String()[:8], time.Now().UnixNano())
 		path, err = s.storage.Upload(ctx, objectKey, compressed, size, "image/jpeg")
 		if err != nil {
 			return fmt.Errorf("gagal mengunggah bukti penyerahan ke penyimpanan: %w", err)

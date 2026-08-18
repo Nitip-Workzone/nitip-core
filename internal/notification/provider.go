@@ -7,6 +7,7 @@ import (
 // Notifier defines the interface for sending push notifications.
 type Notifier interface {
 	SendToDevice(ctx context.Context, token, title, body string, data map[string]string) error
+	SendToDeviceWithCollapse(ctx context.Context, token, title, body string, data map[string]string, collapseID string) error
 	SendToTopic(ctx context.Context, topic, title, body string, data map[string]string) error
 	SendMulticast(ctx context.Context, tokens []string, title, body string, data map[string]string) error
 }
@@ -22,6 +23,10 @@ func NewMockNotifier() *MockNotifier {
 
 func (m *MockNotifier) SendToDevice(ctx context.Context, token, title, body string, data map[string]string) error {
 	// Log only for debugging purposes
+	return nil
+}
+
+func (m *MockNotifier) SendToDeviceWithCollapse(ctx context.Context, token, title, body string, data map[string]string, collapseID string) error {
 	return nil
 }
 

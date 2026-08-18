@@ -21,18 +21,33 @@ type Storage interface {
 func NewFromEnv(cfg *config.Config) (Storage, error) {
 	switch cfg.StorageDriver {
 	case "local":
-		return local.New(cfg.LocalStoragePath, cfg.LocalStorageBaseURL)
+		// Prod guard: jika ASSET_BASE_URL set, local driver tetap pakai ASSET_BASE_URL untuk SignedURL agar tidak leak localhost
+		asset := cfg.AssetBaseURL
+		if asset == "" {
+			asset = cfg.CosCDNBaseURL
+		}
+		if asset == "" {
+			asset = cfg.CosBaseURL
+		}
+		if asset == "" || cfg.AppEnv == "development" {
+			// dev: keep local base for debugging, but if asset is upload.nihtip.com prod default, it will be used in prod
+			return local.New(cfg.LocalStoragePath, cfg.LocalStorageBaseURL, cfg.AssetBaseURL)
+		}
+		// prod: force asset base for read, even when driver=local accidentally
+		return local.New(cfg.LocalStoragePath, asset, cfg.AssetBaseURL)
 	case "tencent_cos":
 		expire, err := time.ParseDuration(cfg.CosSignExpire)
 		if err != nil {
 			expire = 5 * time.Minute
 		}
+		// P0 FIX + ASSET_BASE_URL: upload endpoint = CosBaseURL (optional myqcloud or custom), read final = AssetBaseURL default https://upload.nihtip.com/
 		return tencentcos.New(
 			cfg.CosSecretID,
 			cfg.CosSecretKey,
 			cfg.CosRegion,
 			cfg.CosBucket,
 			cfg.CosBaseURL,
+			cfg.AssetBaseURL,
 			expire,
 		)
 	default:

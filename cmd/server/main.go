@@ -324,9 +324,9 @@ func main() {
 	supportHandler := supportDomain.NewHandler(supportSvc, db, redisCache)
 	fiberApp.RegisterRoutes(supportHandler.RegisterRoutes)
 
-	// Store Directory (Direktori Tokoh Titip Beli)
+	// Store Directory (Direktori Tokoh Titip Beli) — now injects storageSvc to enforce https://upload.nihtip.com/
 	storeRepo := store.NewRepository(db)
-	storeSvc := store.NewService(storeRepo, redisCache)
+	storeSvc := store.NewService(storeRepo, redisCache, storageSvc)
 	storeHandler := store.NewHandler(storeSvc, db, redisCache)
 	fiberApp.RegisterRoutes(storeHandler.RegisterRoutes)
 

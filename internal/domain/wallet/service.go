@@ -441,6 +441,7 @@ func (s *service) FinalizeTopUp(ctx context.Context, reference string, notificat
 	}
 
 	// Send Push and in-app Notification asynchronously to prevent blocking the webhook response
+	// Maksimalkan FCM — antrian per-device bucket 20/10m mencegah limit, collapse_id wallet_{user} menggabungkan pending
 	go func() {
 		bgCtx := context.Background()
 		var wallet Wallet
@@ -452,10 +453,21 @@ func (s *service) FinalizeTopUp(ctx context.Context, reference string, notificat
 		title := "Top Up Berhasil"
 		msg := fmt.Sprintf("Top up sebesar Rp%s berhasil ditambahkan ke saldo Anda.", strconv.FormatFloat(wtx.Amount, 'f', 0, 64))
 
-		// Use unified enqueue which creates inbox + dispatcher with collapse wallet_{userID}
+		// Use unified enqueue which creates inbox + dispatcher with collapse wallet_{userID} — mencegah interval polling 5s di mobile top_up_receipt.dart
 		s.enqueueFCM(bgCtx, wallet.UserID, title, msg, map[string]string{
-			"type":   "wallet_update",
-			"amount": strconv.FormatFloat(wtx.Amount, 'f', 0, 64),
+			"type":      "wallet_update",
+			"amount":    strconv.FormatFloat(wtx.Amount, 'f', 0, 64),
+			"reference": reference,
+			"status":    string(StatusCompleted),
+		}, fmt.Sprintf("wallet_%s", wallet.UserID.String()), false)
+
+		// Extra data-only for transaction_status replacement of 5s polling in top_up_receipt.dart
+		// Frontend Flutter main.dart handles type transaction_status -> update sheet via provider event stream, no interval
+		s.enqueueFCM(bgCtx, wallet.UserID, "", "", map[string]string{
+			"type":      "transaction_status",
+			"reference": reference,
+			"status":    string(StatusCompleted),
+			"amount":    strconv.FormatFloat(wtx.Amount, 'f', 0, 64),
 		}, fmt.Sprintf("wallet_%s", wallet.UserID.String()), false)
 	}()
 

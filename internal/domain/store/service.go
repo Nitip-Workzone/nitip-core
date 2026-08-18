@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/codecoffy/nitip-core/internal/cache"
+	"github.com/codecoffy/nitip-core/internal/storage"
 	"github.com/google/uuid"
 )
 
@@ -57,25 +59,33 @@ type Service interface {
 }
 
 type service struct {
-	repo  Repository
-	redis *cache.Redis
+	repo    Repository
+	redis   *cache.Redis
+	storage storage.Storage
 }
 
-func NewService(repo Repository, redis *cache.Redis) Service {
-	return &service{repo: repo, redis: redis}
+func NewService(repo Repository, redis *cache.Redis, st storage.Storage) Service {
+	return &service{repo: repo, redis: redis, storage: st}
 }
 
 func (s *service) GetAllStores(ctx context.Context) ([]Store, error) {
-	return s.repo.GetAll(ctx)
+	stores, err := s.repo.GetAll(ctx)
+	if err != nil {
+		return nil, err
+	}
+	s.signStoreImages(ctx, stores)
+	return stores, nil
 }
 
 func (s *service) GetActiveStores(ctx context.Context) ([]Store, error) {
 	// Cache entire active list — small dataset, rarely mutates
+	// Cache raw DB values, sign per request agar signature fresh 1h
 	if s.redis != nil {
 		cacheKey := "stores:active:all"
 		if cached, err := s.redis.Get(ctx, cacheKey); err == nil && cached != "" {
 			var stores []Store
 			if jsonErr := json.Unmarshal([]byte(cached), &stores); jsonErr == nil {
+				s.signStoreImages(ctx, stores)
 				return stores, nil
 			}
 		}
@@ -84,13 +94,20 @@ func (s *service) GetActiveStores(ctx context.Context) ([]Store, error) {
 		if err != nil {
 			return nil, err
 		}
+		// Cache raw
 		if b, jsonErr := json.Marshal(stores); jsonErr == nil {
 			_ = s.redis.Set(ctx, cacheKey, string(b), AllStoresCacheTTL)
 		}
+		s.signStoreImages(ctx, stores)
 		return stores, nil
 	}
 
-	return s.repo.GetActive(ctx)
+	stores, err := s.repo.GetActive(ctx)
+	if err != nil {
+		return nil, err
+	}
+	s.signStoreImages(ctx, stores)
+	return stores, nil
 }
 
 // GetNearbyStores returns stores within radiusKm sorted by distance.
@@ -112,6 +129,7 @@ func (s *service) GetNearbyStores(ctx context.Context, lat, lng, radiusKm float6
 		if cached, err := s.redis.Get(ctx, cacheKey); err == nil && cached != "" {
 			var stores []Store
 			if jsonErr := json.Unmarshal([]byte(cached), &stores); jsonErr == nil {
+				s.signStoreImages(ctx, stores)
 				return stores, nil
 			}
 		}
@@ -120,13 +138,20 @@ func (s *service) GetNearbyStores(ctx context.Context, lat, lng, radiusKm float6
 		if err != nil {
 			return nil, err
 		}
+		// Cache raw, sign after
 		if b, jsonErr := json.Marshal(stores); jsonErr == nil {
 			_ = s.redis.Set(ctx, cacheKey, string(b), NearbyStoresCacheTTL)
 		}
+		s.signStoreImages(ctx, stores)
 		return stores, nil
 	}
 
-	return s.repo.FindNearby(ctx, lat, lng, radiusKm, limit)
+	stores, err := s.repo.FindNearby(ctx, lat, lng, radiusKm, limit)
+	if err != nil {
+		return nil, err
+	}
+	s.signStoreImages(ctx, stores)
+	return stores, nil
 }
 
 func (s *service) CreateStore(ctx context.Context, req CreateStoreRequest) (*Store, error) {
@@ -199,7 +224,7 @@ func (s *service) CreateStoresBatch(ctx context.Context, reqs []CreateStoreReque
 		if req.Name == "" {
 			continue
 		}
-		
+
 		isActive := true
 		if req.IsActive != nil {
 			isActive = *req.IsActive
@@ -227,6 +252,61 @@ func (s *service) CreateStoresBatch(ctx context.Context, reqs []CreateStoreReque
 
 	s.invalidateCache(ctx)
 	return successCount, nil
+}
+
+// signStoreImages ensures all image URLs return final base https://upload.nihtip.com/ via SignedURL
+func (s *service) signStoreImages(ctx context.Context, stores []Store) {
+	if s.storage == nil {
+		return
+	}
+	for i := range stores {
+		if stores[i].ImageURL == "" {
+			continue
+		}
+		if strings.HasPrefix(stores[i].ImageURL, "http") {
+			// legacy may be myqcloud or localhost — sanitize via storage sign which rewrites to ASSET_BASE_URL
+			// but if already https://upload.nihtip.com/ keep, SignedURL will still rewrite to same domain
+			// We still attempt to sign if it is not already upload.nihtip.com to enforce
+			if strings.HasPrefix(stores[i].ImageURL, "https://upload.nihtip.com/") {
+				continue
+			}
+			// else fallthrough to sanitize + sign
+		}
+		sanitized := sanitizeStoreKey(stores[i].ImageURL)
+		if sanitized == "" {
+			continue
+		}
+		if signed, err := s.storage.SignedURL(ctx, sanitized, 1*3600*1000000000); err == nil {
+			stores[i].ImageURL = signed
+		}
+	}
+}
+
+func sanitizeStoreKey(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	u := strings.TrimSpace(raw)
+	// If full URL e.g. https://bucket.cos.../stores/foo.jpg?sign -> extract stores/foo.jpg
+	if strings.HasPrefix(u, "http") {
+		// try extract after ".myqcloud.com/" or "/uploads/" or find stores/
+		if idx := strings.Index(u, "myqcloud.com/"); idx != -1 {
+			u = u[idx+len("myqcloud.com/"):]
+		} else if idx := strings.Index(u, "/uploads/"); idx != -1 {
+			u = u[idx+len("/uploads/"):]
+		} else if idx := strings.Index(u, "/stores/"); idx != -1 {
+			u = u[idx+1:] // keep stores/...
+			u = strings.TrimPrefix(u, "/")
+		}
+		// strip query
+		if qIdx := strings.Index(u, "?"); qIdx != -1 {
+			u = u[:qIdx]
+		}
+	}
+	// remove leading /
+	u = strings.TrimPrefix(u, "/")
+	u = strings.TrimPrefix(u, "uploads/")
+	return u
 }
 
 // invalidateCache clears the active stores cache after any mutation.

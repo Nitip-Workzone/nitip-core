@@ -33,6 +33,39 @@ run:
 	@echo "✓ Server starting on: http://$(shell hostname -I | awk '{print $$1}'):$(APP_PORT)"
 	air
 
+## run-local: Start server accessible on LAN for mobile/web testing (0.0.0.0) — FIXED: ensure postgres+redis, bind 0.0.0.0
+run-local:
+	@which air > /dev/null 2>&1 || go install github.com/air-verse/air@latest
+	@IP=$(shell hostname -I | awk '{print $$1}'); \
+	PORT=$${APP_PORT:-8000}; \
+	if [ -z "$$IP" ]; then IP="192.168.1.5"; fi; \
+	BASE_URL="http://$$IP:$$PORT/uploads"; \
+	echo ""; \
+	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
+	echo "🌐 Local IP: $$IP"; \
+	echo "🚀 Server binding 0.0.0.0:$$PORT (Fiber 0.0.0.0)"; \
+	echo "   ├─ Health: http://$$IP:$$PORT/health"; \
+	echo "   ├─ API:    http://$$IP:$$PORT/api/v1"; \
+	echo "   ├─ Uploads:http://$$IP:$$PORT/uploads/..."; \
+	echo "   └─ Swagger http://$$IP:$$PORT/docs/index.html"; \
+	echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; \
+	echo "🔧 Ensuring postgres & redis running (docker-up)"; \
+	docker compose up -d postgres redis > /dev/null 2>&1 || true; \
+	echo "⏳ Waiting for postgres..."; \
+	timeout 15 bash -c 'until docker compose exec -T postgres pg_isready -U postgres -d nitip 2>/dev/null || pg_isready -h localhost -p 5432 -U postgres 2>/dev/null; do sleep 1; done' || echo "⚠️  postgres not ready yet, air will retry"; \
+	echo "✅ Starting air with BASE_URL=$$BASE_URL"; \
+	LOCAL_STORAGE_BASE_URL=$$BASE_URL APP_PORT=$$PORT STORAGE_BASE_URL=http://$$IP:$$PORT CORS_ALLOWED_ORIGINS=* air
+
+## run-local-host host=<IP> port=<PORT>: Run with specified IP (custom)
+run-local-host:
+	@which air > /dev/null 2>&1 || go install github.com/air-verse/air@latest
+	@if [ -z "$(host)" ]; then echo "❌ usage: make run-local-host host=192.168.1.5 [port=8000]"; exit 1; fi
+	@PORT=$(if $(port),$(port),8000); \
+	echo "🌐 Using HOST=$(host) PORT=$$PORT"; \
+	echo "   health: http://$(host):$$PORT/health"; \
+	docker compose up -d postgres redis > /dev/null 2>&1 || true; \
+	LOCAL_STORAGE_BASE_URL=http://$(host):$$PORT/uploads STORAGE_BASE_URL=http://$(host):$$PORT APP_PORT=$$PORT CORS_ALLOWED_ORIGINS=* air
+
 ## host: Show local IP for mobile connection
 host:
 	@echo "Local IP: $(shell hostname -I | awk '{print $$1}')"

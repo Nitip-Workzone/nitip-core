@@ -3,6 +3,7 @@ package merchant
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"strings"
 	"time"
@@ -500,6 +501,7 @@ func (s *service) CreateCategory(ctx context.Context, merchantID uuid.UUID, name
 	if err := s.repo.CreateCategory(ctx, c); err != nil {
 		return nil, err
 	}
+	s.signCategoryImage(ctx, c)
 	return c, nil
 }
 func (s *service) UpdateCategory(ctx context.Context, id uuid.UUID, name, imageURL string, sortOrder int, isActive bool) (*MenuCategory, error) {
@@ -521,10 +523,32 @@ func (s *service) UpdateCategory(ctx context.Context, id uuid.UUID, name, imageU
 	if oldImg != "" && oldImg != cat.ImageURL {
 		_ = s.storage.Delete(ctx, sanitizeStorageKey(oldImg))
 	}
+	s.signCategoryImage(ctx, cat)
 	return cat, nil
 }
 func (s *service) ListCategoriesByMerchantID(ctx context.Context, merchantID uuid.UUID) ([]MenuCategory, error) {
-	return s.repo.ListCategoriesByMerchantID(ctx, merchantID)
+	cats, err := s.repo.ListCategoriesByMerchantID(ctx, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	for i := range cats {
+		s.signCategoryImage(ctx, &cats[i])
+	}
+	return cats, nil
+}
+func (s *service) signCategoryImage(ctx context.Context, c *MenuCategory) {
+	if c == nil || c.ImageURL == "" {
+		return
+	}
+	if len(c.ImageURL) > 4 && c.ImageURL[:4] == "http" {
+		// if already https://upload.nihtip.com/ keep, else raw myqcloud that slipped? sanitize then sign
+		if strings.HasPrefix(c.ImageURL, "https://upload.nihtip.com/") {
+			return
+		}
+	}
+	if signed, err := s.storage.SignedURL(ctx, c.ImageURL, 1*time.Hour); err == nil {
+		c.ImageURL = signed
+	}
 }
 
 // Variant Groups
@@ -612,13 +636,18 @@ func (s *service) CreateVariantOption(ctx context.Context, groupID uuid.UUID, la
 	if err := s.repo.CreateVariantOption(ctx, o); err != nil {
 		return nil, err
 	}
+	// Enforce final base https://upload.nihtip.com/ for read
+	if o.ImageURL != "" {
+		if signed, err := s.storage.SignedURL(ctx, o.ImageURL, 1*time.Hour); err == nil {
+			o.ImageURL = signed
+		}
+	}
 	return o, nil
 }
 func (s *service) UpdateVariantOption(ctx context.Context, id uuid.UUID, label string, priceDelta float64, imageURL string, isDefault bool, isAvailable bool, sortOrder int) (*MenuVariantOption, error) {
 	// Fetch existing to preserve GroupID & handle old image COS cleanup
 	existing, err := s.repo.GetVariantOptionByID(ctx, id)
 	if err != nil {
-		// fallback: create minimal but need group_id - will fail FK if not found, so return error
 		existing = &MenuVariantOption{ID: id}
 	}
 	oldImg := existing.ImageURL
@@ -636,6 +665,12 @@ func (s *service) UpdateVariantOption(ctx context.Context, id uuid.UUID, label s
 	}
 	if oldImg != "" && oldImg != existing.ImageURL {
 		_ = s.storage.Delete(ctx, sanitizeStorageKey(oldImg))
+	}
+	// Enforce final base https://upload.nihtip.com/
+	if existing.ImageURL != "" && (len(existing.ImageURL) <= 4 || existing.ImageURL[:4] != "http") {
+		if signed, err := s.storage.SignedURL(ctx, existing.ImageURL, 1*time.Hour); err == nil {
+			existing.ImageURL = signed
+		}
 	}
 	return existing, nil
 }
@@ -730,6 +765,11 @@ func (s *service) CreateToppingOption(ctx context.Context, groupID uuid.UUID, la
 	if err := s.repo.CreateToppingOption(ctx, o); err != nil {
 		return nil, err
 	}
+	if o.ImageURL != "" {
+		if signed, err := s.storage.SignedURL(ctx, o.ImageURL, 1*time.Hour); err == nil {
+			o.ImageURL = signed
+		}
+	}
 	return o, nil
 }
 func (s *service) UpdateToppingOption(ctx context.Context, id uuid.UUID, label string, priceDelta float64, imageURL string, isAvailable bool, sortOrder int) (*MenuToppingOption, error) {
@@ -751,6 +791,11 @@ func (s *service) UpdateToppingOption(ctx context.Context, id uuid.UUID, label s
 	}
 	if oldImg != "" && oldImg != existing.ImageURL {
 		_ = s.storage.Delete(ctx, sanitizeStorageKey(oldImg))
+	}
+	if existing.ImageURL != "" && (len(existing.ImageURL) <= 4 || existing.ImageURL[:4] != "http") {
+		if signed, err := s.storage.SignedURL(ctx, existing.ImageURL, 1*time.Hour); err == nil {
+			existing.ImageURL = signed
+		}
 	}
 	return existing, nil
 }
@@ -843,7 +888,8 @@ func (s *service) UploadMenuImage(ctx context.Context, filename string, content 
 		}
 	}
 
-	objectKey := "menus/" + uuid.New().String() + "_" + filename
+	// Cache-busting: uuid + nano agar CDN https://upload.nihtip.com/ tidak serve file lama saat re-upload nama sama
+	objectKey := "menus/" + uuid.New().String() + "_" + fmt.Sprintf("%d", time.Now().UnixNano()) + "_" + filename
 	if !isJpegFilename(filename) {
 		objectKey = objectKey + ".jpg"
 	}
@@ -894,6 +940,8 @@ func (s *service) CreateAddonMaster(ctx context.Context, merchantID uuid.UUID, n
 	if err := s.repo.CreateAddonMaster(ctx, m); err != nil {
 		return nil, err
 	}
+	// Enforce https://upload.nihtip.com/ final
+	s.signAddonMasterImages(ctx, m)
 	return m, nil
 }
 func (s *service) UpdateAddonMaster(ctx context.Context, id uuid.UUID, name, imageURL string, sortOrder int, isActive bool) (*AddonMaster, error) {
@@ -915,6 +963,7 @@ func (s *service) UpdateAddonMaster(ctx context.Context, id uuid.UUID, name, ima
 	if oldImg != "" && oldImg != m.ImageURL {
 		_ = s.storage.Delete(ctx, sanitizeStorageKey(oldImg))
 	}
+	s.signAddonMasterImages(ctx, m)
 	return m, nil
 }
 func (s *service) DeleteAddonMaster(ctx context.Context, id uuid.UUID) error {
@@ -969,6 +1018,11 @@ func (s *service) CreateAddonOption(ctx context.Context, masterID uuid.UUID, lab
 	if err := s.repo.CreateAddonOption(ctx, o); err != nil {
 		return nil, err
 	}
+	if o.ImageURL != "" {
+		if signed, err := s.storage.SignedURL(ctx, o.ImageURL, 1*time.Hour); err == nil {
+			o.ImageURL = signed
+		}
+	}
 	return o, nil
 }
 func (s *service) UpdateAddonOption(ctx context.Context, id uuid.UUID, label string, priceDelta float64, imageURL string, isAvailable bool, sortOrder int) (*AddonOption, error) {
@@ -990,6 +1044,11 @@ func (s *service) UpdateAddonOption(ctx context.Context, id uuid.UUID, label str
 	}
 	if oldImg != "" && oldImg != existing.ImageURL {
 		_ = s.storage.Delete(ctx, sanitizeStorageKey(oldImg))
+	}
+	if existing.ImageURL != "" && (len(existing.ImageURL) <= 4 || existing.ImageURL[:4] != "http") {
+		if signed, err := s.storage.SignedURL(ctx, existing.ImageURL, 1*time.Hour); err == nil {
+			existing.ImageURL = signed
+		}
 	}
 	return existing, nil
 }
