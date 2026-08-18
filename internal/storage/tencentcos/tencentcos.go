@@ -24,29 +24,24 @@ func New(secretID, secretKey, region, bucket, baseURL string, assetBaseURL strin
 	var bucketURL *url.URL
 	var err error
 
-	// P0 FIX & ASSET_BASE_URL: baseURL (COS_BASE_URL) dipakai untuk upload endpoint (boleh myqcloud atau custom),
-	// assetBaseURL (ASSET_BASE_URL / COS_CDN_BASE_URL) dipakai untuk SignedURL read final https://upload.nihtip.com/
-	// Upload tetap langsung ke COS pakai API key/secret existing, tidak diubah.
-	// Jika baseURL kosong atau mengandung myqcloud, pakai default myqcloud untuk upload agar tidak PUT via Cloudflare
-	// (Cloudflare CDN hanya untuk GET cache, bukan untuk PUT).
+	// P0 FIX & ASSET_BASE_URL: baseURL = COS_BASE_URL untuk upload endpoint (myqcloud direct), assetBaseURL = ASSET_BASE_URL untuk read https://upload.nihtip.com/
+	// Upload tetap langsung ke COS myqcloud via API key/secret existing, read via CDN custom domain
+	// Bug fix local banner gagal load: sebelumnya ketika baseURL="" upload ke myqcloud tapi presigned URL juga untuk myqcloud host,
+	// lalu rewrite host ke upload.nihtip.com tanpa re-sign → q-header-list=host mismatch → 403 SignatureDoesNotMatch
+	// Sekarang: buat 2 client — uploadClient untuk PUT ke myqcloud, signClient untuk GetPresignedURL dengan host upload.nihtip.com agar signature valid untuk CDN
 	effectiveUploadURL := baseURL
 	if effectiveUploadURL != "" {
-		// Jika baseURL adalah https://upload.nihtip.com/ (custom CDN), itu juga valid untuk upload jika CNAME proxy PUT diperbolehkan.
-		// Tapi jika ingin aman, tetap parse custom URL. Core logic: upload tetap jalan via cos client dengan AuthorizationTransport.
 		bucketURL, err = url.Parse(effectiveUploadURL)
 		if err != nil {
 			return nil, fmt.Errorf("tencent cos init: invalid custom base url: %w", err)
 		}
 	} else {
-		// Default Tencent COS URL format untuk upload: https://<bucket>.cos.<region>.myqcloud.com
 		bucketURL, err = url.Parse(fmt.Sprintf("https://%s.cos.%s.myqcloud.com", bucket, region))
 		if err != nil {
 			return nil, fmt.Errorf("tencent cos init: invalid bucket or region: %w", err)
 		}
 	}
 
-	// Resolve final asset base URL untuk read — single source of truth
-	// Fallback chain sudah di config, tapi di sini ensure tidak kosong & bukan myqcloud untuk keamanan default
 	resolvedAssetBase := strings.TrimSpace(assetBaseURL)
 	if resolvedAssetBase == "" {
 		resolvedAssetBase = "https://upload.nihtip.com/"
@@ -54,20 +49,22 @@ func New(secretID, secretKey, region, bucket, baseURL string, assetBaseURL strin
 	if strings.Contains(resolvedAssetBase, "myqcloud.com") {
 		resolvedAssetBase = "https://upload.nihtip.com/"
 	}
-	// Ensure scheme https
 	if !strings.HasPrefix(resolvedAssetBase, "http://") && !strings.HasPrefix(resolvedAssetBase, "https://") {
 		resolvedAssetBase = "https://" + resolvedAssetBase
 	}
 	resolvedAssetBase = strings.TrimSuffix(resolvedAssetBase, "/")
 
-	// P0 #10 FIX: http client timeout 10s to prevent hang holding Fiber worker
-	client := cos.NewClient(&cos.BaseURL{BucketURL: bucketURL}, &http.Client{
+	// Upload client: BucketURL = myqcloud endpoint (or custom baseURL if set) — untuk PUT Object
+	uploadClient := cos.NewClient(&cos.BaseURL{BucketURL: bucketURL}, &http.Client{
 		Timeout: 10 * time.Second,
 		Transport: &cos.AuthorizationTransport{
 			SecretID:  secretID,
 			SecretKey: secretKey,
 		},
 	})
+
+	// Use uploadClient as primary for existence check, delete, upload
+	client := uploadClient
 
 	return &CosStorage{
 		client:        client,
@@ -127,35 +124,35 @@ func (s *CosStorage) SignedURL(ctx context.Context, objectKey string, expire tim
 		dur = s.defaultExpire
 	}
 
+	// Fix banner gagal load di local: https://upload.nihtip.com/banners/...jpg?q-sign... 403 SignatureDoesNotMatch
+	// Penyebab: sebelumnya GetPresignedURL pakai client BucketURL = myqcloud (https://bucket.cos.ap-jakarta.myqcloud.com)
+	// lalu rewrite host ke upload.nihtip.com tanpa re-sign → q-header-list=host mismatch, signature invalid.
+	// Solusi: generate presigned URL dengan BucketURL = https://upload.nihtip.com/ (cdnBaseURL) agar signature dibuat untuk host upload.nihtip.com
+	// Cloudflare Orange Cloud CNAME upload.nihtip.com -> COS bucket, jadi origin tetap valid dengan signature untuk host tersebut
+	if s.cdnBaseURL != "" {
+		cdnBase := strings.TrimSuffix(s.cdnBaseURL, "/")
+		if cdnURL, parseErr := url.Parse(cdnBase); parseErr == nil {
+			// Buat client khusus untuk signing dengan BucketURL = cdnBase (upload.nihtip.com)
+			// Ini memastikan q-header-list host = upload.nihtip.com, signature valid ketika fetch via CDN
+			signClient := cos.NewClient(&cos.BaseURL{BucketURL: cdnURL}, &http.Client{
+				Timeout: 10 * time.Second,
+				Transport: &cos.AuthorizationTransport{
+					SecretID:  s.secretID,
+					SecretKey: s.secretKey,
+				},
+			})
+			presignedURL, err := signClient.Object.GetPresignedURL(ctx, http.MethodGet, key, s.secretID, s.secretKey, dur, nil)
+			if err != nil {
+				return "", fmt.Errorf("generate signed URL on cos (cdn): %w", err)
+			}
+			return presignedURL.String(), nil
+		}
+	}
+
+	// Fallback: no cdnBase, use default myqcloud client
 	presignedURL, err := s.client.Object.GetPresignedURL(ctx, http.MethodGet, key, s.secretID, s.secretKey, dur, nil)
 	if err != nil {
 		return "", fmt.Errorf("generate signed URL on cos: %w", err)
 	}
-
-	// CDN cache optimization: jika COS_CDN_BASE_URL / ASSET_BASE_URL diset, rewrite signed URL ke CDN domain https://upload.nihtip.com/
-	// Flow: client -> CDN edge (cache 30d, X-Cache: HIT) -> origin COS hanya 1x per file
-	// Contoh: https://nihtip-user-upload-xxx.cos.ap-singapore.myqcloud.com/merchants/a.jpg?sign=xxx
-	//      => https://upload.nihtip.com/merchants/a.jpg?sign=xxx  (CDN akan forward sign ke origin & cache hasil)
-	// Hemat: 1000 user buka list 15 merchant = 1x MISS + 999x HIT = 99.9% hemat GET + traffic
-	// Fix bug: sebelumnya u.Path di-overwrite dengan raw key (mengandung spasi/koma) tanpa URL-encode → signature mismatch 403
-	// Sekarang pakai presignedURL.Path yang sudah encoded dengan benar oleh cos-go-sdk, hanya ganti host
-	if s.cdnBaseURL != "" {
-		cdnBase := strings.TrimSuffix(s.cdnBaseURL, "/")
-		if cdnURL, parseErr := url.Parse(cdnBase); parseErr == nil {
-			// Preserve encoded path from presigned URL (sudah % encoded oleh SDK), jangan reconstruct dari raw key
-			u := presignedURL
-			u.Scheme = cdnURL.Scheme
-			u.Host = cdnURL.Host
-			// Jika cdnBase punya path prefix (e.g. https://cdn.example.com/prefix), prepend prefix + keep original encoded path
-			if cdnURL.Path != "" && cdnURL.Path != "/" {
-				// presignedURL.Path sudah /<key encoded>, jadi gabung: /prefix + /<key>
-				prefix := strings.TrimSuffix(cdnURL.Path, "/")
-				u.Path = prefix + presignedURL.Path
-			}
-			// else keep presignedURL.Path as-is (sudah encoded)
-			return u.String(), nil
-		}
-	}
-
 	return presignedURL.String(), nil
 }
