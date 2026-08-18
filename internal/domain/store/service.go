@@ -186,6 +186,7 @@ func (s *service) UpdateStore(ctx context.Context, id uuid.UUID, req UpdateStore
 	if err != nil {
 		return nil, err
 	}
+	oldImg := existing.ImageURL
 
 	existing.Name = req.Name
 	existing.Address = req.Address
@@ -203,6 +204,11 @@ func (s *service) UpdateStore(ctx context.Context, id uuid.UUID, req UpdateStore
 		return nil, err
 	}
 	s.invalidateCache(ctx)
+
+	// Anti-penumpukan: hapus old image jika re-upload dengan nama baru unik cache-busting
+	if oldImg != "" && oldImg != existing.ImageURL {
+		_ = s.storage.Delete(ctx, sanitizeStoreKey(oldImg))
+	}
 	return existing, nil
 }
 

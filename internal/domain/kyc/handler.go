@@ -64,8 +64,8 @@ func (h *Handler) Submit(c *fiber.Ctx) error {
 	if err != nil {
 		return response.BadRequest(c, "screenshot halaman profil facebook wajib diunggah")
 	}
-	if fbScreenshotHeader.Size > 20*1024*1024 {
-		return response.BadRequest(c, "ukuran screenshot facebook terlalu besar (maksimal 20MB)")
+	if fbScreenshotHeader.Size > 5*1024*1024 {
+		return response.BadRequest(c, "ukuran screenshot facebook terlalu besar (maksimal 5MB)")
 	}
 	if !fileutil.IsImage(fbScreenshotHeader) {
 		return response.BadRequest(c, "screenshot facebook harus berupa file gambar (jpg, jpeg, png)")
@@ -75,8 +75,8 @@ func (h *Handler) Submit(c *fiber.Ctx) error {
 	if err != nil {
 		return response.BadRequest(c, "gambar selfie wajib diunggah")
 	}
-	if selfieFile.Size > 20*1024*1024 {
-		return response.BadRequest(c, "ukuran gambar selfie terlalu besar (maksimal 20MB)")
+	if selfieFile.Size > 5*1024*1024 {
+		return response.BadRequest(c, "ukuran gambar selfie terlalu besar (maksimal 5MB)")
 	}
 	if !fileutil.IsImage(selfieFile) {
 		return response.BadRequest(c, "selfie harus berupa file gambar (jpg, jpeg, png)")
@@ -100,7 +100,7 @@ func (h *Handler) Submit(c *fiber.Ctx) error {
 	number := c.FormValue("id_card_number")
 	idCardFile, errCard := c.FormFile("id_card")
 	if errCard == nil && idCardFile != nil {
-		if idCardFile.Size <= 20*1024*1024 && fileutil.IsImage(idCardFile) {
+		if idCardFile.Size <= 5*1024*1024 && fileutil.IsImage(idCardFile) {
 			if f, errOpen := idCardFile.Open(); errOpen == nil {
 				ic = f
 				idCardFilename = idCardFile.Filename

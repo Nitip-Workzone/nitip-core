@@ -1,13 +1,11 @@
 package kyc
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"log"
-	"net/http"
 	"strings"
 	"time"
 
@@ -17,6 +15,7 @@ import (
 	"github.com/codecoffy/nitip-core/internal/notification"
 	"github.com/codecoffy/nitip-core/internal/storage"
 	"github.com/codecoffy/nitip-core/pkg/fileutil"
+	"github.com/codecoffy/nitip-core/pkg/storageutil"
 	"github.com/google/uuid"
 )
 
@@ -103,68 +102,71 @@ func (s *service) Submit(ctx context.Context, userID uuid.UUID, req SubmitKycReq
 		return nil, errors.New("anda sudah memiliki pengajuan KYC yang aktif atau tertunda")
 	}
 
-	// 2. Upload images to Storage (returns relative path/key)
+	// 2. Upload images to Storage (returns relative path/key) — compress <1MB + bounded concurrency
 	var idCardPath string
+	var oldIdCard, oldSelfie, oldFb string
+	if existing != nil {
+		oldIdCard = existing.IdCardImageURL
+		oldSelfie = existing.SelfieImageURL
+		oldFb = existing.FacebookScreenshotURL
+	}
+
 	if req.IdCardFile != nil {
-		var idCardBuf bytes.Buffer
-		idCardSize, err := io.Copy(&idCardBuf, req.IdCardFile)
-		if err != nil {
-			return nil, fmt.Errorf("failed to read id card file: %w", err)
+		compressedId, compSize, compErr := fileutil.CompressToLimit(req.IdCardFile, 1600, fileutil.DefaultMaxUpload)
+		if compErr != nil {
+			return nil, fmt.Errorf("gagal mengompresi KTP: %w", compErr)
 		}
-		idCardContentType := "image/jpeg"
-		idCardLimit := 512
-		if idCardBuf.Len() < idCardLimit {
-			idCardLimit = idCardBuf.Len()
+		if compSize > fileutil.DefaultMaxUpload {
+			return nil, fmt.Errorf("KTP masih >1MB setelah kompresi (%dKB)", compSize/1024)
 		}
-		if idCardLimit > 0 {
-			idCardContentType = http.DetectContentType(idCardBuf.Bytes()[:idCardLimit])
-			if idCardContentType == "application/octet-stream" {
-				idCardContentType = "image/jpeg"
-			}
-		}
-		// Cache-busting: tiap re-upload nama unik baru agar CDN https://upload.nihtip.com/ tidak cache file lama
 		idCardKey := fmt.Sprintf("kyc/%s/id_card_%s_%d.jpg", userID.String(), uuid.New().String()[:8], time.Now().UnixNano())
-		idCardPath, err = s.storage.Upload(ctx, idCardKey, &idCardBuf, idCardSize, idCardContentType)
+		idCardPath, err = s.storage.Upload(ctx, idCardKey, compressedId, compSize, "image/jpeg")
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	// Selfie image compression
-	compressedSelfie, err := fileutil.CompressAndResizeImage(req.SelfieFile, 1200, 75)
+	// Selfie image compression <1MB with bounded queue
+	compressedSelfie, selfieSize, err := fileutil.CompressToLimit(req.SelfieFile, 1200, fileutil.DefaultMaxUpload)
 	if err != nil {
 		return nil, fmt.Errorf("gagal mengompresi gambar selfie: %w", err)
 	}
-	var selfieBuf bytes.Buffer
-	selfieSize, err := io.Copy(&selfieBuf, compressedSelfie)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read compressed selfie: %w", err)
+	if selfieSize > fileutil.DefaultMaxUpload {
+		return nil, fmt.Errorf("selfie masih >1MB setelah kompresi (%dKB)", selfieSize/1024)
 	}
-	selfieContentType := "image/jpeg"
 	selfieKey := fmt.Sprintf("kyc/%s/selfie_%s_%d.jpg", userID.String(), uuid.New().String()[:8], time.Now().UnixNano())
-	selfiePath, err := s.storage.Upload(ctx, selfieKey, &selfieBuf, selfieSize, selfieContentType)
+	selfiePath, err := s.storage.Upload(ctx, selfieKey, compressedSelfie, selfieSize, "image/jpeg")
 	if err != nil {
 		return nil, err
 	}
 
-	// Facebook screenshot compression and upload
+	// Facebook screenshot compression <1MB
 	var facebookScreenshotPath string
 	if req.FacebookScreenshotFile != nil {
-		compressedFB, err := fileutil.CompressAndResizeImage(req.FacebookScreenshotFile, 1200, 75)
-		if err != nil {
-			return nil, fmt.Errorf("gagal mengompresi screenshot facebook: %w", err)
+		compressedFB, fbSize, compErr := fileutil.CompressToLimit(req.FacebookScreenshotFile, 1200, fileutil.DefaultMaxUpload)
+		if compErr != nil {
+			return nil, fmt.Errorf("gagal mengompresi screenshot facebook: %w", compErr)
 		}
-		var fbBuf bytes.Buffer
-		fbSize, err := io.Copy(&fbBuf, compressedFB)
-		if err != nil {
-			return nil, fmt.Errorf("failed to read compressed facebook screenshot: %w", err)
+		if fbSize > fileutil.DefaultMaxUpload {
+			return nil, fmt.Errorf("screenshot fb masih >1MB (%dKB)", fbSize/1024)
 		}
-		fbContentType := "image/jpeg"
 		fbKey := fmt.Sprintf("kyc/%s/facebook_%s_%d.jpg", userID.String(), uuid.New().String()[:8], time.Now().UnixNano())
-		facebookScreenshotPath, err = s.storage.Upload(ctx, fbKey, &fbBuf, fbSize, fbContentType)
+		facebookScreenshotPath, err = s.storage.Upload(ctx, fbKey, compressedFB, fbSize, "image/jpeg")
 		if err != nil {
 			return nil, err
 		}
+	}
+
+	// Anti-penumpukan: hapus file lama jika re-submit (existing rejected -> new submission ganti nama baru unik)
+	// Delete old after new upload success, best-effort
+	if oldIdCard != "" && oldIdCard != idCardPath {
+		_ = s.storage.Delete(ctx, storageutil.SanitizeStorageKey(oldIdCard))
+	}
+	if oldSelfie != "" && oldSelfie != selfiePath {
+		_ = s.storage.Delete(ctx, storageutil.SanitizeStorageKey(oldSelfie))
+	}
+	if oldFb != "" && oldFb != facebookScreenshotPath {
+		_ = s.storage.Delete(ctx, storageutil.SanitizeStorageKey(oldFb))
 	}
 
 	// 3. Create submission record

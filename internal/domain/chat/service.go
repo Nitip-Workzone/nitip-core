@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"time"
 
 	notifDomain "github.com/codecoffy/nitip-core/internal/domain/notification"
@@ -14,6 +13,7 @@ import (
 	"github.com/codecoffy/nitip-core/internal/domain/user"
 	"github.com/codecoffy/nitip-core/internal/notification"
 	"github.com/codecoffy/nitip-core/internal/storage"
+	"github.com/codecoffy/nitip-core/pkg/fileutil"
 	"github.com/google/uuid"
 )
 
@@ -165,33 +165,28 @@ func (s *service) UploadImage(ctx context.Context, orderID, userID uuid.UUID, fi
 		return "", ErrUnauthorized
 	}
 
-	// 2. Upload to Storage (returns relative path/key)
+	// 2. Compress <1MB with bounded concurrency (Lighthouse 2C4G) before upload — prevent VPS OOM + save COS egress
 	var buf bytes.Buffer
-	size, err := io.Copy(&buf, content)
-	if err != nil {
+	if _, err := io.Copy(&buf, content); err != nil {
 		return "", fmt.Errorf("failed to read chat image content: %w", err)
 	}
 
-	contentType := "image/jpeg"
-	limit := 512
-	if buf.Len() < limit {
-		limit = buf.Len()
+	// Compress <1MB
+	compressed, compSize, compErr := fileutil.CompressToLimit(bytes.NewReader(buf.Bytes()), 1280, fileutil.DefaultMaxUpload)
+	if compErr != nil {
+		return "", fmt.Errorf("gagal mengompresi gambar chat: %w", compErr)
 	}
-	if limit > 0 {
-		contentType = http.DetectContentType(buf.Bytes()[:limit])
-		if contentType == "application/octet-stream" {
-			contentType = "image/jpeg"
-		}
+	if compSize > fileutil.DefaultMaxUpload {
+		return "", fmt.Errorf("gambar chat masih >1MB (%dKB), coba foto lebih kecil", compSize/1024)
 	}
 
 	// Cache-busting: unik per upload agar CDN https://upload.nihtip.com/ tidak serve file lama saat re-upload nama sama
-	// Format: chat/<orderID>/<uuid>_<nanotime>_<filename> — upload tetap ke COS via API key existing, read via ASSET_BASE_URL
 	safeFilename := filename
 	if safeFilename == "" {
 		safeFilename = "image.jpg"
 	}
 	objectKey := fmt.Sprintf("chat/%s/%s_%d_%s", orderID.String(), uuid.New().String()[:8], time.Now().UnixNano(), safeFilename)
-	path, err := s.storage.Upload(ctx, objectKey, &buf, size, contentType)
+	path, err := s.storage.Upload(ctx, objectKey, compressed, compSize, "image/jpeg")
 	if err != nil {
 		return "", err
 	}

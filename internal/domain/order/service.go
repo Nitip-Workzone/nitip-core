@@ -1677,21 +1677,19 @@ func (s *service) SubmitPurchaseReceipt(ctx context.Context, orderID, runnerID u
 		return errors.New("file gambar kwitansi wajib diunggah")
 	}
 
-	// Compress and resize image (max 1200px, 75% quality)
-	compressed, err := fileutil.CompressAndResizeImage(receiptReader, 1200, 75)
-	if err != nil {
-		return fmt.Errorf("gagal mengompresi gambar kwitansi: %w", err)
+	// Compress <1MB with bounded concurrency (Lighthouse 2C4G app 512MB) + anti-penumpukan delete old
+	oldReceipt := order.ReceiptImageURL
+	compressed, compSize, compErr := fileutil.CompressToLimit(receiptReader, 1200, fileutil.DefaultMaxUpload)
+	if compErr != nil {
+		return fmt.Errorf("gagal mengompresi gambar kwitansi: %w", compErr)
 	}
-
-	var size int64
-	if buf, ok := compressed.(*bytes.Buffer); ok {
-		size = int64(buf.Len())
+	if compSize > fileutil.DefaultMaxUpload {
+		return fmt.Errorf("kwitansi masih >1MB (%dKB), coba foto lebih kecil", compSize/1024)
 	}
 
 	// Cache-busting: unik per upload agar CDN https://upload.nihtip.com/ tidak serve file lama saat re-upload
-	// Format: orders/<orderID>/receipt_<uuid>_<nanotime>.jpg — upload langsung ke COS, read via ASSET_BASE_URL
 	objectKey := fmt.Sprintf("orders/%s/receipt_%s_%d.jpg", orderID.String(), uuid.New().String()[:8], time.Now().UnixNano())
-	path, err := s.storage.Upload(ctx, objectKey, compressed, size, "image/jpeg")
+	path, err := s.storage.Upload(ctx, objectKey, compressed, compSize, "image/jpeg")
 	if err != nil {
 		return fmt.Errorf("gagal mengunggah kwitansi ke penyimpanan: %w", err)
 	}
@@ -1701,7 +1699,16 @@ func (s *service) SubmitPurchaseReceipt(ctx context.Context, orderID, runnerID u
 	order.UpdatedAt = time.Now()
 
 	if err := s.repo.Update(ctx, s.db, order); err != nil {
+		// Cleanup new file if DB update fails
+		_ = s.storage.Delete(ctx, objectKey)
 		return err
+	}
+
+	// Anti-penumpukan: hapus old receipt jika re-upload dengan nama baru unik
+	if oldReceipt != "" && oldReceipt != path {
+		// Use sanitize from storageutil if available, else fileutil fallback
+		// For order, we have own sanitizeStorageKey func in same file — use it
+		_ = s.storage.Delete(ctx, sanitizeStorageKey(oldReceipt))
 	}
 
 	s.auditSvc.Log(ctx, &runnerID, audit.ActionOrderPurchased, "order", orderID.String(),
@@ -1753,24 +1760,25 @@ func (s *service) CompleteOrder(ctx context.Context, orderID, runnerID uuid.UUID
 	}
 
 	var path string
+	var oldDelivery string
 	if deliveryReader != nil {
-		// Compress and resize image (max 1200px, 75% quality)
-		compressed, err := fileutil.CompressAndResizeImage(deliveryReader, 1200, 75)
-		if err != nil {
-			return fmt.Errorf("gagal mengompresi bukti penyerahan: %w", err)
+		oldDelivery = order.DeliveryImageURL
+		// Compress <1MB bounded concurrency + anti-penumpukan
+		compressed, compSize, compErr := fileutil.CompressToLimit(deliveryReader, 1200, fileutil.DefaultMaxUpload)
+		if compErr != nil {
+			return fmt.Errorf("gagal mengompresi bukti penyerahan: %w", compErr)
+		}
+		if compSize > fileutil.DefaultMaxUpload {
+			return fmt.Errorf("bukti penyerahan masih >1MB (%dKB), coba foto lebih kecil", compSize/1024)
 		}
 
-		var size int64
-		if buf, ok := compressed.(*bytes.Buffer); ok {
-			size = int64(buf.Len())
-		}
-
-		// Cache-busting unik: orders/<orderID>/delivery_<uuid>_<nanotime>.jpg — bust CDN cache
 		objectKey := fmt.Sprintf("orders/%s/delivery_%s_%d.jpg", orderID.String(), uuid.New().String()[:8], time.Now().UnixNano())
-		path, err = s.storage.Upload(ctx, objectKey, compressed, size, "image/jpeg")
+		path, err = s.storage.Upload(ctx, objectKey, compressed, compSize, "image/jpeg")
 		if err != nil {
 			return fmt.Errorf("gagal mengunggah bukti penyerahan ke penyimpanan: %w", err)
 		}
+		// Anti-penumpukan: hapus old delivery jika re-upload (best-effort after DB tx success, so save for later)
+		_ = oldDelivery
 	}
 
 	// --- Unified Completion Transaction with FOR UPDATE anti double release ---
@@ -1841,6 +1849,10 @@ func (s *service) CompleteOrder(ctx context.Context, orderID, runnerID uuid.UUID
 	})
 
 	if err == nil {
+		// Anti-penumpukan: hapus old delivery jika re-upload dengan nama baru unik cache-busting
+		if oldDelivery != "" && path != "" && oldDelivery != path {
+			_ = s.storage.Delete(ctx, sanitizeStorageKey(oldDelivery))
+		}
 		if s.poolHub != nil {
 			go s.poolHub.BroadcastOrderStatus(orderID.String(), StatusCompleted, "completed")
 		}

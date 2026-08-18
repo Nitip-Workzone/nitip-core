@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/codecoffy/nitip-core/internal/storage"
+	"github.com/codecoffy/nitip-core/pkg/fileutil"
 	"github.com/google/uuid"
 )
 
@@ -119,6 +120,7 @@ func (s *service) UpdateBanner(ctx context.Context, id uuid.UUID, title, imageUR
 	if err != nil {
 		return nil, err
 	}
+	oldImg := banner.ImageURL
 
 	banner.Title = title
 	banner.ImageURL = sanitizeStorageKey(imageURL)
@@ -127,6 +129,10 @@ func (s *service) UpdateBanner(ctx context.Context, id uuid.UUID, title, imageUR
 	banner.UpdatedAt = time.Now()
 
 	err = s.repo.Update(ctx, banner)
+	if err == nil && oldImg != "" && oldImg != banner.ImageURL {
+		// Anti-penumpukan: hapus old file setelah ganti nama baru unik cache-busting
+		_ = s.storage.Delete(ctx, sanitizeStorageKey(oldImg))
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -142,6 +148,18 @@ func (s *service) DeleteBanner(ctx context.Context, id uuid.UUID) error {
 
 func (s *service) UploadImage(ctx context.Context, filename string, content io.Reader, size int64, contentType string) (string, error) {
 	// Cache-busting: tiap upload unik agar CDN https://upload.nihtip.com/ tidak cache lama saat update image
+	// Compress <1MB with bounded concurrency to prevent VPS OOM (Lighthouse 2C4G app 512MB)
+	compressed, compSize, err := fileutil.CompressToLimit(content, 1920, fileutil.DefaultMaxUpload)
+	if err != nil {
+		return "", fmt.Errorf("banner image compress failed: %w", err)
+	}
+	// Ensure size <1MB
+	if compSize > fileutil.DefaultMaxUpload {
+		return "", fmt.Errorf("banner image still >1MB after compress (%dKB), coba foto lebih kecil", compSize/1024)
+	}
 	objectKey := "banners/" + uuid.New().String() + "_" + fmt.Sprintf("%d", time.Now().UnixNano()) + "_" + filename
-	return s.storage.Upload(ctx, objectKey, content, size, contentType)
+	if !strings.HasSuffix(strings.ToLower(filename), ".jpg") && !strings.HasSuffix(strings.ToLower(filename), ".jpeg") {
+		objectKey = objectKey + ".jpg"
+	}
+	return s.storage.Upload(ctx, objectKey, compressed, compSize, "image/jpeg")
 }

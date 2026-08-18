@@ -8,7 +8,6 @@ import (
 	"io"
 	"log"
 	"math"
-	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -20,6 +19,7 @@ import (
 	"github.com/codecoffy/nitip-core/internal/storage"
 	"github.com/codecoffy/nitip-core/pkg/fileutil"
 	"github.com/codecoffy/nitip-core/pkg/jwt"
+	"github.com/codecoffy/nitip-core/pkg/storageutil"
 	"github.com/google/uuid"
 	"github.com/pquerna/otp/totp"
 	"github.com/redis/go-redis/v9"
@@ -837,43 +837,36 @@ func (s *service) UpdateProfile(ctx context.Context, id uuid.UUID, req UpdatePro
 			return fmt.Errorf("failed to read avatar file: %w", err)
 		}
 
-		// Defense: size check also in service (in case called without handler check)
 		if size > 5*1024*1024 {
 			return errors.New("ukuran gambar avatar terlalu besar (maksimal 5MB)")
 		}
 
-		limit := 512
-		if buf.Len() < limit {
-			limit = buf.Len()
-		}
-		contentType := http.DetectContentType(buf.Bytes()[:limit])
-		if contentType == "application/octet-stream" {
-			contentType = "image/jpeg"
+		oldAvatar := ""
+		if u.AvatarUrl != nil {
+			oldAvatar = *u.AvatarUrl
 		}
 
-		ext := ".jpg"
-		if avatarFilename != "" {
-			// Use original extension if image
-			lower := strings.ToLower(avatarFilename)
-			if strings.HasSuffix(lower, ".png") {
-				ext = ".png"
-			} else if strings.HasSuffix(lower, ".jpeg") || strings.HasSuffix(lower, ".jpg") {
-				ext = ".jpg"
-			} else if strings.HasSuffix(lower, ".webp") {
-				ext = ".webp"
-			} else if strings.HasSuffix(lower, ".gif") {
-				ext = ".gif"
-			}
+		// Compress <1MB with bounded concurrency to prevent VPS OOM (Lighthouse 2C4G app 512MB)
+		compressed, compSize, compErr := fileutil.CompressToLimit(bytes.NewReader(buf.Bytes()), 800, fileutil.DefaultMaxUpload)
+		if compErr != nil {
+			return fmt.Errorf("gagal mengompresi avatar: %w", compErr)
+		}
+		if compSize > fileutil.DefaultMaxUpload {
+			return fmt.Errorf("avatar masih >1MB setelah kompresi (%dKB), coba foto lebih kecil", compSize/1024)
 		}
 
-		// P1 + CDN cache-busting: unik per upload agar https://upload.nihtip.com/ tidak serve file lama saat re-upload
-		// Format: avatars/<userID>_<uuid8>_<nanotime><ext> — upload ke COS, read via ASSET_BASE_URL
-		objectKey := fmt.Sprintf("avatars/%s_%s_%d%s", id.String(), uuid.New().String()[:8], time.Now().UnixNano(), ext)
-		path, err := s.storage.Upload(ctx, objectKey, &buf, size, contentType)
+		// P1 + CDN cache-busting: unik per upload agar https://upload.nihtip.com/ tidak serve file lama saat re-upload + anti-penumpukan delete old
+		objectKey := fmt.Sprintf("avatars/%s_%s_%d.jpg", id.String(), uuid.New().String()[:8], time.Now().UnixNano())
+		path, err := s.storage.Upload(ctx, objectKey, compressed, compSize, "image/jpeg")
 		if err != nil {
 			return fmt.Errorf("failed to upload avatar: %w", err)
 		}
 		u.AvatarUrl = &path
+
+		// Anti-penumpukan: hapus old avatar setelah ganti nama baru unik cache-busting
+		if oldAvatar != "" && oldAvatar != path {
+			_ = s.storage.Delete(ctx, storageutil.SanitizeStorageKey(oldAvatar))
+		}
 	}
 
 	u.UpdatedAt = time.Now()

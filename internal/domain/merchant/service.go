@@ -14,11 +14,13 @@ import (
 	"github.com/google/uuid"
 )
 
-func newBytesReader(b []byte) io.Reader { return bytes.NewReader(b) }
-
+// compressWithFileUtil kept for compat — now CompressToLimit is primary
 func compressWithFileUtil(r io.Reader) (io.Reader, error) {
 	return fileutil.CompressAndResizeImage(r, 1200, 75)
 }
+
+var _ = bytes.NewReader
+var _ = compressWithFileUtil
 
 func isJpegFilename(name string) bool {
 	lower := strings.ToLower(name)
@@ -848,44 +850,13 @@ func (s *service) signMerchantImages(ctx context.Context, m *Merchant) {
 }
 
 func (s *service) UploadMenuImage(ctx context.Context, filename string, content io.Reader, size int64, contentType string) (string, error) {
-	// P0 image size harden: file 1.39MB screenshot di COS terlalu besar untuk food card 76x76
-	// FE sudah crop wajib 1:1 1200x1200 JPEG 75% ~200-300KB, tapi BE tetap paksa compress ulang agar tidak pernah >400KB
-	// Jika compress gagal (misal HEIC), fallback ke original tapi tetap batasi
-	uploadReader := content
-	uploadSize := size
-
-	// Selalu coba compress dulu - jangan fallback diam-diam ke original 1.39MB
-	compressed, err := s.compressImageForMerchant(content)
-	if err == nil {
-		if buf, ok := compressed.(interface{ Len() int }); ok {
-			uploadReader = compressed
-			uploadSize = int64(buf.Len())
-			// Jika hasil compress masih >400KB (misal foto 4000x3000 dengan quality 75 masih besar), paksa quality 60
-			if uploadSize > 400*1024 {
-				if buf2, ok2 := compressed.(interface{ Bytes() []byte }); ok2 {
-					if second, err2 := fileutil.CompressAndResizeImage(newBytesReader(buf2.Bytes()), 1000, 60); err2 == nil {
-						if b2, ok3 := second.(interface{ Len() int }); ok3 {
-							if b2.Len() < int(uploadSize) {
-								uploadReader = second
-								uploadSize = int64(b2.Len())
-							}
-						}
-					}
-				}
-			}
-		}
+	// Compress <1MB with bounded concurrency (Lighthouse 2C4G) + anti-penumpukan delete old via UpdateMenu
+	compressed, compSize, compErr := fileutil.CompressToLimit(content, 1200, fileutil.DefaultMaxUpload)
+	if compErr != nil {
+		return "", fmt.Errorf("gagal mengompresi gambar menu: %w", compErr)
 	}
-	// Safety: jika hasil masih >5MB (limit handler), error agar tidak upload 1.39MB lagi
-	if uploadSize > 1*1024*1024 {
-		// masih terlalu besar, paksa compress sekali lagi ke 800px quality 60
-		if buf, ok := uploadReader.(interface{ Bytes() []byte }); ok {
-			if third, err := fileutil.CompressAndResizeImage(newBytesReader(buf.Bytes()), 800, 60); err == nil {
-				if b3, ok3 := third.(interface{ Len() int }); ok3 {
-					uploadReader = third
-					uploadSize = int64(b3.Len())
-				}
-			}
-		}
+	if compSize > fileutil.DefaultMaxUpload {
+		return "", fmt.Errorf("gambar menu masih >1MB (%dKB), coba foto lebih kecil", compSize/1024)
 	}
 
 	// Cache-busting: uuid + nano agar CDN https://upload.nihtip.com/ tidak serve file lama saat re-upload nama sama
@@ -893,13 +864,12 @@ func (s *service) UploadMenuImage(ctx context.Context, filename string, content 
 	if !isJpegFilename(filename) {
 		objectKey = objectKey + ".jpg"
 	}
-	return s.storage.Upload(ctx, objectKey, uploadReader, uploadSize, "image/jpeg")
+	return s.storage.Upload(ctx, objectKey, compressed, compSize, "image/jpeg")
 }
 
-func (s *service) compressImageForMerchant(r io.Reader) (io.Reader, error) {
-	// Reuse hardened compress logic 1200px JPEG 75% - runs before storage upload, not inside DB Tx
-	return compressWithFileUtil(r)
-}
+// compressImageForMerchant kept for backward compat — now uses CompressToLimit via UploadMenuImage
+// ignore unused, used in older code path
+var _ = compressWithFileUtil
 
 // OrderItem Implementation
 
