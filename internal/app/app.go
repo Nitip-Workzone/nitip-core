@@ -22,11 +22,11 @@ type App struct {
 }
 
 func New(logger *zap.Logger) *App {
-	// P0 #8 Fix: Read/Write timeout 5m -> 30s to prevent slow-client DoS holding workers
-	// SSE routes (/pool/stream, /track) will override with longer timeout via group if needed.
+	// P0 #8 Fix: Read/Write timeout disabled (0) to support SSE / WebSockets streams without periodic disconnection.
+	// (Slow-client DoS protection should be enforced at the reverse proxy/Nginx level in production).
 	f := fiber.New(fiber.Config{
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 30 * time.Second,
+		ReadTimeout:  0,
+		WriteTimeout: 0,
 		BodyLimit:    20 * 1024 * 1024, // 20 MB to allow high-res mobile photos
 		ErrorHandler: middleware.ErrorHandler,
 	})

@@ -510,11 +510,29 @@ func (s *service) Create(ctx context.Context, requesterID uuid.UUID, req CreateO
 	}
 
 	// 3. Calculate Delivery Fee automatically (now includes 10% platform markup + checking fee)
+	// Untuk nitip-food (merchant_id ada): hanya ongkos kirim, tidak ada biaya pengecekan — sesuai request user
+	// Food = instant, no checking fee, delivery fee konsisten dengan pengecekan awal 10k
+	isFood := req.MerchantID != nil
 	deliveryFee := s.calculateDeliveryFee(ctx, distance, req.WeightKg, req.VolumeLiters, orderType)
+	if isFood {
+		// Food: hitung ulang tanpa checking fee agar konsisten dengan keranjang 10k
+		// calculateDeliveryFee includes checking, so subtract it for food display consistency
+		feeStrTmp := s.configSvc.GetValue(ctx, "order_checking_fee", "5000")
+		chkTmp, _ := strconv.ParseFloat(feeStrTmp, 64)
+		deliveryFee = deliveryFee - chkTmp
+		if deliveryFee < 3000 {
+			deliveryFee = 3000
+		}
+		// Pembulatan 500
+		deliveryFee = math.Ceil(deliveryFee/500) * 500
+	}
 
-	// Fetch checking fee for storage
+	// Fetch checking fee for storage — untuk food 0
 	feeStr := s.configSvc.GetValue(ctx, "order_checking_fee", "5000")
 	checkingFee, _ := strconv.ParseFloat(feeStr, 64)
+	if isFood {
+		checkingFee = 0 // food tidak ada biaya pengecekan
+	}
 
 	// Extract ServiceFee (Platform markup applies to base fee, excluding checking fee)
 	feePercentStr2 := s.configSvc.GetValue(ctx, "platform_fee_percent", "10")
@@ -522,6 +540,7 @@ func (s *service) Create(ctx context.Context, requesterID uuid.UUID, req CreateO
 	feeMultiplier2 := 1 + (feePercent2 / 100)
 	baseWithMarkup := deliveryFee - checkingFee
 	serviceFee := baseWithMarkup - (baseWithMarkup / feeMultiplier2)
+	// Untuk food, serviceFee ditanggung merchant — tetap disimpan untuk settlement, tapi tidak tampil ke requester
 
 	completionCode, err := generateCompletionCode()
 	if err != nil {
@@ -836,7 +855,19 @@ func (s *service) EstimateFee(ctx context.Context, req EstimateFeeRequest) (*Est
 		}
 	}
 
+	isFood := req.MerchantID != nil
 	fee := s.calculateDeliveryFee(ctx, dist, req.WeightKg, req.VolumeLiters, orderType)
+	if isFood {
+		// Food: hitung ulang tanpa checking fee agar konsisten dengan keranjang 10k
+		feeStrTmp := s.configSvc.GetValue(ctx, "order_checking_fee", "5000")
+		chkTmp, _ := strconv.ParseFloat(feeStrTmp, 64)
+		fee = fee - chkTmp
+		if fee < 3000 {
+			fee = 3000
+		}
+		// Pembulatan 500
+		fee = math.Ceil(fee/500) * 500
+	}
 
 	return &EstimateFeeResponse{
 		EstimatedFee: fee,
@@ -1963,6 +1994,9 @@ func (s *service) processPayment(ctx context.Context, orderID uuid.UUID, payment
 					orderObj.Status = StatusCooking
 					_ = s.repo.Update(ctx, s.db, orderObj)
 					s.matchingSvc.EnqueueMatching(orderID)
+					if s.poolHub != nil {
+						go s.poolHub.BroadcastNewOrder(orderObj)
+					}
 					s.enqueueFCM(ctx, merch.OwnerID, "Pesanan Baru Masuk (Otomatis)",
 						fmt.Sprintf("Pesanan %s diterima otomatis. Silakan mulai masak!", orderObj.ItemDetails),
 						"order", map[string]string{"order_id": orderObj.ID.String(), "type": "merchant_order"},
@@ -1976,6 +2010,9 @@ func (s *service) processPayment(ctx context.Context, orderID uuid.UUID, payment
 			}
 		} else {
 			s.matchingSvc.EnqueueMatching(orderID)
+			if s.poolHub != nil {
+				go s.poolHub.BroadcastNewOrder(orderObj)
+			}
 		}
 
 		runnerID := uuid.Nil // Webhook / system action
@@ -3158,6 +3195,7 @@ func (s *service) MerchantAcceptOrder(ctx context.Context, orderID, ownerID uuid
 
 	if s.poolHub != nil {
 		go s.poolHub.BroadcastOrderStatus(orderID.String(), StatusMerchantAccepted, "order_status")
+		go s.poolHub.BroadcastNewOrder(order)
 	}
 
 	s.matchingSvc.EnqueueMatching(orderID)
