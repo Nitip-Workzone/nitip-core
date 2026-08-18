@@ -94,7 +94,17 @@ func (r *repository) FindAvailable(ctx context.Context, params FindAvailablePara
 	orders := []Order{}
 	baseQuery := r.db.NewSelect().
 		Model(&orders).
-		Where("status IN (?)", bun.List([]string{StatusPending, StatusMerchantAccepted, StatusAccepted, StatusCooking, StatusReady})).
+		WhereGroup(" AND ", func(q *bun.SelectQuery) *bun.SelectQuery {
+			q = q.WhereGroup(" AND ", func(q2 *bun.SelectQuery) *bun.SelectQuery {
+				return q2.Where("merchant_id IS NULL").
+					Where("status IN (?)", bun.List([]string{StatusPending, StatusMerchantAccepted, StatusAccepted, StatusCooking, StatusReady}))
+			})
+			q = q.WhereGroup(" OR ", func(q2 *bun.SelectQuery) *bun.SelectQuery {
+				return q2.Where("merchant_id IS NOT NULL").
+					Where("status IN (?)", bun.List([]string{StatusMerchantAccepted, StatusAccepted, StatusCooking, StatusReady}))
+			})
+			return q
+		}).
 		Where("created_at > ?", params.Cutoff).
 		WhereGroup(" AND ", func(q *bun.SelectQuery) *bun.SelectQuery {
 			return q.Where("payment_status = ?", PaymentEscrow).
