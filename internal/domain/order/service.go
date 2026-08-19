@@ -1113,6 +1113,25 @@ func (s *service) AcceptOrder(ctx context.Context, orderID, runnerID uuid.UUID) 
 		}
 	}
 
+	// Check minimum balance requirement based on runner verification status
+	var minBalanceRequired float64
+	if r.IsVerified {
+		minBalanceStr := s.configSvc.GetValue(ctx, "runner_min_balance_verified", "0")
+		minBalanceRequired, _ = strconv.ParseFloat(minBalanceStr, 64)
+	} else {
+		minBalanceStr := s.configSvc.GetValue(ctx, "runner_min_balance_unverified", "10000")
+		minBalanceRequired, _ = strconv.ParseFloat(minBalanceStr, 64)
+	}
+
+	w, err := s.walletSvc.GetBalance(ctx, runnerID)
+	if err != nil {
+		return fmt.Errorf("gagal mengecek saldo dompet: %v", err)
+	}
+
+	if w.Balance < minBalanceRequired {
+		return fmt.Errorf("saldo dompet Anda (Rp %.0f) kurang dari batas minimal untuk mengambil pesanan (Rp %.0f)", w.Balance, minBalanceRequired)
+	}
+
 	if order.RequesterID == runnerID {
 		return errors.New("tidak dapat menerima pesanan Anda sendiri")
 	}
@@ -1164,7 +1183,8 @@ func (s *service) AcceptOrder(ctx context.Context, orderID, runnerID uuid.UUID) 
 		}
 
 		// 1b. Hold Runner Liability (Deposit)
-		if order.EstimatedCost > 0 {
+		// Only hold liability for unverified runners! Verified runners do not hold balance.
+		if order.EstimatedCost > 0 && !r.IsVerified {
 			if err := s.walletSvc.HoldLiability(ctx, tx, runnerID, order.ID, order.EstimatedCost); err != nil {
 				return err
 			}

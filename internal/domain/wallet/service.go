@@ -710,6 +710,21 @@ func (s *service) ReleaseLiability(ctx context.Context, db bun.IDB, runnerID, or
 		return err
 	}
 
+	// Check if liability was actually held for this order
+	exists, err := db.NewSelect().
+		Model((*WalletTransaction)(nil)).
+		Where("wallet_id = ?", w.ID).
+		Where("order_id = ?", orderID).
+		Where("type = ?", TypeLiabilityHold).
+		Exists(ctx)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		// Liability was not held (e.g. verified runner), so nothing to release
+		return nil
+	}
+
 	if err := s.repo.UpdateWalletBalance(ctx, db, w.ID, amount); err != nil {
 		return err
 	}
