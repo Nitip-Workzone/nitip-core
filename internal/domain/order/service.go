@@ -55,6 +55,7 @@ type Matcher interface {
 	FindNearestRunners(ctx context.Context, lat, lng float64, radiusKm float64) ([]user.User, error)
 	DispatchOrder(ctx context.Context, orderID string, runners []user.User) error
 	EnqueueMatching(orderID uuid.UUID)
+	EscalateMatching(ctx context.Context, orderID uuid.UUID) error
 }
 
 type CreateOrderRequest struct {
@@ -175,6 +176,7 @@ type Service interface {
 	SetPoolBroadcaster(b PoolBroadcaster)
 	SetPromotionService(ps PromotionService)
 	SetFCMDispatcher(d FCMDispatcher)
+	CheckProximity(ctx context.Context, lat, lng float64, merchantID *uuid.UUID, serviceCategory string) (int, error)
 }
 
 type PoolBroadcaster interface {
@@ -612,7 +614,7 @@ func (s *service) Create(ctx context.Context, requesterID uuid.UUID, req CreateO
 
 	// Auto confirm for COD order
 	if order.PaymentMethod == MethodCOD {
-		if merch != nil && merch.AutoConfirm {
+		if false {
 			order.Status = StatusCooking
 		}
 	}
@@ -719,7 +721,7 @@ func (s *service) Create(ctx context.Context, requesterID uuid.UUID, req CreateO
 
 			order.PaymentStatus = PaymentEscrow
 
-			if merch != nil && merch.AutoConfirm {
+			if false {
 				order.Status = StatusCooking
 			}
 
@@ -2010,7 +2012,7 @@ func (s *service) processPayment(ctx context.Context, orderID uuid.UUID, payment
 		if orderObj != nil && orderObj.MerchantID != nil {
 			merch, err := s.merchantSvc.GetMerchantByID(ctx, *orderObj.MerchantID)
 			if err == nil {
-				if merch.AutoConfirm {
+				if false {
 					orderObj.Status = StatusCooking
 					_ = s.repo.Update(ctx, s.db, orderObj)
 					s.matchingSvc.EnqueueMatching(orderID)
@@ -2445,6 +2447,7 @@ func (s *service) GetAvailableOrders(ctx context.Context, runnerID uuid.UUID) ([
 func (s *service) StartBackgroundCleanup(ctx context.Context) {
 	expiryTicker := time.NewTicker(5 * time.Hour)
 	geoTicker := time.NewTicker(1 * time.Hour)
+	escalationTicker := time.NewTicker(1 * time.Minute)
 
 	// Sync once on startup asynchronously
 	go s.syncRedisGeoOrderPool(context.Background())
@@ -2455,14 +2458,72 @@ func (s *service) StartBackgroundCleanup(ctx context.Context) {
 			case <-ctx.Done():
 				expiryTicker.Stop()
 				geoTicker.Stop()
+				escalationTicker.Stop()
 				return
 			case <-expiryTicker.C:
 				s.expireOldOrders(context.Background())
 			case <-geoTicker.C:
 				s.syncRedisGeoOrderPool(context.Background())
+			case <-escalationTicker.C:
+				s.escalateAndCancelUnassignedOrders(context.Background())
 			}
 		}
 	}()
+}
+
+func (s *service) escalateAndCancelUnassignedOrders(ctx context.Context) {
+	// 1. Eskalasi Pesanan Regular yang Belum Diambil > 30 Detik
+	var regularOrders []Order
+	thirtySecondsAgo := time.Now().Add(-30 * time.Second)
+	err := s.db.NewSelect().
+		Model(&regularOrders).
+		Where("order_type = ?", TypeRegular).
+		Where("status IN (?)", bun.List([]string{StatusPending, StatusCooking})).
+		Where("runner_id IS NULL").
+		Where("escalated_at IS NULL").
+		Where("created_at < ?", thirtySecondsAgo).
+		Scan(ctx)
+	if err == nil {
+		for _, o := range regularOrders {
+			log.Printf("[matching] Escalating unassigned regular order: %s", o.ID)
+			if err := s.matchingSvc.EscalateMatching(ctx, o.ID); err != nil {
+				log.Printf("[matching] Failed to escalate regular order %s: %v", o.ID, err)
+			}
+		}
+	} else {
+		log.Printf("[matching-escalation] Error fetching regular orders for escalation: %v", err)
+	}
+
+	// 2. Batalkan Otomatis (Auto-Cancel) & Refund Pesanan > 15 Menit
+	cancelMinutesStr := s.configSvc.GetValue(ctx, "order_auto_cancel_minutes", "15")
+	cancelMinutes, err := strconv.Atoi(cancelMinutesStr)
+	if err != nil || cancelMinutes <= 0 {
+		cancelMinutes = 15
+	}
+	cutoffTime := time.Now().Add(-time.Duration(cancelMinutes) * time.Minute)
+
+	var staleOrders []Order
+	err = s.db.NewSelect().
+		Model(&staleOrders).
+		Where("status IN (?)", bun.List([]string{StatusPending, StatusMerchantAccepted, StatusCooking, StatusReady})).
+		Where("runner_id IS NULL").
+		Where("created_at < ?", cutoffTime).
+		Scan(ctx)
+	if err == nil {
+		for _, o := range staleOrders {
+			log.Printf("[order-autocancel] Auto-cancelling unassigned order: %s", o.ID)
+			if err := s.ForceCancelOrder(ctx, o.ID); err != nil {
+				log.Printf("[order-autocancel] Failed to auto-cancel order %s: %v", o.ID, err)
+			} else {
+				s.enqueueFCM(ctx, o.RequesterID, "Pesanan Dibatalkan Otomatis",
+					fmt.Sprintf("Pesanan %s dibatalkan otomatis karena tidak ada Runner yang mengambil setelah %d menit.", o.ItemDetails, cancelMinutes),
+					"order", map[string]string{"order_id": o.ID.String(), "type": "order_cancelled_expired"},
+					fmt.Sprintf("order_%s", o.ID.String()), true)
+			}
+		}
+	} else {
+		log.Printf("[order-autocancel] Error fetching orders for auto-cancel: %v", err)
+	}
 }
 
 func (s *service) expireOldOrders(ctx context.Context) {
@@ -3262,4 +3323,28 @@ func (s *service) MerchantReadyOrder(ctx context.Context, orderID, ownerID uuid.
 			fmt.Sprintf("order_%s", order.ID.String()), true)
 	}
 	return nil
+}
+
+func (s *service) CheckProximity(ctx context.Context, lat, lng float64, merchantID *uuid.UUID, serviceCategory string) (int, error) {
+	var radius float64
+	var radiusStr string
+	if merchantID != nil {
+		radiusStr = s.configSvc.GetValue(ctx, "matching_radius_food", "5")
+	} else if serviceCategory == CategoryBeli {
+		radiusStr = s.configSvc.GetValue(ctx, "matching_radius_beli", "8")
+	} else {
+		radiusStr = s.configSvc.GetValue(ctx, "matching_radius_kirim", "8")
+	}
+
+	var err error
+	radius, err = strconv.ParseFloat(radiusStr, 64)
+	if err != nil {
+		radius = 8.0
+	}
+
+	runners, err := s.matchingSvc.FindNearestRunners(ctx, lat, lng, radius)
+	if err != nil {
+		return 0, err
+	}
+	return len(runners), nil
 }

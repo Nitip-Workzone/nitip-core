@@ -162,6 +162,10 @@ func main() {
 	auditRepo := audit.NewRepository(db)
 	auditSvc := audit.NewService(auditRepo, db)
 
+	// Config
+	cfgRepo := systemconfig.NewRepository(db)
+	cfgSvc := systemconfig.NewService(cfgRepo)
+
 	// Auth (API Key + Grant Token)
 	authHandler := auth.NewHandler(db)
 	fiberApp.RegisterRoutes(authHandler.RegisterRoutes)
@@ -181,7 +185,7 @@ func main() {
 	// Order Repository (Needed by Matching)
 	orderRepo := order.NewRepository(db)
 
-	matchingSvc := matching.NewService(userRepo, tripRepo, orderRepo, redisCache, fcmClient)
+	matchingSvc := matching.NewService(userRepo, tripRepo, orderRepo, redisCache, fcmClient, db, cfgSvc)
 	// Worker pool will be started gracefully in the background workers section
 
 	// Notification History + FCM Dispatcher (Opsi A - BE only queue with per-device bucket 20 burst + collapse_id)
@@ -222,9 +226,6 @@ func main() {
 		logger.Warn("Firebase App missing, real push notifications and cloud storage disabled (using Dummies)")
 	}
 
-	// Config
-	cfgRepo := systemconfig.NewRepository(db)
-	cfgSvc := systemconfig.NewService(cfgRepo)
 	cfgHandler := systemconfig.NewHandler(cfgSvc, db, redisCache)
 	fiberApp.RegisterRoutes(cfgHandler.RegisterRoutes)
 

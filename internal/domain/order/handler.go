@@ -45,6 +45,7 @@ func (h *Handler) RegisterRoutes(router fiber.Router) {
 	// Requester routes
 	orders.Post("/", middleware.RateLimit(h.redis, 5, 1*time.Minute), middleware.Role(user.RoleRequester), h.Create)
 	orders.Post("/estimate-fee", h.GetFeeEstimate)
+	orders.Post("/check-proximity", h.CheckProximity)
 	// Merchant should not get 403 on /me - return empty list in service instead (avoid Flutter log spam)
 	orders.Get("/me", middleware.Role(user.RoleRequester, user.RoleRunner, user.RoleMerchant), h.GetMyOrders)
 	orders.Post("/:id/cancel", middleware.Role(user.RoleRequester, user.RoleRunner, user.RoleMerchant), h.Cancel)
@@ -1350,4 +1351,31 @@ func (h *Handler) MerchantReady(c *fiber.Ctx) error {
 	}
 
 	return response.Success(c, "pesanan ditandai siap diambil", nil)
+}
+
+type CheckProximityRequest struct {
+	Latitude        float64    `json:"latitude" validate:"required"`
+	Longitude       float64    `json:"longitude" validate:"required"`
+	MerchantID      *uuid.UUID `json:"merchant_id,omitempty"`
+	ServiceCategory string     `json:"service_category" validate:"omitempty,oneof=beli kirim"`
+}
+
+func (h *Handler) CheckProximity(c *fiber.Ctx) error {
+	var req CheckProximityRequest
+	if err := c.BodyParser(&req); err != nil {
+		return response.BadRequest(c, "format permintaan tidak valid")
+	}
+
+	if errs := validator.Validate(req); errs != nil {
+		return response.ValidationFailed(c, errs)
+	}
+
+	count, err := h.service.CheckProximity(c.Context(), req.Latitude, req.Longitude, req.MerchantID, req.ServiceCategory)
+	if err != nil {
+		return response.InternalError(c, err.Error())
+	}
+
+	return response.Success(c, "pemeriksaan kedekatan runner berhasil", fiber.Map{
+		"active_runners_count": count,
+	})
 }

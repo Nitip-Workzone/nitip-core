@@ -153,7 +153,7 @@ func (s *service) CreateMerchant(ctx context.Context, ownerID uuid.UUID, name, d
 		Longitude:       lng,
 		Category:        category,
 		IsOpen:          true,
-		AutoConfirm:     autoConfirm,
+		AutoConfirm:     false, // Forced to false per business requirements (disabled)
 		MaxActiveOrders: maxActiveOrders,
 		Rating:          5.0,
 		CreatedAt:       time.Now(),
@@ -337,7 +337,7 @@ func (s *service) ToggleAutoConfirm(ctx context.Context, id uuid.UUID, autoConfi
 		return nil, err
 	}
 
-	m.AutoConfirm = autoConfirm
+	m.AutoConfirm = false // Forced to false per business requirements (disabled)
 	m.UpdatedAt = time.Now()
 
 	if err := s.repo.UpdateMerchant(ctx, m); err != nil {

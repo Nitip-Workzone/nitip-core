@@ -54,6 +54,7 @@ type Order struct {
 	PickupName    string  `bun:"pickup_name" json:"pickup_name,omitempty"`
 	PickupAddress string  `bun:"pickup_address" json:"pickup_address,omitempty"`
 	DistanceKm    float64 `bun:"distance_km" json:"distance_km"`
+	EscalatedAt   *time.Time `bun:"escalated_at" json:"escalated_at,omitempty"`
 
 	// Nitip Kirim (Package Delivery)
 	ServiceCategory string `bun:"service_category,notnull,default:'beli'" json:"service_category"`

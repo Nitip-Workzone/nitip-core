@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	"github.com/codecoffy/nitip-core/pkg/geolocation"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
+	"github.com/uptrace/bun"
 )
 
 type Service interface {
@@ -26,6 +28,7 @@ type Service interface {
 	// Worker Pool Methods
 	EnqueueMatching(orderID uuid.UUID)
 	StartWorkerPool(ctx context.Context, numWorkers int)
+	EscalateMatching(ctx context.Context, orderID uuid.UUID) error
 }
 
 type rankedRunner struct {
@@ -37,6 +40,10 @@ type dispatcherIface interface {
 	Enqueue(ctx context.Context, job notification.Job) error
 }
 
+type configIface interface {
+	GetValue(ctx context.Context, key string, defaultValue string) string
+}
+
 type service struct {
 	userRepo      user.Repository
 	tripRepo      trip.Repository
@@ -46,15 +53,19 @@ type service struct {
 	fcmDispatcher dispatcherIface
 	jobQueue      chan uuid.UUID
 	workerOnce    sync.Once
+	db            *bun.DB
+	configSvc     configIface
 }
 
-func NewService(userRepo user.Repository, tripRepo trip.Repository, orderRepo order.Repository, redis *cache.Redis, fcm notification.Notifier) Service {
+func NewService(userRepo user.Repository, tripRepo trip.Repository, orderRepo order.Repository, redis *cache.Redis, fcm notification.Notifier, db *bun.DB, configSvc configIface) Service {
 	return &service{
 		userRepo:  userRepo,
 		tripRepo:  tripRepo,
 		orderRepo: orderRepo,
 		redis:     redis,
 		fcm:       fcm,
+		db:        db,
+		configSvc: configSvc,
 		jobQueue:  make(chan uuid.UUID, 1000), // Buffered channel to prevent blocking
 	}
 }
@@ -132,7 +143,41 @@ func (s *service) processMatching(ctx context.Context, orderID uuid.UUID) {
 		return
 	}
 
-	// 1. Fetch active trips
+	// Deteksi jika instant, langsung proximity dispatch
+	if ord.OrderType == order.TypeInstant {
+		var radius float64
+		var radiusStr string
+		if ord.MerchantID != nil {
+			radiusStr = s.configSvc.GetValue(ctx, "matching_radius_food", "5")
+		} else if ord.ServiceCategory == order.CategoryBeli {
+			radiusStr = s.configSvc.GetValue(ctx, "matching_radius_beli", "8")
+		} else {
+			radiusStr = s.configSvc.GetValue(ctx, "matching_radius_kirim", "8")
+		}
+		radius, err = strconv.ParseFloat(radiusStr, 64)
+		if err != nil {
+			radius = 8.0
+		}
+
+		runners, err := s.FindNearestRunners(ctx, ord.PickupLat, ord.PickupLng, radius)
+		if err != nil {
+			log.Printf("Error finding nearest runners for instant order %s: %v", orderID, err)
+			return
+		}
+
+		if len(runners) > 0 {
+			go func(runners []user.User) {
+				bgCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+				if err := s.DispatchOrder(bgCtx, orderID.String(), runners); err != nil {
+					log.Printf("Error dispatching matched instant order %s: %v", orderID, err)
+				}
+			}(runners)
+		}
+		return
+	}
+
+	// 1. Fetch active trips (Untuk regular order)
 	trips, err := s.tripRepo.FindActiveByLocation(ctx, ord.PickupLat, ord.PickupLng, 10.0)
 	if err != nil {
 		log.Printf("Error finding active trips: %v", err)
@@ -321,6 +366,30 @@ func (s *service) DispatchOrder(ctx context.Context, orderID string, runners []u
 	cooldownKeyFmt := "fcm:cooldown:%s:%s"
 	collapseID := fmt.Sprintf("order_%s", orderID)
 
+	// Tentukan pesan notifikasi berdasarkan fitur/kategori order
+	title := "Order Baru di Sekitarmu!"
+	body := "Ada penitip yang membutuhkan bantuanmu."
+	
+	ordUUID, err := uuid.Parse(orderID)
+	if err == nil {
+		if ord, err := s.orderRepo.FindByID(ctx, ordUUID); err == nil && ord != nil {
+			if ord.MerchantID != nil {
+				title = "Order Nitip-Food Baru!"
+				body = "Ada pesanan makanan baru dari merchant terdekat yang butuh diantarkan."
+			} else if ord.ServiceCategory == order.CategoryBeli {
+				title = "Order Nitip-Beli Baru!"
+				if ord.PickupName != "" {
+					body = fmt.Sprintf("Bantu belikan barang di %s.", ord.PickupName)
+				} else {
+					body = "Ada yang titip beli barang dekat lokasimu."
+				}
+			} else if ord.ServiceCategory == order.CategoryKirim {
+				title = "Order Nitip-Kirim Baru!"
+				body = "Ada paket yang butuh diantarkan di dekat lokasimu."
+			}
+		}
+	}
+
 	// Use dispatcher per-runner with collapse to respect 20 burst/device
 	if s.fcmDispatcher != nil {
 		// Limit to top 5 nearest to avoid fanout spam (free tier 1000/sec topic, but per device burst 20)
@@ -341,8 +410,8 @@ func (s *service) DispatchOrder(ctx context.Context, orderID string, runners []u
 			}
 			_ = s.fcmDispatcher.Enqueue(ctx, notification.Job{
 				UserID:     r.ID,
-				Title:      "Order Baru di Sekitarmu!",
-				Body:       "Ada penitip yang membutuhkan bantuanmu.",
+				Title:      title,
+				Body:       body,
 				Type:       "order_dispatch",
 				Data:       map[string]string{"order_id": orderID},
 				CollapseID: collapseID,
@@ -372,7 +441,45 @@ func (s *service) DispatchOrder(ctx context.Context, orderID string, runners []u
 	if len(tokens) == 0 {
 		return nil
 	}
-	return s.fcm.SendMulticast(ctx, tokens, "Order Baru di Sekitarmu!", "Ada penitip yang membutuhkan bantuanmu.", map[string]string{
+	return s.fcm.SendMulticast(ctx, tokens, title, body, map[string]string{
 		"order_id": orderID,
 	})
+}
+
+func (s *service) EscalateMatching(ctx context.Context, orderID uuid.UUID) error {
+	ord, err := s.orderRepo.FindByID(ctx, orderID)
+	if err != nil {
+		return err
+	}
+
+	var radius float64
+	var radiusStr string
+	if ord.MerchantID != nil {
+		radiusStr = s.configSvc.GetValue(ctx, "matching_radius_food", "5")
+	} else if ord.ServiceCategory == order.CategoryBeli {
+		radiusStr = s.configSvc.GetValue(ctx, "matching_radius_beli", "8")
+	} else {
+		radiusStr = s.configSvc.GetValue(ctx, "matching_radius_kirim", "8")
+	}
+	radius, err = strconv.ParseFloat(radiusStr, 64)
+	if err != nil {
+		radius = 8.0
+	}
+
+	runners, err := s.FindNearestRunners(ctx, ord.PickupLat, ord.PickupLng, radius)
+	if err != nil {
+		return err
+	}
+
+	if len(runners) > 0 {
+		err = s.DispatchOrder(ctx, orderID.String(), runners)
+		if err != nil {
+			return err
+		}
+	}
+
+	now := time.Now()
+	ord.EscalatedAt = &now
+	ord.UpdatedAt = now
+	return s.orderRepo.Update(ctx, s.db, ord)
 }
