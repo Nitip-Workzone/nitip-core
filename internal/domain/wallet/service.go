@@ -212,6 +212,16 @@ func (s *service) InitiateTopUp(ctx context.Context, userID uuid.UUID, amount fl
 	}
 
 	var reference string
+	if config.App.UsePaymentGateway {
+		if config.App.MidtransServerKey != "" && !config.App.UseMockPayment {
+			reference = "TOPUP-" + uuid.New().String()[:8]
+		} else {
+			reference = "MOCK-" + uuid.New().String()[:8]
+		}
+	} else {
+		reference = "TOPUP-QRIS-" + uuid.New().String()[:8]
+	}
+
 	var qrString string
 	var deeplinkString string
 
@@ -223,9 +233,10 @@ func (s *service) InitiateTopUp(ctx context.Context, userID uuid.UUID, amount fl
 	var uniqueCodeVal int
 	if s.redis != nil {
 		for i := 1; i <= 99; i++ {
-			key := fmt.Sprintf("active_uniq:%.2f:%d", amount, i)
+			candidateTotal := amount + configuredPGFee + float64(i)
+			key := fmt.Sprintf("active_total_payment:%.2f", candidateTotal)
 			//nolint:staticcheck // s.redis.Client().SetNX is deprecated
-			ok, err := s.redis.Client().SetNX(ctx, key, "active", 15*time.Minute).Result()
+			ok, err := s.redis.Client().SetNX(ctx, key, reference, 15*time.Minute).Result()
 			if err == nil && ok {
 				uniqueCodeVal = i
 				break
@@ -241,8 +252,6 @@ func (s *service) InitiateTopUp(ctx context.Context, userID uuid.UUID, amount fl
 
 	if config.App.UsePaymentGateway {
 		if config.App.MidtransServerKey != "" && !config.App.UseMockPayment {
-			reference = "TOPUP-" + uuid.New().String()[:8]
-
 			// Get user info for Midtrans payload
 			userObj, err := s.userSvc.GetByID(ctx, userID, userID)
 			var userEmail string
@@ -305,9 +314,6 @@ func (s *service) InitiateTopUp(ctx context.Context, userID uuid.UUID, amount fl
 				qrString = chargeResp.Actions[0].URL
 			}
 		} else {
-			// FALLBACK to mock-qris
-			reference = "MOCK-" + uuid.New().String()[:8]
-
 			payload := map[string]interface{}{
 				"reference_id": reference,
 				"amount":       int64(grossAmt),
@@ -342,12 +348,10 @@ func (s *service) InitiateTopUp(ctx context.Context, userID uuid.UUID, amount fl
 				return nil, fmt.Errorf("gagal membaca respon payment gateway")
 			}
 
-			reference = qrisResp.TrxID
 			qrString = qrisResp.QrisString
 		}
 	} else {
 		// Generate dynamic QRIS locally from static template
-		reference = "TOPUP-QRIS-" + uuid.New().String()[:8]
 		var err error
 		qrString, err = utils.ConvertStaticToDynamicQRIS(config.App.StaticQrisTemplate, grossAmt)
 		if err != nil {
@@ -426,8 +430,17 @@ func (s *service) FinalizeTopUp(ctx context.Context, reference string, notificat
 
 		// 4. Release unique code
 		if wtx != nil && wtx.UniqueCode > 0 && s.redis != nil {
-			cacheKey := fmt.Sprintf("active_uniq:%.2f:%d", wtx.Amount, wtx.UniqueCode)
-			_ = s.redis.Del(ctx, cacheKey)
+			pgFeeStr := s.configSvc.GetValue(ctx, "qris_pg_fee", "0")
+			configuredPGFee, _ := strconv.ParseFloat(pgFeeStr, 64)
+			totalPaymentAmt := wtx.Amount + configuredPGFee + float64(wtx.UniqueCode)
+
+			// Clean up new reservation format
+			cacheKeyNew := fmt.Sprintf("active_total_payment:%.2f", totalPaymentAmt)
+			_ = s.redis.ReleaseLock(ctx, cacheKeyNew, wtx.Reference)
+
+			// Clean up old reservation format for backward compatibility
+			cacheKeyOld := fmt.Sprintf("active_uniq:%.2f:%d", wtx.Amount, wtx.UniqueCode)
+			_ = s.redis.Del(ctx, cacheKeyOld)
 		}
 
 		return nil

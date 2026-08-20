@@ -40,6 +40,10 @@ func NewRedis(cfg *config.Config, logger *zap.Logger) (*Redis, error) {
 	return &Redis{client: client, logger: logger}, nil
 }
 
+func NewRedisFromClient(client *redis.Client, logger *zap.Logger) *Redis {
+	return &Redis{client: client, logger: logger}
+}
+
 func (r *Redis) Get(ctx context.Context, key string) (string, error) {
 	val, err := r.client.Get(ctx, key).Result()
 	if err == redis.Nil {

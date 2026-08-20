@@ -884,26 +884,44 @@ func (s *service) GetByID(ctx context.Context, id uuid.UUID, requestingUserID uu
 		return nil, err
 	}
 
+	// Authorization Logic:
+	// 1. Admin can see anything
+	authorized := role == user.RoleAdmin
+
+	// 2. Requester (owner of the order) can see it
+	if !authorized && order.RequesterID == requestingUserID {
+		authorized = true
+	}
+
+	// 3. Runner assigned to the order can see it
+	if !authorized && order.RunnerID != nil && *order.RunnerID == requestingUserID {
+		authorized = true
+	}
+
+	// 4. Any Runner can see pool orders (pending/merchant accepted/cooking/ready)
+	if !authorized && role == user.RoleRunner && (order.Status == StatusPending || order.Status == StatusMerchantAccepted || order.Status == StatusCooking || order.Status == StatusReady) {
+		authorized = true
+	}
+
+	// 5. Merchant owner of the order can see it
+	if !authorized && role == user.RoleMerchant && order.MerchantID != nil {
+		exists, err := s.db.NewSelect().
+			Table("merchants").
+			Where("id = ? AND owner_id = ?", *order.MerchantID, requestingUserID).
+			Exists(ctx)
+		if err == nil && exists {
+			authorized = true
+		}
+	}
+
+	if !authorized {
+		return nil, errors.New("akses ditolak: Anda tidak memiliki wewenang untuk melihat pesanan ini")
+	}
+
 	s.populateRunnerInfo(ctx, order)
 	s.populateReviewInfo(ctx, order)
 	s.populatePaymentInfo(ctx, order)
 	s.signURLs(ctx, order)
-
-	// Authorization Logic:
-	// 1. Admin can see anything
-	if role == user.RoleAdmin {
-		return order, nil
-	}
-
-	// 2. Requester or Runner of the order can see it
-	if order.RequesterID == requestingUserID || (order.RunnerID != nil && *order.RunnerID == requestingUserID) {
-		return order, nil
-	}
-
-	// 3. Any Runner can see PENDING orders (to decide whether to take it)
-	if role == user.RoleRunner && order.Status == StatusPending {
-		return order, nil
-	}
 
 	return order, nil
 }
@@ -1481,9 +1499,13 @@ func (s *service) CancelOrder(ctx context.Context, orderID, userID uuid.UUID, re
 
 	if err == nil {
 		if ord != nil && ord.UniqueCode > 0 && s.redis != nil {
+			cacheKeyNew := fmt.Sprintf("active_total_payment:%.2f", ord.TotalPayment)
+			_ = s.redis.ReleaseLock(ctx, cacheKeyNew, ord.ID.String())
+
+			// Clean up old reservation format for backward compatibility
 			baseAmt := ord.TotalPayment - ord.PGFee
-			cacheKey := fmt.Sprintf("active_uniq:%.2f:%d", baseAmt, ord.UniqueCode)
-			_ = s.redis.Del(ctx, cacheKey)
+			cacheKeyOld := fmt.Sprintf("active_uniq:%.2f:%d", baseAmt, ord.UniqueCode)
+			_ = s.redis.Del(ctx, cacheKeyOld)
 		}
 		// Notify other parties about cancellation (unified via enqueueFCM)
 		if isRequester {
@@ -1990,9 +2012,14 @@ func (s *service) processPayment(ctx context.Context, orderID uuid.UUID, payment
 		if rowsAffected > 0 {
 			orderObj, _ = s.repo.FindByID(ctx, orderID)
 			if orderObj != nil && orderObj.UniqueCode > 0 && s.redis != nil {
+				// Clean up new reservation format
+				cacheKeyNew := fmt.Sprintf("active_total_payment:%.2f", orderObj.TotalPayment)
+				_ = s.redis.ReleaseLock(ctx, cacheKeyNew, orderObj.ID.String())
+
+				// Clean up old reservation format for backward compatibility
 				baseAmt := orderObj.TotalPayment - orderObj.PGFee
-				cacheKey := fmt.Sprintf("active_uniq:%.2f:%d", baseAmt, orderObj.UniqueCode)
-				_ = s.redis.Del(ctx, cacheKey)
+				cacheKeyOld := fmt.Sprintf("active_uniq:%.2f:%d", baseAmt, orderObj.UniqueCode)
+				_ = s.redis.Del(ctx, cacheKeyOld)
 			}
 		}
 
@@ -2083,56 +2110,70 @@ func (s *service) GetAllWithFilters(ctx context.Context, status string, offset, 
 }
 
 func (s *service) ForceCancelOrder(ctx context.Context, orderID uuid.UUID) error {
-	order, err := s.repo.FindByID(ctx, orderID)
-	if err != nil {
-		return err
-	}
-
-	if order.Status == StatusCompleted || order.Status == StatusCancelled {
-		return errors.New("tidak dapat membatalkan pesanan yang sudah selesai atau dibatalkan")
-	}
+	var uniqueCode int
+	var totalPayment float64
+	var pgFee float64
 
 	// --- Unified Admin Force-Cancel Transaction ---
-	err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		lockedOrder, err := s.repo.FindByIDForUpdate(ctx, tx, orderID)
+		if err != nil {
+			return err
+		}
+
+		if lockedOrder.Status == StatusCompleted || lockedOrder.Status == StatusCancelled || lockedOrder.Status == StatusExpired {
+			return errors.New("tidak dapat membatalkan pesanan yang sudah selesai atau dibatalkan")
+		}
+
+		uniqueCode = lockedOrder.UniqueCode
+		totalPayment = lockedOrder.TotalPayment
+		pgFee = lockedOrder.PGFee
+
 		// 1. Handle Escrow Refund if applicable
-		if order.PaymentMethod == MethodEscrow && order.PaymentStatus == PaymentEscrow {
-			totalEscrow := order.EstimatedCost + order.DeliveryFee
-			if err := s.walletSvc.RefundEscrow(ctx, tx, order.RequesterID, orderID, totalEscrow); err != nil {
+		if lockedOrder.PaymentMethod == MethodEscrow && lockedOrder.PaymentStatus == PaymentEscrow {
+			totalEscrow := lockedOrder.EstimatedCost + lockedOrder.DeliveryFee
+			if err := s.walletSvc.RefundEscrow(ctx, tx, lockedOrder.RequesterID, orderID, totalEscrow); err != nil {
 				return errors.New("gagal mengembalikan dana escrow: " + err.Error())
 			}
-			order.PaymentStatus = PaymentRefunded
+			lockedOrder.PaymentStatus = PaymentRefunded
 		}
 
 		// 1b. Release Runner Liability
-		if order.RunnerID != nil && order.EstimatedCost > 0 {
-			if err := s.walletSvc.ReleaseLiability(ctx, tx, *order.RunnerID, orderID, order.EstimatedCost); err != nil {
+		if lockedOrder.RunnerID != nil && lockedOrder.EstimatedCost > 0 {
+			if err := s.walletSvc.ReleaseLiability(ctx, tx, *lockedOrder.RunnerID, orderID, lockedOrder.EstimatedCost); err != nil {
 				return err
 			}
 		}
 
 		// 2. Restore Capacity
-		if order.RunnerID != nil && order.TripID != nil {
-			if err := s.tripRepo.RestoreCapacity(ctx, tx, *order.TripID, order.WeightKg, order.VolumeLiters); err != nil {
+		if lockedOrder.RunnerID != nil && lockedOrder.TripID != nil {
+			if err := s.tripRepo.RestoreCapacity(ctx, tx, *lockedOrder.TripID, lockedOrder.WeightKg, lockedOrder.VolumeLiters); err != nil {
 				return errors.New("gagal memulihkan kapasitas perjalanan")
 			}
 		}
 
 		// Release promotion usage
-		if s.promotionSvc != nil && order.PromotionID != nil {
+		if s.promotionSvc != nil && lockedOrder.PromotionID != nil {
 			_ = s.promotionSvc.ReleaseUsage(ctx, tx, orderID)
 		}
 
-		order.Status = StatusCancelled
-		order.UpdatedAt = time.Now()
+		lockedOrder.Status = StatusCancelled
+		lockedOrder.UpdatedAt = time.Now()
 
-		return s.repo.Update(ctx, tx, order)
+		return s.repo.Update(ctx, tx, lockedOrder)
 	})
+
 	if err == nil && s.redis != nil {
 		_ = s.redis.GeoRemoveOrder(ctx, orderID.String())
-		if order != nil && order.UniqueCode > 0 {
-			baseAmt := order.TotalPayment - order.PGFee
-			cacheKey := fmt.Sprintf("active_uniq:%.2f:%d", baseAmt, order.UniqueCode)
-			_ = s.redis.Del(ctx, cacheKey)
+		if uniqueCode > 0 {
+			// Clean up new reservation format
+			cacheKeyNew := fmt.Sprintf("active_total_payment:%.2f", totalPayment)
+			_ = s.redis.ReleaseLock(ctx, cacheKeyNew, orderID.String())
+
+			// Clean up old reservation format for backward compatibility
+			baseAmt := totalPayment - pgFee
+			cacheKeyOld := fmt.Sprintf("active_uniq:%.2f:%d", baseAmt, uniqueCode)
+			_ = s.redis.Del(ctx, cacheKeyOld)
 		}
 	}
 	return err
@@ -2183,64 +2224,78 @@ func (s *service) DisputeOrder(ctx context.Context, orderID, requesterID uuid.UU
 }
 
 func (s *service) ResolveDispute(ctx context.Context, orderID uuid.UUID, side string) error {
-	order, err := s.repo.FindByID(ctx, orderID)
-	if err != nil {
-		return err
-	}
-
-	if order.Status != StatusDisputed {
-		return errors.New("pesanan tidak dalam status sengketa")
-	}
+	var itemDetails string
+	var requesterID uuid.UUID
+	var runnerID *uuid.UUID
 
 	// --- Unified Resolution Transaction ---
-	err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		if order.PaymentMethod == MethodEscrow {
+	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		lockedOrder, err := s.repo.FindByIDForUpdate(ctx, tx, orderID)
+		if err != nil {
+			return err
+		}
+
+		if lockedOrder.Status != StatusDisputed {
+			return errors.New("pesanan tidak dalam status sengketa")
+		}
+
+		itemDetails = lockedOrder.ItemDetails
+		requesterID = lockedOrder.RequesterID
+		runnerID = lockedOrder.RunnerID
+
+		if lockedOrder.PaymentMethod == MethodEscrow {
 			switch side {
 			case user.RoleRequester:
-				totalAmount := order.EstimatedCost + order.DeliveryFee
-				if err := s.walletSvc.RefundEscrow(ctx, tx, order.RequesterID, orderID, totalAmount); err != nil {
+				if lockedOrder.PaymentStatus != PaymentEscrow {
+					return errors.New("dana escrow pesanan ini tidak dapat dikembalikan karena status pembayaran tidak valid")
+				}
+				totalAmount := lockedOrder.EstimatedCost + lockedOrder.DeliveryFee
+				if err := s.walletSvc.RefundEscrow(ctx, tx, lockedOrder.RequesterID, orderID, totalAmount); err != nil {
 					return errors.New("gagal mengembalikan dana escrow: " + err.Error())
 				}
-				order.PaymentStatus = PaymentRefunded
-				order.Status = StatusCancelled
+				lockedOrder.PaymentStatus = PaymentRefunded
+				lockedOrder.Status = StatusCancelled
 
 				// Restore Capacity
-				if order.RunnerID != nil && order.TripID != nil {
-					if err := s.tripRepo.RestoreCapacity(ctx, tx, *order.TripID, order.WeightKg, order.VolumeLiters); err != nil {
+				if lockedOrder.RunnerID != nil && lockedOrder.TripID != nil {
+					if err := s.tripRepo.RestoreCapacity(ctx, tx, *lockedOrder.TripID, lockedOrder.WeightKg, lockedOrder.VolumeLiters); err != nil {
 						return errors.New("gagal memulihkan kapasitas perjalanan")
 					}
 				}
 			case user.RoleRunner:
-				if order.RunnerID == nil {
+				if lockedOrder.PaymentStatus != PaymentEscrow {
+					return errors.New("dana escrow pesanan ini tidak dapat dilepaskan karena status pembayaran tidak valid")
+				}
+				if lockedOrder.RunnerID == nil {
 					return errors.New("pesanan tidak memiliki runner")
 				}
-				platformFee := order.ServiceFee
-				refundAmount := order.CheckingFee
-				totalRunnerPayout := order.EstimatedCost + (order.DeliveryFee - order.ServiceFee - order.CheckingFee)
-				if err := s.walletSvc.ReleaseEscrowWithRefund(ctx, tx, *order.RunnerID, order.RequesterID, orderID, totalRunnerPayout, platformFee, refundAmount); err != nil {
+				platformFee := lockedOrder.ServiceFee
+				refundAmount := lockedOrder.CheckingFee
+				totalRunnerPayout := lockedOrder.EstimatedCost + (lockedOrder.DeliveryFee - lockedOrder.ServiceFee - lockedOrder.CheckingFee)
+				if err := s.walletSvc.ReleaseEscrowWithRefund(ctx, tx, *lockedOrder.RunnerID, lockedOrder.RequesterID, orderID, totalRunnerPayout, platformFee, refundAmount); err != nil {
 					return errors.New("gagal melepaskan dana escrow: " + err.Error())
 				}
 
 				// Release Runner Liability
-				if order.EstimatedCost > 0 {
-					if err := s.walletSvc.ReleaseLiability(ctx, tx, *order.RunnerID, orderID, order.EstimatedCost); err != nil {
+				if lockedOrder.EstimatedCost > 0 {
+					if err := s.walletSvc.ReleaseLiability(ctx, tx, *lockedOrder.RunnerID, orderID, lockedOrder.EstimatedCost); err != nil {
 						return err
 					}
 				}
 
-				order.PaymentStatus = PaymentReleased
-				order.Status = StatusCompleted
+				lockedOrder.PaymentStatus = PaymentReleased
+				lockedOrder.Status = StatusCompleted
 			default:
 				return errors.New("pihak penyelesaian tidak valid, harus 'requester' atau 'runner'")
 			}
 		} else {
-			order.Status = StatusCompleted
+			lockedOrder.Status = StatusCompleted
 		}
 
-		order.DisputeReason = "RESOLVED: " + order.DisputeReason
-		order.UpdatedAt = time.Now()
+		lockedOrder.DisputeReason = "RESOLVED: " + lockedOrder.DisputeReason
+		lockedOrder.UpdatedAt = time.Now()
 
-		return s.repo.Update(ctx, tx, order)
+		return s.repo.Update(ctx, tx, lockedOrder)
 	})
 	if err == nil {
 		msg := "Sengketa pesanan telah diselesaikan oleh Admin."
@@ -2249,15 +2304,15 @@ func (s *service) ResolveDispute(ctx context.Context, orderID uuid.UUID, side st
 		} else {
 			msg += " Dana dilepaskan ke Runner."
 		}
-		s.enqueueFCM(ctx, order.RequesterID, "Sengketa Selesai",
-			msg+fmt.Sprintf(" Pesanan: %s", order.ItemDetails),
-			"order", map[string]string{"order_id": order.ID.String(), "type": "dispute_resolved"},
-			fmt.Sprintf("order_%s", order.ID.String()), true)
-		if order.RunnerID != nil {
-			s.enqueueFCM(ctx, *order.RunnerID, "Sengketa Selesai",
-				msg+fmt.Sprintf(" Pesanan: %s", order.ItemDetails),
-				"order", map[string]string{"order_id": order.ID.String(), "type": "dispute_resolved"},
-				fmt.Sprintf("order_%s", order.ID.String()), true)
+		s.enqueueFCM(ctx, requesterID, "Sengketa Selesai",
+			msg+fmt.Sprintf(" Pesanan: %s", itemDetails),
+			"order", map[string]string{"order_id": orderID.String(), "type": "dispute_resolved"},
+			fmt.Sprintf("order_%s", orderID.String()), true)
+		if runnerID != nil {
+			s.enqueueFCM(ctx, *runnerID, "Sengketa Selesai",
+				msg+fmt.Sprintf(" Pesanan: %s", itemDetails),
+				"order", map[string]string{"order_id": orderID.String(), "type": "dispute_resolved"},
+				fmt.Sprintf("order_%s", orderID.String()), true)
 		}
 	}
 
@@ -2954,8 +3009,13 @@ func (s *service) generateOrderQRIS(ctx context.Context, order *Order) (string, 
 	baseAmt := order.TotalPayment - order.PGFee
 
 	if order.UniqueCode > 0 && s.redis != nil {
-		oldKey := fmt.Sprintf("active_uniq:%.2f:%d", baseAmt, order.UniqueCode)
-		_ = s.redis.Del(ctx, oldKey)
+		// Clean up new reservation format
+		oldKeyNew := fmt.Sprintf("active_total_payment:%.2f", order.TotalPayment)
+		_ = s.redis.ReleaseLock(ctx, oldKeyNew, order.ID.String())
+
+		// Clean up old reservation format for backward compatibility
+		oldKeyOld := fmt.Sprintf("active_uniq:%.2f:%d", baseAmt, order.UniqueCode)
+		_ = s.redis.Del(ctx, oldKeyOld)
 	}
 
 	pgFeeStr := s.configSvc.GetValue(ctx, "qris_pg_fee", "0")
@@ -2967,9 +3027,10 @@ func (s *service) generateOrderQRIS(ctx context.Context, order *Order) (string, 
 	var uniqueCodeVal int
 	if s.redis != nil {
 		for i := 1; i <= 99; i++ {
-			key := fmt.Sprintf("active_uniq:%.2f:%d", baseAmt, i)
+			candidateTotal := baseAmt + configuredPGFee + float64(i)
+			key := fmt.Sprintf("active_total_payment:%.2f", candidateTotal)
 			//nolint:staticcheck // s.redis.Client().SetNX is deprecated
-			ok, err := s.redis.Client().SetNX(ctx, key, "active", 15*time.Minute).Result()
+			ok, err := s.redis.Client().SetNX(ctx, key, order.ID.String(), 15*time.Minute).Result()
 			if err == nil && ok {
 				uniqueCodeVal = i
 				break

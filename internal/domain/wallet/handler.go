@@ -357,8 +357,21 @@ func (h *Handler) AdminCancelTopUp(c *fiber.Ctx) error {
 		Where("id = ?", wtx.ID).
 		Exec(c.Context())
 	if err == nil && wtx.UniqueCode > 0 && h.redis != nil {
-		cacheKey := fmt.Sprintf("active_uniq:%.2f:%d", wtx.Amount, wtx.UniqueCode)
-		_ = h.redis.Del(c.Context(), cacheKey)
+		var pgFeeStr string
+		_ = h.db.NewSelect().Table("configs").Column("value").Where("key = 'qris_pg_fee'").Scan(c.Context(), &pgFeeStr)
+		if pgFeeStr == "" {
+			pgFeeStr = "0"
+		}
+		configuredPGFee, _ := strconv.ParseFloat(pgFeeStr, 64)
+		totalPaymentAmt := wtx.Amount + configuredPGFee + float64(wtx.UniqueCode)
+
+		// Clean up new reservation format
+		cacheKeyNew := fmt.Sprintf("active_total_payment:%.2f", totalPaymentAmt)
+		_ = h.redis.ReleaseLock(c.Context(), cacheKeyNew, reference)
+
+		// Clean up old reservation format for backward compatibility
+		cacheKeyOld := fmt.Sprintf("active_uniq:%.2f:%d", wtx.Amount, wtx.UniqueCode)
+		_ = h.redis.Del(c.Context(), cacheKeyOld)
 	}
 	if err != nil {
 		log.Printf("[ADMIN_ACTION_ERROR] Cancel topup %s: failed to update status to failed in DB: %v", reference, err)

@@ -273,6 +273,9 @@ func (s *service) Create(ctx context.Context, req CreateUserRequest) (*User, err
 
 	role := RoleRequester
 	if req.Role != "" {
+		if req.Role == RoleRunner {
+			return nil, errors.New("pendaftaran sebagai runner hanya dapat dilakukan melalui jalur onboarding resmi")
+		}
 		role = req.Role
 	}
 
