@@ -15,7 +15,7 @@ export
 .PHONY: help run dev build clean \
         migrate-up migrate-down migrate-status migrate-create migrate-reset migrate-fix \
         test test-domain test-coverage mocks lint tidy install-tools swagger \
-        docker-up docker-down docker-logs ngrok
+        docker-up docker-down docker-logs ngrok push-notification test-fcm
 
 ## help: Show this help
 help:
@@ -278,12 +278,21 @@ ngrok:
 	@echo "🚀 Starting ngrok tunnel on port $(APP_PORT)..."
 	ngrok http $(APP_PORT)
 
-## test-fcm: Test push notification. Usage: make test-fcm token=<FCM_DEVICE_TOKEN> [title="Judul"] [body="Pesan"]
-test-fcm:
-ifndef token
-	$(error ❌  usage: make test-fcm token=FCM_DEVICE_TOKEN [title="Judul"] [body="Pesan"])
-endif
-	@TITLE=$${title:-"🔔 Notifikasi Test"}; \
-	BODY=$${body:-"Ini adalah pesan test dari Nitip Backend."}; \
-	go run scripts/test_fcm.go "$(token)" "$$TITLE" "$$BODY"
+## push-notification: Interactive menu to test push notification (token/broadcast)
+push-notification:
+	@echo ""
+	@echo "  ╔══════════════════════════════════════╗"
+	@echo "  ║     Test Push Notification (Nitip)   ║"
+	@echo "  ╚══════════════════════════════════════╝"
+	@echo ""
+	@read -p "  🔑 FCM Token (Kosongkan jika Broadcast): " FCM_TOKEN; \
+	read -p "  🔔 Judul Pesan                         : " MSG_TITLE; \
+	read -p "  💬 Isi Pesan                           : " MSG_BODY; \
+	echo ""; \
+	echo "  ⏳ Mengirim push notification..."; \
+	go run scripts/test_fcm.go "$$FCM_TOKEN" "$$MSG_TITLE" "$$MSG_BODY"
+
+## test-fcm: Alias for push-notification (interactive test)
+test-fcm: push-notification
+
 
