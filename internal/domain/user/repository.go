@@ -1,5 +1,7 @@
 package user
 
+//go:generate mockgen -source=repository.go -destination=mocks/repository.go -package=mocks
+
 import (
 	"context"
 
@@ -44,7 +46,6 @@ type repository struct {
 func (r *repository) GetDB() *bun.DB {
 	return r.db
 }
-
 
 func NewRepository(db *bun.DB) Repository {
 	return &repository{db: db}
@@ -244,4 +245,3 @@ func (r *repository) UpdateWebAuthnCredential(ctx context.Context, cred *Webauth
 	_, err := r.db.NewUpdate().Model(cred).WherePK().Exec(ctx)
 	return err
 }
-

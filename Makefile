@@ -14,7 +14,8 @@ export
 
 .PHONY: help run dev build clean \
         migrate-up migrate-down migrate-status migrate-create migrate-reset migrate-fix \
-        test test-domain test-coverage mocks lint tidy install-tools swagger \
+        lint tidy install-tools swagger \
+        mock-gen test test-auth test-raw test-race test-ci \
         docker-up docker-down docker-logs ngrok push-notification test-fcm
 
 ## help: Show this help
@@ -141,34 +142,56 @@ ifndef name
 endif
 	go run $(CMD_MIGRATE) create $(name)
 
-# ── Quality ──────────────────────────────────────
+# ── Quality / Testing ───────────────────────────
 
-## test: Run all unit tests
+AWK_TEST_REPORT = awk '\''\
+    /\[no test files\]/ { next } \
+    /=== RUN/ { runName=$$0; sub(/^=== RUN[[:space:]]+/, "", runName); all[runName]=1; next } \
+    /^[[:space:]]*--- (PASS|FAIL):/ { \
+        isFail = ($$0 ~ /--- FAIL:/); \
+        line=$$0; \
+        if (isFail) sub(/^[[:space:]]*--- FAIL:[[:space:]]*/, "", line); else sub(/^[[:space:]]*--- PASS:[[:space:]]*/, "", line); \
+        sub(/[[:space:]]+\(.*/, "", line); \
+        testName=line; \
+        isParent=0; for (k in all) if (k != testName && index(k, testName "/") == 1) { isParent=1; break } \
+        if (isParent) next; \
+        cat="UNCATEGORIZED"; catUpper="UNCATEGORIZED"; \
+        n=split(testName, parts, "/"); \
+        for (i=1; i<=n; i++) if (parts[i]=="positive") { cat="positive"; catUpper="POSITIVE"; break } else if (parts[i]=="negative") { cat="negative"; catUpper="NEGATIVE"; break } \
+        scen=parts[n]; \
+        if (cat != "UNCATEGORIZED") { scen=""; for (i=1; i<=n; i++) if (parts[i]==cat) { for (j=i+1; j<=n; j++) { if (scen!="") scen=scen "/"; scen=scen parts[j] } break } gsub(/_/, " ", scen) } else { gsub(/_/, " ", scen) } \
+        top=parts[1]; if (top=="TestAuth") top="AUTH"; else if (top=="TestOrder") top="ORDER"; else if (top=="TestWallet") top="WALLET"; \
+        sub2=""; if (n>=2) sub2=parts[2]; \
+        hdr=top " - " sub2; if (cat=="UNCATEGORIZED") hdr=top; \
+        if (hdr != lastHdr && sub2 != "") { if (lastHdr!="") printf "\n"; printf "%s - %s\n", top, sub2; lastHdr=hdr } else if (cat=="UNCATEGORIZED" && top != lastTop) { if (lastHdr!="") printf "\n"; lastTop=top; lastHdr=top } \
+        if (isFail) printf "  \xE2\x9C\x97  [%s] %s\n", catUpper, scen; else printf "  \xE2\x9C\x93  [%s] %s\n", catUpper, scen; \
+        next \
+    } \
+    /^PASS$$/ { next } \
+    /^ok[[:space:]]+/ { sub(/^ok[[:space:]]+/, "\xE2\x9C\x93  "); print; next } \
+    /^FAIL[[:space:]]+/ { sub(/^FAIL[[:space:]]+/, "\xE2\x9C\x97  "); print; next } \
+    { print }'\''
+
+
+.PHONY: mock-gen test test-auth test-raw test-race test-ci
+
+mock-gen:
+	go generate ./internal/domain/...
+
 test:
-	@bash -c "set -o pipefail; go test ./... -v -race | grep -v '\[no test files\]'"
+	@bash -o pipefail -c 'go test -v -count=1 ./... | $(AWK_TEST_REPORT)'
 
-## test-domain pkg=<pkg_name>: Run tests for a specific domain package (e.g. make test-domain pkg=wallet)
-test-domain:
-ifndef pkg
-	$(error ❌  usage: make test-domain pkg=wallet)
-endif
-	go test ./internal/domain/$(pkg)/... -v -race
+test-auth:
+	@bash -o pipefail -c 'go test -v -count=1 ./internal/domain/auth/... ./internal/domain/user/... ./internal/middleware/... | $(AWK_TEST_REPORT)'
 
-## test-coverage: Run tests and open HTML coverage report
-test-coverage:
-	go test ./... -coverprofile=coverage.out
-	go tool cover -html=coverage.out
+test-raw:
+	go test -v -count=1 ./...
 
-## mocks: Automatically generate mock files for all interfaces using mockery
-mocks:
-	@which mockery > /dev/null 2>&1 || go install github.com/vektra/mockery/v2@latest
-	@rm -rf ./internal/mocks
-	@rm -rf ./internal/domain/wallet/mocks
-	@rm -rf ./internal/domain/auth/mocks
-	@rm -rf ./internal/domain/config/mocks
-	mockery --dir=./internal/domain/wallet --all --output=./internal/domain/wallet/mocks --case=underscore --recursive=false
-	mockery --dir=./internal/domain/auth --all --output=./internal/domain/auth/mocks --case=underscore --recursive=false
-	mockery --dir=./internal/domain/config --all --output=./internal/domain/config/mocks --case=underscore --recursive=false
+test-race:
+	go test -race -count=1 ./...
+
+test-ci:
+	go test -race -cover -count=1 ./...
 
 ## admin-list: List all system configs
 admin-list:

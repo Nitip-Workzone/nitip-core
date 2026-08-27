@@ -35,7 +35,7 @@ func NewHandler(service Service, db *bun.DB, redis *cache.Redis) *Handler {
 func (h *Handler) RegisterRoutes(router fiber.Router) {
 	// User profile & registration
 	g := router.Group("/users")
-	g.Post("/register", middleware.RateLimit(h.redis, 3, 1*time.Minute), h.Create)
+	g.Post("/register", middleware.RateLimit(h.redis, 10, 1*time.Minute), h.Create)
 	g.Post("/onboard/runner", middleware.RateLimit(h.redis, 3, 1*time.Minute), h.OnboardRunner)
 	g.Post("/onboard/merchant", middleware.RateLimit(h.redis, 3, 1*time.Minute), h.OnboardMerchant)
 	g.Get("/me", middleware.Protected(h.db, h.redis), h.GetMe)
@@ -1428,5 +1428,3 @@ func (h *Handler) ValidateInvitation(c *fiber.Ctx) error {
 
 	return response.Success(c, "token pendaftaran valid", invite)
 }
-
-

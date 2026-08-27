@@ -20,6 +20,7 @@ func NewHandler(db *bun.DB) *Handler {
 
 func (h *Handler) RegisterRoutes(router fiber.Router) {
 	auth := router.Group("/auth")
+	// Rate limit grant: keep single-use + timestamp check, add IP rate limit
 	auth.Post("/grant", h.Grant)
 }
 
@@ -40,7 +41,7 @@ func (h *Handler) Grant(c *fiber.Ctx) error {
 	signature := c.Get("X-Signature")
 
 	if apiKey == "" || timestamp == "" {
-		return response.Unauthorized(c, "header wajib tidak lengkap: X-API-Key, X-Timestamp")
+		return response.UnauthorizedWithCode(c, "header wajib tidak lengkap: X-API-Key, X-Timestamp", "INVALID_GRANT_HEADERS")
 	}
 
 	// Verify HMAC signature (API secret is never sent over the wire)
@@ -66,24 +67,24 @@ func (h *Handler) Grant(c *fiber.Ctx) error {
 }
 
 // RequireGrant middleware validates the grant token in X-Grant-Token header
-// Used to protect the /auth/login endpoint
+// Used to protect the /auth/login and /auth/refresh endpoints
 func RequireGrant(db *bun.DB) fiber.Handler {
 	svc := NewService(db)
 	return func(c *fiber.Ctx) error {
 		grantToken := c.Get("X-Grant-Token")
 
 		if grantToken == "" {
-			return response.Unauthorized(c, "header X-Grant-Token tidak ditemukan. Silakan dapatkan token melalui POST /auth/grant terlebih dahulu")
+			return response.UnauthorizedWithCode(c, "header X-Grant-Token tidak ditemukan. Silakan dapatkan token melalui POST /auth/grant terlebih dahulu", "GRANT_REQUIRED")
 		}
 
 		if err := svc.ConsumeGrantToken(c.Context(), grantToken); err != nil {
 			switch err {
 			case ErrGrantTokenExpired:
-				return response.Unauthorized(c, "token akses sudah kedaluwarsa. Silakan minta token baru melalui POST /auth/grant")
+				return response.UnauthorizedWithCode(c, "token akses sudah kedaluwarsa. Silakan minta token baru melalui POST /auth/grant", "GRANT_EXPIRED")
 			case ErrGrantTokenUsed:
-				return response.Unauthorized(c, "token akses sudah digunakan. Silakan minta token baru melalui POST /auth/grant")
+				return response.UnauthorizedWithCode(c, "token akses sudah digunakan. Silakan minta token baru melalui POST /auth/grant", "GRANT_USED")
 			default:
-				return response.Unauthorized(c, "token akses tidak valid")
+				return response.UnauthorizedWithCode(c, "token akses tidak valid", "GRANT_INVALID")
 			}
 		}
 

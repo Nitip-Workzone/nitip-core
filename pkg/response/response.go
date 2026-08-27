@@ -115,6 +115,17 @@ func Unauthorized(c *fiber.Ctx, message string) error {
 	})
 }
 
+func UnauthorizedWithCode(c *fiber.Ctx, message string, errorCode string) error {
+	if message == "" {
+		message = "tidak memiliki akses"
+	}
+	return c.Status(fiber.StatusUnauthorized).JSON(envelope{
+		Success:   false,
+		Message:   message,
+		ErrorCode: errorCode,
+	})
+}
+
 func Forbidden(c *fiber.Ctx, message string) error {
 	if message == "" {
 		message = "akses ditolak"

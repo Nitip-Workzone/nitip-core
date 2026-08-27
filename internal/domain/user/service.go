@@ -1,4 +1,5 @@
 package user
+//go:generate mockgen -source=service.go -destination=mocks/service.go -package=mocks
 
 import (
 	"bytes"
@@ -261,7 +262,11 @@ func (s *service) GetByIDs(ctx context.Context, ids []uuid.UUID) ([]User, error)
 }
 
 func (s *service) Create(ctx context.Context, req CreateUserRequest) (*User, error) {
+	// Backend is source of truth: enforce canonical WA & ignore client role (always requester for public register).
 	sanitizedWa := sanitizeWhatsappNumber(req.WhatsappNumber)
+	if !IsValidWhatsappCanonical(sanitizedWa) {
+		return nil, errors.New("nomor whatsapp tidak valid")
+	}
 	if existing, err := s.repo.FindByWhatsappNumber(ctx, sanitizedWa); err == nil && existing != nil {
 		return nil, errors.New("nomor whatsapp sudah digunakan")
 	}
@@ -271,13 +276,8 @@ func (s *service) Create(ctx context.Context, req CreateUserRequest) (*User, err
 		return nil, errors.New("gagal mengenkripsi kata sandi")
 	}
 
+	// MVP: ignore client role, always requester for public registration
 	role := RoleRequester
-	if req.Role != "" {
-		if req.Role == RoleRunner {
-			return nil, errors.New("pendaftaran sebagai runner hanya dapat dilakukan melalui jalur onboarding resmi")
-		}
-		role = req.Role
-	}
 
 	// Geofence Region Lock: Hanya berlaku untuk pendaftaran Requester (bukan Runner/Admin)
 	if role == RoleRequester && !config.App.BypassGeofence {
@@ -363,10 +363,8 @@ func (s *service) Login(ctx context.Context, req LoginRequest, platform string) 
 		user, err = s.repo.FindByEmail(ctx, req.Email)
 	} else {
 		sanitizedWa := sanitizeWhatsappNumber(req.Email)
+		// Canonical lookup only
 		user, err = s.repo.FindByWhatsappNumber(ctx, sanitizedWa)
-		if (err != nil || user == nil) && sanitizedWa != req.Email {
-			user, err = s.repo.FindByWhatsappNumber(ctx, req.Email)
-		}
 	}
 
 	if err != nil || user == nil {
@@ -383,8 +381,8 @@ func (s *service) Login(ctx context.Context, req LoginRequest, platform string) 
 		return nil, errors.New("email atau kata sandi salah")
 	}
 
-	// TOTP Check
-	if user.TotpEnabled {
+	// TOTP Check — for MVP, only enforce for admin/CS. Runner/Merchant via Flutter must not be blocked.
+	if user.TotpEnabled && (user.Role == RoleAdmin || user.Role == RoleCS) {
 		if req.TotpCode == "" {
 			return &LoginResponse{RequireTotp: true}, nil
 		}
@@ -876,6 +874,13 @@ func (s *service) UpdateProfile(ctx context.Context, id uuid.UUID, req UpdatePro
 	return s.repo.Update(ctx, u)
 }
 
+// SanitizeWhatsappNumber canonicalizes phone to 62... format.
+// Source of truth untuk semua registrasi, login, uniqueness check.
+// Accepts: 0812..., 812..., 62..., +62..., dengan spasi/tanda hubung/kurung.
+func SanitizeWhatsappNumber(phone string) string {
+	return sanitizeWhatsappNumber(phone)
+}
+
 func sanitizeWhatsappNumber(phone string) string {
 	if phone == "" {
 		return phone
@@ -904,6 +909,22 @@ func sanitizeWhatsappNumber(phone string) string {
 		sanitized = "62" + sanitized
 	}
 	return sanitized
+}
+
+// IsValidWhatsappCanonical checks if canonical number is plausible.
+func IsValidWhatsappCanonical(canonical string) bool {
+	if len(canonical) < 10 || len(canonical) > 15 {
+		return false
+	}
+	if !strings.HasPrefix(canonical, "62") {
+		return false
+	}
+	for _, r := range canonical {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *service) GetRedis() *cache.Redis {

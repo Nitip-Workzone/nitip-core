@@ -1,4 +1,5 @@
 package wallet
+//go:generate mockgen -source=service.go -destination=mocks/service.go -package=mocks
 
 import (
 	"bytes"

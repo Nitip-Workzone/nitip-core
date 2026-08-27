@@ -46,10 +46,10 @@ func Protected(db *bun.DB, r *cache.Redis) fiber.Handler {
 			if config.App.AppEnv != "production" {
 				log.Printf("[AUTH_DEBUG] Denied: JWT parse failed for %s %s: %v", c.Method(), c.Path(), err)
 			}
-			return response.Unauthorized(c, "token tidak valid atau sudah kedaluwarsa")
+			return response.UnauthorizedWithCode(c, "token tidak valid atau sudah kedaluwarsa", "SESSION_EXPIRED")
 		}
 
-		// --- Session Validation (Token Versioning) ---
+		// --- Session Validation (Token Versioning + suspended/deleted) ---
 		var currentVersion int
 		userID := claims.UserID.String()
 		cacheKey := fmt.Sprintf("user:session:v:%s", userID)
@@ -65,25 +65,57 @@ func Protected(db *bun.DB, r *cache.Redis) fiber.Handler {
 			}
 		}
 
-		// 2. Fallback to DB
+		// 2. Fallback to DB — also fetch is_suspended and deleted_at
+		var dbIsSuspended bool
+		var dbDeletedAt *string
 		if !cacheHit {
+			// Use struct scan to get all needed fields
+			type sessionRow struct {
+				TokenVersion int     `bun:"token_version"`
+				IsSuspended  bool    `bun:"is_suspended"`
+				DeletedAt    *string `bun:"deleted_at"`
+			}
+			var row sessionRow
 			err := db.NewSelect().
 				Table("users").
-				Column("token_version").
+				Column("token_version", "is_suspended", "deleted_at").
 				Where("id = ?", claims.UserID).
-				Scan(c.Context(), &currentVersion)
+				Scan(c.Context(), &row)
 
 			if err != nil {
 				if config.App.AppEnv != "production" {
 					log.Printf("[AUTH_DEBUG] Denied: User/Session not found in DB for ID %s", claims.UserID)
 				}
-				return response.Unauthorized(c, "sesi tidak ditemukan")
+				return response.UnauthorizedWithCode(c, "sesi tidak ditemukan", "ACCOUNT_NOT_FOUND")
 			}
+			currentVersion = row.TokenVersion
+			dbIsSuspended = row.IsSuspended
+			dbDeletedAt = row.DeletedAt
 
 			// Sync back to Redis
 			if r != nil {
 				_ = r.Set(c.Context(), cacheKey, currentVersion, 24*time.Hour)
 			}
+		} else {
+			// Redis hit: still need to check suspended/deleted from DB (cannot cache securely)
+			type suspendRow struct {
+				IsSuspended bool    `bun:"is_suspended"`
+				DeletedAt   *string `bun:"deleted_at"`
+			}
+			var srow suspendRow
+			if err := db.NewSelect().Table("users").Column("is_suspended", "deleted_at").Where("id = ?", claims.UserID).Scan(c.Context(), &srow); err == nil {
+				dbIsSuspended = srow.IsSuspended
+				dbDeletedAt = srow.DeletedAt
+			}
+		}
+
+		// Check deleted
+		if dbDeletedAt != nil && *dbDeletedAt != "" {
+			return response.UnauthorizedWithCode(c, "akun tidak tersedia", "ACCOUNT_DELETED")
+		}
+		// Check suspended
+		if dbIsSuspended {
+			return response.ForbiddenWithCode(c, "akun Anda sedang ditangguhkan. Hubungi admin.", "ACCOUNT_SUSPENDED")
 		}
 
 		// 3. Compare Version
@@ -91,7 +123,7 @@ func Protected(db *bun.DB, r *cache.Redis) fiber.Handler {
 			if config.App.AppEnv != "production" {
 				log.Printf("[AUTH_DEBUG] Denied: Version Mismatch for User %s. Claim: %d, DB: %d", claims.UserID, claims.TokenVersion, currentVersion)
 			}
-			return response.Unauthorized(c, "sesi Anda telah berakhir, silakan login kembali")
+			return response.UnauthorizedWithCode(c, "sesi Anda telah berakhir, silakan login kembali", "SESSION_EXPIRED")
 		}
 
 		// Inject user claims into Fiber context
