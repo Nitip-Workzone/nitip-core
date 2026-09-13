@@ -27,9 +27,10 @@ type User struct {
 	Password          string     `bun:"password,notnull" json:"-"`
 	Role              string     `bun:"role,notnull,default:'requester'" json:"role"`
 	TrustScore        int        `bun:"trust_score,notnull,default:0" json:"trust_score"`
+	KycLevel          string     `bun:"kyc_level,notnull,default:'belum'" json:"kyc_level"`
 	IsVerified        bool       `bun:"is_verified,notnull,default:false" json:"is_verified"`
 	VerifiedAt        *time.Time `bun:"verified_at" json:"verified_at,omitempty"`
-	FcmToken          *string    `bun:"fcm_token" json:"fcm_token,omitempty"`
+	FcmToken          *string    `bun:"fcm_token" json:"-"`
 	AvatarUrl         *string    `bun:"avatar_url" json:"avatar_url,omitempty"`
 	DeviceId          *string    `bun:"device_id" json:"-"`
 	LastLat           *float64   `bun:"last_lat" json:"last_lat,omitempty"`

@@ -51,9 +51,9 @@ type Order struct {
 	UniqueCode       int        `bun:"unique_code,notnull,default:0" json:"unique_code"`
 
 	// Recent Pickup & Proximity Matching
-	PickupName    string  `bun:"pickup_name" json:"pickup_name,omitempty"`
-	PickupAddress string  `bun:"pickup_address" json:"pickup_address,omitempty"`
-	DistanceKm    float64 `bun:"distance_km" json:"distance_km"`
+	PickupName    string     `bun:"pickup_name" json:"pickup_name,omitempty"`
+	PickupAddress string     `bun:"pickup_address" json:"pickup_address,omitempty"`
+	DistanceKm    float64    `bun:"distance_km" json:"distance_km"`
 	EscalatedAt   *time.Time `bun:"escalated_at" json:"escalated_at,omitempty"`
 
 	// Nitip Kirim (Package Delivery)
@@ -83,6 +83,9 @@ type Order struct {
 	FeedbackRating  *int           `bun:"-" json:"feedback_rating,omitempty"`
 	FeedbackComment string         `bun:"-" json:"feedback_comment,omitempty"`
 	QRISData        string         `bun:"qris_data,nullzero" json:"qris_data,omitempty"`
+	QRISExpiresAt   *time.Time     `bun:"qris_expires_at" json:"qris_expires_at,omitempty"`
+	IdempotencyKey  *uuid.UUID     `bun:"idempotency_key,type:uuid" json:"idempotency_key,omitempty"`
+	IdempotencyHash *string        `bun:"idempotency_request_hash" json:"idempotency_request_hash,omitempty"`
 	PromotionCode   string         `bun:"-" json:"promotion_code,omitempty"`
 	Items           []OrderItemDTO `bun:"-" json:"items,omitempty"`
 }

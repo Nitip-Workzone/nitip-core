@@ -15,6 +15,7 @@ import (
 
 	kyc "github.com/codecoffy/nitip-core/internal/domain/kyc"
 	uuid "github.com/google/uuid"
+	bun "github.com/uptrace/bun"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -42,6 +43,51 @@ func (m *MockRepository) EXPECT() *MockRepositoryMockRecorder {
 	return m.recorder
 }
 
+// CountRejectionsByTarget mocks base method.
+func (m *MockRepository) CountRejectionsByTarget(ctx context.Context, userID uuid.UUID, target string) (int, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CountRejectionsByTarget", ctx, userID, target)
+	ret0, _ := ret[0].(int)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CountRejectionsByTarget indicates an expected call of CountRejectionsByTarget.
+func (mr *MockRepositoryMockRecorder) CountRejectionsByTarget(ctx, userID, target any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CountRejectionsByTarget", reflect.TypeOf((*MockRepository)(nil).CountRejectionsByTarget), ctx, userID, target)
+}
+
+// CountRetryUnlocks mocks base method.
+func (m *MockRepository) CountRetryUnlocks(ctx context.Context, userID uuid.UUID, target string) (int, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CountRetryUnlocks", ctx, userID, target)
+	ret0, _ := ret[0].(int)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CountRetryUnlocks indicates an expected call of CountRetryUnlocks.
+func (mr *MockRepositoryMockRecorder) CountRetryUnlocks(ctx, userID, target any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CountRetryUnlocks", reflect.TypeOf((*MockRepository)(nil).CountRetryUnlocks), ctx, userID, target)
+}
+
+// CountRetryUnlocksForUpdate mocks base method.
+func (m *MockRepository) CountRetryUnlocksForUpdate(ctx context.Context, tx bun.Tx, userID uuid.UUID, target string) (int, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CountRetryUnlocksForUpdate", ctx, tx, userID, target)
+	ret0, _ := ret[0].(int)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CountRetryUnlocksForUpdate indicates an expected call of CountRetryUnlocksForUpdate.
+func (mr *MockRepositoryMockRecorder) CountRetryUnlocksForUpdate(ctx, tx, userID, target any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CountRetryUnlocksForUpdate", reflect.TypeOf((*MockRepository)(nil).CountRetryUnlocksForUpdate), ctx, tx, userID, target)
+}
+
 // Create mocks base method.
 func (m *MockRepository) Create(ctx context.Context, arg1 *kyc.KycSubmission) error {
 	m.ctrl.T.Helper()
@@ -54,6 +100,34 @@ func (m *MockRepository) Create(ctx context.Context, arg1 *kyc.KycSubmission) er
 func (mr *MockRepositoryMockRecorder) Create(ctx, arg1 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Create", reflect.TypeOf((*MockRepository)(nil).Create), ctx, arg1)
+}
+
+// CreateRetryUnlock mocks base method.
+func (m *MockRepository) CreateRetryUnlock(ctx context.Context, userID uuid.UUID, target string, actorID uuid.UUID) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CreateRetryUnlock", ctx, userID, target, actorID)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// CreateRetryUnlock indicates an expected call of CreateRetryUnlock.
+func (mr *MockRepositoryMockRecorder) CreateRetryUnlock(ctx, userID, target, actorID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateRetryUnlock", reflect.TypeOf((*MockRepository)(nil).CreateRetryUnlock), ctx, userID, target, actorID)
+}
+
+// CreateRetryUnlockInTx mocks base method.
+func (m *MockRepository) CreateRetryUnlockInTx(ctx context.Context, tx bun.Tx, userID uuid.UUID, target string, actorID uuid.UUID) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CreateRetryUnlockInTx", ctx, tx, userID, target, actorID)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// CreateRetryUnlockInTx indicates an expected call of CreateRetryUnlockInTx.
+func (mr *MockRepositoryMockRecorder) CreateRetryUnlockInTx(ctx, tx, userID, target, actorID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateRetryUnlockInTx", reflect.TypeOf((*MockRepository)(nil).CreateRetryUnlockInTx), ctx, tx, userID, target, actorID)
 }
 
 // GetByID mocks base method.
@@ -71,6 +145,21 @@ func (mr *MockRepositoryMockRecorder) GetByID(ctx, id any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetByID", reflect.TypeOf((*MockRepository)(nil).GetByID), ctx, id)
 }
 
+// GetByIDForUpdate mocks base method.
+func (m *MockRepository) GetByIDForUpdate(ctx context.Context, tx bun.Tx, id uuid.UUID) (*kyc.KycSubmission, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetByIDForUpdate", ctx, tx, id)
+	ret0, _ := ret[0].(*kyc.KycSubmission)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetByIDForUpdate indicates an expected call of GetByIDForUpdate.
+func (mr *MockRepositoryMockRecorder) GetByIDForUpdate(ctx, tx, id any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetByIDForUpdate", reflect.TypeOf((*MockRepository)(nil).GetByIDForUpdate), ctx, tx, id)
+}
+
 // GetByUserID mocks base method.
 func (m *MockRepository) GetByUserID(ctx context.Context, userID uuid.UUID) (*kyc.KycSubmission, error) {
 	m.ctrl.T.Helper()
@@ -84,6 +173,51 @@ func (m *MockRepository) GetByUserID(ctx context.Context, userID uuid.UUID) (*ky
 func (mr *MockRepositoryMockRecorder) GetByUserID(ctx, userID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetByUserID", reflect.TypeOf((*MockRepository)(nil).GetByUserID), ctx, userID)
+}
+
+// GetByUserIDAndTarget mocks base method.
+func (m *MockRepository) GetByUserIDAndTarget(ctx context.Context, userID uuid.UUID, target string) ([]kyc.KycSubmission, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetByUserIDAndTarget", ctx, userID, target)
+	ret0, _ := ret[0].([]kyc.KycSubmission)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetByUserIDAndTarget indicates an expected call of GetByUserIDAndTarget.
+func (mr *MockRepositoryMockRecorder) GetByUserIDAndTarget(ctx, userID, target any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetByUserIDAndTarget", reflect.TypeOf((*MockRepository)(nil).GetByUserIDAndTarget), ctx, userID, target)
+}
+
+// GetPendingByUserAndTarget mocks base method.
+func (m *MockRepository) GetPendingByUserAndTarget(ctx context.Context, userID uuid.UUID, target string) (*kyc.KycSubmission, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetPendingByUserAndTarget", ctx, userID, target)
+	ret0, _ := ret[0].(*kyc.KycSubmission)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetPendingByUserAndTarget indicates an expected call of GetPendingByUserAndTarget.
+func (mr *MockRepositoryMockRecorder) GetPendingByUserAndTarget(ctx, userID, target any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetPendingByUserAndTarget", reflect.TypeOf((*MockRepository)(nil).GetPendingByUserAndTarget), ctx, userID, target)
+}
+
+// GetUserForUpdate mocks base method.
+func (m *MockRepository) GetUserForUpdate(ctx context.Context, tx bun.Tx, userID uuid.UUID) (*kyc.UserLevelRow, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetUserForUpdate", ctx, tx, userID)
+	ret0, _ := ret[0].(*kyc.UserLevelRow)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetUserForUpdate indicates an expected call of GetUserForUpdate.
+func (mr *MockRepositoryMockRecorder) GetUserForUpdate(ctx, tx, userID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetUserForUpdate", reflect.TypeOf((*MockRepository)(nil).GetUserForUpdate), ctx, tx, userID)
 }
 
 // ListPending mocks base method.
@@ -101,6 +235,20 @@ func (mr *MockRepositoryMockRecorder) ListPending(ctx, offset, limit any) *gomoc
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListPending", reflect.TypeOf((*MockRepository)(nil).ListPending), ctx, offset, limit)
 }
 
+// RunInTx mocks base method.
+func (m *MockRepository) RunInTx(ctx context.Context, fn func(context.Context, bun.Tx) error) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RunInTx", ctx, fn)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// RunInTx indicates an expected call of RunInTx.
+func (mr *MockRepositoryMockRecorder) RunInTx(ctx, fn any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RunInTx", reflect.TypeOf((*MockRepository)(nil).RunInTx), ctx, fn)
+}
+
 // Update mocks base method.
 func (m *MockRepository) Update(ctx context.Context, arg1 *kyc.KycSubmission) error {
 	m.ctrl.T.Helper()
@@ -113,4 +261,32 @@ func (m *MockRepository) Update(ctx context.Context, arg1 *kyc.KycSubmission) er
 func (mr *MockRepositoryMockRecorder) Update(ctx, arg1 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Update", reflect.TypeOf((*MockRepository)(nil).Update), ctx, arg1)
+}
+
+// UpdateInTx mocks base method.
+func (m *MockRepository) UpdateInTx(ctx context.Context, tx bun.Tx, arg2 *kyc.KycSubmission) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UpdateInTx", ctx, tx, arg2)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// UpdateInTx indicates an expected call of UpdateInTx.
+func (mr *MockRepositoryMockRecorder) UpdateInTx(ctx, tx, arg2 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateInTx", reflect.TypeOf((*MockRepository)(nil).UpdateInTx), ctx, tx, arg2)
+}
+
+// UpdateUserLevelInTx mocks base method.
+func (m *MockRepository) UpdateUserLevelInTx(ctx context.Context, tx bun.Tx, userID uuid.UUID, level string, isVerified bool) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UpdateUserLevelInTx", ctx, tx, userID, level, isVerified)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// UpdateUserLevelInTx indicates an expected call of UpdateUserLevelInTx.
+func (mr *MockRepositoryMockRecorder) UpdateUserLevelInTx(ctx, tx, userID, level, isVerified any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateUserLevelInTx", reflect.TypeOf((*MockRepository)(nil).UpdateUserLevelInTx), ctx, tx, userID, level, isVerified)
 }

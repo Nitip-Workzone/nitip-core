@@ -92,9 +92,16 @@ func Load() *Config {
 		AppEnv:  getEnv("APP_ENV", "development"),
 
 		// Bypass & Feature Toggles
-		BypassKYCValidation: getEnv("BYPASS_KYC_VALIDATION", "true") == "true",
-		FcmEnabled:          getEnv("FCM_ENABLED", "false") == "true",
-		BypassGeofence:      getEnv("BYPASS_GEOFENCE", "false") == "true",
+		BypassKYCValidation: func() bool {
+			v := getEnv("BYPASS_KYC_VALIDATION", "")
+			if v == "" {
+				// default false in production, true in dev for convenience
+				return getEnv("APP_ENV", "development") != "production"
+			}
+			return v == "true"
+		}(),
+		FcmEnabled:     getEnv("FCM_ENABLED", "false") == "true",
+		BypassGeofence: getEnv("BYPASS_GEOFENCE", "false") == "true",
 
 		// Database
 		DBDriver:   getEnv("DB_DRIVER", "postgres"),

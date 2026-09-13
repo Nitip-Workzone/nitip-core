@@ -153,6 +153,20 @@ func (mr *MockServiceMockRecorder) ApprovePriceAdjustment(ctx, orderID, requeste
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ApprovePriceAdjustment", reflect.TypeOf((*MockService)(nil).ApprovePriceAdjustment), ctx, orderID, requesterID)
 }
 
+// BuildRequestHash mocks base method.
+func (m *MockService) BuildRequestHash(requesterID uuid.UUID, req order.CreateOrderRequest) string {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "BuildRequestHash", requesterID, req)
+	ret0, _ := ret[0].(string)
+	return ret0
+}
+
+// BuildRequestHash indicates an expected call of BuildRequestHash.
+func (mr *MockServiceMockRecorder) BuildRequestHash(requesterID, req any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "BuildRequestHash", reflect.TypeOf((*MockService)(nil).BuildRequestHash), requesterID, req)
+}
+
 // CancelOrder mocks base method.
 func (m *MockService) CancelOrder(ctx context.Context, orderID, userID uuid.UUID, reason string) error {
 	m.ctrl.T.Helper()
@@ -211,6 +225,22 @@ func (mr *MockServiceMockRecorder) Create(ctx, requesterID, req any) *gomock.Cal
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Create", reflect.TypeOf((*MockService)(nil).Create), ctx, requesterID, req)
 }
 
+// CreateWithIdempotency mocks base method.
+func (m *MockService) CreateWithIdempotency(ctx context.Context, requesterID uuid.UUID, req order.CreateOrderRequest, idempotencyKey *uuid.UUID, requestHash string) (*order.Order, bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CreateWithIdempotency", ctx, requesterID, req, idempotencyKey, requestHash)
+	ret0, _ := ret[0].(*order.Order)
+	ret1, _ := ret[1].(bool)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
+}
+
+// CreateWithIdempotency indicates an expected call of CreateWithIdempotency.
+func (mr *MockServiceMockRecorder) CreateWithIdempotency(ctx, requesterID, req, idempotencyKey, requestHash any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateWithIdempotency", reflect.TypeOf((*MockService)(nil).CreateWithIdempotency), ctx, requesterID, req, idempotencyKey, requestHash)
+}
+
 // DisputeOrder mocks base method.
 func (m *MockService) DisputeOrder(ctx context.Context, orderID, requesterID uuid.UUID, reason, proofURL string) error {
 	m.ctrl.T.Helper()
@@ -238,6 +268,21 @@ func (m *MockService) EstimateFee(ctx context.Context, req order.EstimateFeeRequ
 func (mr *MockServiceMockRecorder) EstimateFee(ctx, req any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "EstimateFee", reflect.TypeOf((*MockService)(nil).EstimateFee), ctx, req)
+}
+
+// ExpirePendingOrders mocks base method.
+func (m *MockService) ExpirePendingOrders(ctx context.Context) (int64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ExpirePendingOrders", ctx)
+	ret0, _ := ret[0].(int64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ExpirePendingOrders indicates an expected call of ExpirePendingOrders.
+func (mr *MockServiceMockRecorder) ExpirePendingOrders(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ExpirePendingOrders", reflect.TypeOf((*MockService)(nil).ExpirePendingOrders), ctx)
 }
 
 // ForceCancelOrder mocks base method.
@@ -414,6 +459,20 @@ func (m *MockService) PickupOrder(ctx context.Context, orderID, runnerID uuid.UU
 func (mr *MockServiceMockRecorder) PickupOrder(ctx, orderID, runnerID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PickupOrder", reflect.TypeOf((*MockService)(nil).PickupOrder), ctx, orderID, runnerID)
+}
+
+// ProcessPaymentForTest mocks base method.
+func (m *MockService) ProcessPaymentForTest(ctx context.Context, orderID uuid.UUID, status string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ProcessPaymentForTest", ctx, orderID, status)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// ProcessPaymentForTest indicates an expected call of ProcessPaymentForTest.
+func (mr *MockServiceMockRecorder) ProcessPaymentForTest(ctx, orderID, status any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ProcessPaymentForTest", reflect.TypeOf((*MockService)(nil).ProcessPaymentForTest), ctx, orderID, status)
 }
 
 // ReassignOrder mocks base method.
@@ -709,6 +768,46 @@ func (m *MockFCMDispatcher) Enqueue(ctx context.Context, job notification.Job) e
 func (mr *MockFCMDispatcherMockRecorder) Enqueue(ctx, job any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Enqueue", reflect.TypeOf((*MockFCMDispatcher)(nil).Enqueue), ctx, job)
+}
+
+// MockReviewRepository is a mock of ReviewRepository interface.
+type MockReviewRepository struct {
+	ctrl     *gomock.Controller
+	recorder *MockReviewRepositoryMockRecorder
+	isgomock struct{}
+}
+
+// MockReviewRepositoryMockRecorder is the mock recorder for MockReviewRepository.
+type MockReviewRepositoryMockRecorder struct {
+	mock *MockReviewRepository
+}
+
+// NewMockReviewRepository creates a new mock instance.
+func NewMockReviewRepository(ctrl *gomock.Controller) *MockReviewRepository {
+	mock := &MockReviewRepository{ctrl: ctrl}
+	mock.recorder = &MockReviewRepositoryMockRecorder{mock}
+	return mock
+}
+
+// EXPECT returns an object that allows the caller to indicate expected use.
+func (m *MockReviewRepository) EXPECT() *MockReviewRepositoryMockRecorder {
+	return m.recorder
+}
+
+// GetRequesterRatingSummary mocks base method.
+func (m *MockReviewRepository) GetRequesterRatingSummary(ctx context.Context, db bun.IDB, requesterID uuid.UUID) (float64, int, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetRequesterRatingSummary", ctx, db, requesterID)
+	ret0, _ := ret[0].(float64)
+	ret1, _ := ret[1].(int)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
+}
+
+// GetRequesterRatingSummary indicates an expected call of GetRequesterRatingSummary.
+func (mr *MockReviewRepositoryMockRecorder) GetRequesterRatingSummary(ctx, db, requesterID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetRequesterRatingSummary", reflect.TypeOf((*MockReviewRepository)(nil).GetRequesterRatingSummary), ctx, db, requesterID)
 }
 
 // MockPromotionService is a mock of PromotionService interface.

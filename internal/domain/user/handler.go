@@ -541,6 +541,12 @@ func (h *Handler) UpdateProfile(c *fiber.Ctx) error {
 	}
 
 	if err := h.service.UpdateProfile(c.Context(), userClaims.UserID, req, avatarReader, avatarFilename); err != nil {
+		if err == ErrWhatsappAlreadyUsed || err.Error() == "nomor whatsapp sudah digunakan" {
+			return response.ConflictWithCode(c, "nomor whatsapp sudah digunakan", "WHATSAPP_ALREADY_USED")
+		}
+		if err.Error() == "nomor whatsapp tidak valid" {
+			return response.BadRequestWithCode(c, "nomor whatsapp tidak valid", "INVALID_WHATSAPP")
+		}
 		return response.InternalError(c, err.Error())
 	}
 
@@ -599,6 +605,12 @@ func (h *Handler) AdminUpdateProfile(c *fiber.Ctx) error {
 	}
 
 	if err := h.service.UpdateProfile(c.Context(), id, req, avatarReader, avatarFilename); err != nil {
+		if err == ErrWhatsappAlreadyUsed || err.Error() == "nomor whatsapp sudah digunakan" {
+			return response.ConflictWithCode(c, "nomor whatsapp sudah digunakan", "WHATSAPP_ALREADY_USED")
+		}
+		if err.Error() == "nomor whatsapp tidak valid" {
+			return response.BadRequestWithCode(c, "nomor whatsapp tidak valid", "INVALID_WHATSAPP")
+		}
 		return response.InternalError(c, err.Error())
 	}
 

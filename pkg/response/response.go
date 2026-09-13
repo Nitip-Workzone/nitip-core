@@ -171,6 +171,14 @@ func InternalError(c *fiber.Ctx, message string) error {
 	})
 }
 
+func ConflictWithCode(c *fiber.Ctx, message string, errorCode string) error {
+	return c.Status(fiber.StatusConflict).JSON(envelope{
+		Success:   false,
+		Message:   message,
+		ErrorCode: errorCode,
+	})
+}
+
 func Custom(c *fiber.Ctx, code int, message string, data any) error {
 	return c.Status(code).JSON(envelope{
 		Success: code >= 200 && code < 300,

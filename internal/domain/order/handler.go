@@ -118,10 +118,113 @@ func (h *Handler) Create(c *fiber.Ctx) error {
 		return response.Unauthorized(c, "sesi tidak valid")
 	}
 
+	// Idempotency for Food: read header if Food, validate, compute hash
+	isFood := req.MerchantID != nil && req.ServiceCategory == CategoryBeli
+	var idemKey *uuid.UUID
+	var reqHash string
+	if isFood {
+		hdr := strings.TrimSpace(c.Get("Idempotency-Key"))
+		if hdr == "" {
+			return response.BadRequestWithCode(c, "Idempotency-Key wajib untuk Order Food", "IDEMPOTENCY_KEY_REQUIRED")
+		}
+		parsed, err := uuid.Parse(hdr)
+		if err != nil {
+			return response.BadRequestWithCode(c, "Idempotency-Key harus UUID", "IDEMPOTENCY_KEY_REQUIRED")
+		}
+		idemKey = &parsed
+		reqHash = h.service.BuildRequestHash(claims.UserID, req)
+		order, isReplay, err := h.service.CreateWithIdempotency(c.Context(), claims.UserID, req, idemKey, reqHash)
+		if err != nil {
+			low := strings.ToLower(err.Error())
+			if err == ErrIdempotencyConflict || low == "idempotency_conflict" {
+				return response.ConflictWithCode(c, "payload berbeda dengan Idempotency-Key yang sama", "IDEMPOTENCY_CONFLICT")
+			}
+			if err == ErrIdempotencyKeyRequired {
+				return response.BadRequestWithCode(c, err.Error(), "IDEMPOTENCY_KEY_REQUIRED")
+			}
+			if err == ErrExpectedSummaryRequired {
+				return response.BadRequestWithCode(c, "expected_summary wajib untuk Order Food", "EXPECTED_SUMMARY_REQUIRED")
+			}
+			if err == ErrInvalidOrderSummary {
+				return response.BadRequestWithCode(c, "expected_summary tidak valid", "INVALID_ORDER_SUMMARY")
+			}
+			if _, ok := err.(*SummaryChangedError); ok {
+				// Return 409 with latest summary
+				return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+					"success": false, "error_code": "ORDER_SUMMARY_CHANGED", "message": "Harga atau biaya pesanan berubah. Silakan periksa kembali.", "data": err.(*SummaryChangedError),
+				})
+			}
+			if low == "order_summary_changed" {
+				return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+					"success": false, "error_code": "ORDER_SUMMARY_CHANGED", "message": "Harga atau biaya pesanan berubah. Silakan periksa kembali.",
+				})
+			}
+			if err == ErrMenuNotFound {
+				return response.NotFound(c, "menu tidak ditemukan")
+			}
+			if err == ErrMenuUnavailable {
+				return c.Status(fiber.StatusConflict).JSON(fiber.Map{"success": false, "error_code": "MENU_UNAVAILABLE", "message": "menu tidak tersedia"})
+			}
+			if err == ErrMenuMerchantMismatch {
+				return response.BadRequestWithCode(c, "menu tidak sesuai merchant", "MENU_MERCHANT_MISMATCH")
+			}
+			if err == ErrVariantInvalid {
+				return response.BadRequestWithCode(c, "variant tidak valid", "VARIANT_INVALID")
+			}
+			if err == ErrToppingInvalid {
+				return response.BadRequestWithCode(c, "topping tidak valid", "TOPPING_INVALID")
+			}
+			if strings.Contains(low, "merchant sedang tutup") {
+				return c.Status(fiber.StatusConflict).JSON(fiber.Map{"success": false, "error_code": "MENU_UNAVAILABLE", "message": err.Error()})
+			}
+			if strings.Contains(low, "merchant_out_of_range") || strings.Contains(low, "di luar jangkauan") {
+				return response.BadRequestWithCode(c, err.Error(), "MERCHANT_OUT_OF_RANGE")
+			}
+			if strings.Contains(low, "sql") || strings.Contains(low, "constraint") || strings.Contains(low, "foreign key") || strings.Contains(low, "table") || strings.Contains(low, "column") || strings.Contains(low, "relation") || strings.Contains(low, "db") {
+				return response.InternalError(c, err.Error())
+			}
+			if strings.Contains(low, "e-kyc") || strings.Contains(low, "non-verifikasi") {
+				return response.BadRequestWithCode(c, err.Error(), "KYC_REQUIRED")
+			}
+			return response.BadRequest(c, err.Error())
+		}
+		if isReplay {
+			return response.Success(c, "pesanan sudah ada (idempotent replay)", order)
+		}
+		return response.Created(c, "pesanan berhasil dibuat", order)
+	}
+
+	// Non-Food: legacy path without idempotency
 	order, err := h.service.Create(c.Context(), claims.UserID, req)
 	if err != nil {
 		log.Printf("[ORDER_CREATE_ERROR] Failed to create order for User %s. Error: %v", claims.UserID, err)
 		lowMsg := strings.ToLower(err.Error())
+		if err == ErrExpectedSummaryRequired {
+			return response.BadRequestWithCode(c, "expected_summary wajib untuk Order Food", "EXPECTED_SUMMARY_REQUIRED")
+		}
+		if err == ErrInvalidOrderSummary {
+			return response.BadRequestWithCode(c, "expected_summary tidak valid", "INVALID_ORDER_SUMMARY")
+		}
+		if _, ok := err.(*SummaryChangedError); ok {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+				"success": false, "error_code": "ORDER_SUMMARY_CHANGED", "message": "Harga atau biaya pesanan berubah. Silakan periksa kembali.", "data": err.(*SummaryChangedError),
+			})
+		}
+		if err == ErrMenuNotFound {
+			return response.NotFound(c, "menu tidak ditemukan")
+		}
+		if err == ErrMenuUnavailable {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{"success": false, "error_code": "MENU_UNAVAILABLE", "message": "menu tidak tersedia"})
+		}
+		if err == ErrMenuMerchantMismatch {
+			return response.BadRequestWithCode(c, "menu tidak sesuai merchant", "MENU_MERCHANT_MISMATCH")
+		}
+		if err == ErrVariantInvalid {
+			return response.BadRequestWithCode(c, "variant tidak valid", "VARIANT_INVALID")
+		}
+		if err == ErrToppingInvalid {
+			return response.BadRequestWithCode(c, "topping tidak valid", "TOPPING_INVALID")
+		}
 		if strings.Contains(lowMsg, "sql") ||
 			strings.Contains(lowMsg, "constraint") ||
 			strings.Contains(lowMsg, "foreign key") ||

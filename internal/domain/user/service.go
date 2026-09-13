@@ -1,4 +1,5 @@
 package user
+
 //go:generate mockgen -source=service.go -destination=mocks/service.go -package=mocks
 
 import (
@@ -262,10 +263,10 @@ func (s *service) GetByIDs(ctx context.Context, ids []uuid.UUID) ([]User, error)
 }
 
 func (s *service) Create(ctx context.Context, req CreateUserRequest) (*User, error) {
-	// Backend is source of truth: enforce canonical WA & ignore client role (always requester for public register).
-	sanitizedWa := sanitizeWhatsappNumber(req.WhatsappNumber)
-	if !IsValidWhatsappCanonical(sanitizedWa) {
-		return nil, errors.New("nomor whatsapp tidak valid")
+	// Backend is source of truth: strict WA validation (single function) + ignore client role.
+	sanitizedWa, err := ValidateAndSanitizeWhatsapp(req.WhatsappNumber)
+	if err != nil {
+		return nil, err
 	}
 	if existing, err := s.repo.FindByWhatsappNumber(ctx, sanitizedWa); err == nil && existing != nil {
 		return nil, errors.New("nomor whatsapp sudah digunakan")
@@ -362,8 +363,10 @@ func (s *service) Login(ctx context.Context, req LoginRequest, platform string) 
 	if strings.Contains(req.Email, "@") {
 		user, err = s.repo.FindByEmail(ctx, req.Email)
 	} else {
-		sanitizedWa := sanitizeWhatsappNumber(req.Email)
-		// Canonical lookup only
+		sanitizedWa, werr := ValidateAndSanitizeWhatsapp(req.Email)
+		if werr != nil {
+			return nil, werr
+		}
 		user, err = s.repo.FindByWhatsappNumber(ctx, sanitizedWa)
 	}
 
@@ -372,6 +375,13 @@ func (s *service) Login(ctx context.Context, req LoginRequest, platform string) 
 			log.Printf("[DEBUG] Login failed: User not found for identifier %s: %v", req.Email, err)
 		}
 		return nil, errors.New("email, nomor telepon, atau kata sandi salah")
+	}
+	// Soft-deleted and suspended must not obtain a session.
+	if user.DeletedAt != nil {
+		return nil, errors.New("akun tidak tersedia")
+	}
+	if user.IsSuspended {
+		return nil, errors.New("akun Anda sedang ditangguhkan hubungi admin")
 	}
 
 	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.Password)); err != nil {
@@ -463,6 +473,12 @@ func (s *service) Refresh(ctx context.Context, refreshToken string) (*LoginRespo
 	user, err := s.repo.FindByID(ctx, claims.UserID)
 	if err != nil {
 		return nil, errors.New("user tidak ditemukan")
+	}
+	if user.DeletedAt != nil {
+		return nil, errors.New("akun tidak tersedia")
+	}
+	if user.IsSuspended {
+		return nil, errors.New("akun Anda sedang ditangguhkan hubungi admin")
 	}
 
 	// Verify token version for rotation/revocation
@@ -813,14 +829,34 @@ func (s *service) UpdateAcceptingOrders(ctx context.Context, id uuid.UUID, isAcc
 	return s.repo.UpdateAcceptingOrders(ctx, id, isAccepting)
 }
 
+var (
+	ErrWhatsappAlreadyUsed = errors.New("nomor whatsapp sudah digunakan")
+)
+
 func (s *service) UpdateProfile(ctx context.Context, id uuid.UUID, req UpdateProfileRequest, avatarFile io.Reader, avatarFilename string) error {
 	u, err := s.repo.FindByID(ctx, id)
 	if err != nil {
 		return err
 	}
 
-	// Sanitize whatsapp: strip non-digit, 0->62
-	sanitizedWa := sanitizeWhatsappNumber(req.WhatsappNumber)
+	// Strict validation same as registration/login
+	sanitizedWa, err := ValidateAndSanitizeWhatsapp(req.WhatsappNumber)
+	if err != nil {
+		return err
+	}
+
+	// Duplicate check canonical, allow own number
+	if existing, findErr := s.repo.FindByWhatsappNumber(ctx, sanitizedWa); findErr == nil && existing != nil {
+		if existing.ID != id {
+			return ErrWhatsappAlreadyUsed
+		}
+	} else if findErr != nil {
+		// Only treat "not found" (sql.ErrNoRows / bun not found) as available.
+		// Any other error must be surfaced, not ignored.
+		if !isNotFoundErr(findErr) {
+			return findErr
+		}
+	}
 
 	u.Name = req.Name
 	u.WhatsappNumber = sanitizedWa
@@ -871,7 +907,13 @@ func (s *service) UpdateProfile(ctx context.Context, id uuid.UUID, req UpdatePro
 	}
 
 	u.UpdatedAt = time.Now()
-	return s.repo.Update(ctx, u)
+	if err := s.repo.Update(ctx, u); err != nil {
+		if isUniqueViolation(err) {
+			return ErrWhatsappAlreadyUsed
+		}
+		return err
+	}
+	return nil
 }
 
 // SanitizeWhatsappNumber canonicalizes phone to 62... format.
@@ -881,11 +923,71 @@ func SanitizeWhatsappNumber(phone string) string {
 	return sanitizeWhatsappNumber(phone)
 }
 
+// validateWhatsappRaw performs the strict character check required by §1.
+// Allowed: digits, single leading '+', spaces, '-', '(', ')'.
+// Any letter or other symbol (e.g. '#', '*', double '+') is illegal.
+func validateWhatsappRaw(phone string) (string, bool) {
+	if phone == "" {
+		return "", false
+	}
+	trimmed := strings.TrimSpace(phone)
+	if trimmed == "" {
+		return "", false
+	}
+	// Reject any letter.
+	for _, r := range trimmed {
+		if (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') {
+			return "", false
+		}
+	}
+	// Only digits, '+', ' ', '-', '(', ')' are permitted.
+	for _, r := range trimmed {
+		if (r >= '0' && r <= '9') || r == '+' || r == ' ' || r == '-' || r == '(' || r == ')' {
+			continue
+		}
+		return "", false
+	}
+	// At most one '+' and only as the very first non-space character.
+	plusCount := strings.Count(trimmed, "+")
+	if plusCount > 1 {
+		return "", false
+	}
+	if plusCount == 1 {
+		// Find first non-space char.
+		firstNonSpace := -1
+		for i, r := range trimmed {
+			if r != ' ' {
+				firstNonSpace = i
+				break
+			}
+		}
+		if firstNonSpace == -1 || trimmed[firstNonSpace] != '+' {
+			return "", false
+		}
+		// Disallow "+0" (e.g. +081...) — must be +62 after plus.
+		// We will detect after stripping separators.
+		withoutSpaces := strings.ReplaceAll(trimmed, " ", "")
+		withoutSpaces = strings.ReplaceAll(withoutSpaces, "-", "")
+		withoutSpaces = strings.ReplaceAll(withoutSpaces, "(", "")
+		withoutSpaces = strings.ReplaceAll(withoutSpaces, ")", "")
+		// withoutSpaces starts with '+'
+		rest := withoutSpaces[1:]
+		if strings.HasPrefix(rest, "0") {
+			return "", false
+		}
+	}
+	return trimmed, true
+}
+
 func sanitizeWhatsappNumber(phone string) string {
 	if phone == "" {
 		return phone
 	}
-	// Keep digits only first
+	if _, ok := validateWhatsappRaw(phone); !ok {
+		// Return raw so that IsValidWhatsappCanonical will reject it.
+		// Callers that go through ValidateAndSanitizeStrict will get an error instead.
+		return phone
+	}
 	sanitized := phone
 	sanitized = strings.ReplaceAll(sanitized, "+", "")
 	sanitized = strings.ReplaceAll(sanitized, " ", "")
@@ -893,7 +995,6 @@ func sanitizeWhatsappNumber(phone string) string {
 	sanitized = strings.ReplaceAll(sanitized, "(", "")
 	sanitized = strings.ReplaceAll(sanitized, ")", "")
 
-	// If still contains non-digit, strip
 	var digits strings.Builder
 	for _, r := range sanitized {
 		if r >= '0' && r <= '9' {
@@ -911,6 +1012,19 @@ func sanitizeWhatsappNumber(phone string) string {
 	return sanitized
 }
 
+// ValidateAndSanitizeWhatsapp is the single strict entry-point for registration,
+// login and duplicate-check (urutan: karakter mentah → separator → posisi + → prefix → canonical).
+func ValidateAndSanitizeWhatsapp(phone string) (string, error) {
+	if _, ok := validateWhatsappRaw(phone); !ok {
+		return "", errors.New("nomor whatsapp tidak valid")
+	}
+	canonical := sanitizeWhatsappNumber(phone)
+	if !IsValidWhatsappCanonical(canonical) {
+		return "", errors.New("nomor whatsapp tidak valid")
+	}
+	return canonical, nil
+}
+
 // IsValidWhatsappCanonical checks if canonical number is plausible.
 func IsValidWhatsappCanonical(canonical string) bool {
 	if len(canonical) < 10 || len(canonical) > 15 {
@@ -925,6 +1039,22 @@ func IsValidWhatsappCanonical(canonical string) bool {
 		}
 	}
 	return true
+}
+
+func isNotFoundErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "no rows") || strings.Contains(msg, "not found") || strings.Contains(msg, "sql: no rows")
+}
+
+func isUniqueViolation(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "duplicate") || strings.Contains(msg, "unique") || strings.Contains(msg, "idx_users_unique_whatsapp")
 }
 
 func (s *service) GetRedis() *cache.Redis {

@@ -27,6 +27,7 @@ const (
 	ActionWalletWithdrawal  = "WALLET_WITHDRAWAL"
 	ActionKYCApproval       = "KYC_APPROVAL"
 	ActionKYCRejection      = "KYC_REJECTION"
+	ActionKYCResetRetry     = "KYC_RESET_RETRY"
 	ActionUserSuspend       = "USER_SUSPEND"
 	ActionUserUnsuspend     = "USER_UNSUSPEND"
 	ActionUserVerify        = "USER_VERIFY"

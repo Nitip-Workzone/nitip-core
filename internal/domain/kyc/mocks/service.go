@@ -43,6 +43,23 @@ func (m *MockService) EXPECT() *MockServiceMockRecorder {
 	return m.recorder
 }
 
+// GetMySubmissions mocks base method.
+func (m *MockService) GetMySubmissions(ctx context.Context, userID uuid.UUID) ([]kyc.KycSubmission, int, map[string]int, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetMySubmissions", ctx, userID)
+	ret0, _ := ret[0].([]kyc.KycSubmission)
+	ret1, _ := ret[1].(int)
+	ret2, _ := ret[2].(map[string]int)
+	ret3, _ := ret[3].(error)
+	return ret0, ret1, ret2, ret3
+}
+
+// GetMySubmissions indicates an expected call of GetMySubmissions.
+func (mr *MockServiceMockRecorder) GetMySubmissions(ctx, userID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetMySubmissions", reflect.TypeOf((*MockService)(nil).GetMySubmissions), ctx, userID)
+}
+
 // GetStatus mocks base method.
 func (m *MockService) GetStatus(ctx context.Context, userID uuid.UUID) (*kyc.KycSubmission, error) {
 	m.ctrl.T.Helper()
@@ -71,6 +88,20 @@ func (m *MockService) ListPending(ctx context.Context, offset, limit int) ([]kyc
 func (mr *MockServiceMockRecorder) ListPending(ctx, offset, limit any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListPending", reflect.TypeOf((*MockService)(nil).ListPending), ctx, offset, limit)
+}
+
+// ResetRetry mocks base method.
+func (m *MockService) ResetRetry(ctx context.Context, targetUserID uuid.UUID, targetLevel string, actorID uuid.UUID) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ResetRetry", ctx, targetUserID, targetLevel, actorID)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// ResetRetry indicates an expected call of ResetRetry.
+func (mr *MockServiceMockRecorder) ResetRetry(ctx, targetUserID, targetLevel, actorID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ResetRetry", reflect.TypeOf((*MockService)(nil).ResetRetry), ctx, targetUserID, targetLevel, actorID)
 }
 
 // Review mocks base method.

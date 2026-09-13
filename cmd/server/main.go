@@ -35,6 +35,7 @@ import (
 	"github.com/codecoffy/nitip-core/internal/notification"
 	"github.com/codecoffy/nitip-core/internal/realtime"
 	"github.com/codecoffy/nitip-core/internal/storage"
+	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
@@ -166,9 +167,11 @@ func main() {
 	cfgRepo := systemconfig.NewRepository(db)
 	cfgSvc := systemconfig.NewService(cfgRepo)
 
-	// Auth (API Key + Grant Token)
+	// Auth (API Key + Grant Token) — grant is rate-limited 20/min per IP
 	authHandler := auth.NewHandler(db)
-	fiberApp.RegisterRoutes(authHandler.RegisterRoutes)
+	fiberApp.RegisterRoutes(func(router fiber.Router) {
+		authHandler.RegisterRoutesWithLimit(router, redisCache)
+	})
 	auth.StartGrantTokenCleanup(db, 1*time.Hour) // Cleanup expired grant tokens hourly
 
 	userRepo := user.NewRepository(db)
@@ -244,10 +247,12 @@ func main() {
 	merchantSvc := merchant.NewService(merchantRepo, userRepo, storageSvc)
 	merchantHandler := merchant.NewHandler(merchantSvc, db, redisCache)
 	fiberApp.RegisterRoutes(merchantHandler.RegisterRoutes)
+	// Review needed for COD rating gate - create before order
+	reviewRepoEarly := review.NewRepository(db)
 	// Promotion Domain (isolated, minimal impact)
 	// Note: import promotion with alias to avoid conflict, but we need to add import at top
 	// Order Service + Pool Realtime wiring
-	orderSvc := order.NewService(orderRepo, userSvc, tripRepo, matchingSvc, walletSvc, cfgSvc, fcmClient, notifSvc, redisCache, db, auditSvc, storageSvc, merchantSvc)
+	orderSvc := order.NewService(orderRepo, userSvc, tripRepo, matchingSvc, walletSvc, cfgSvc, reviewRepoEarly, fcmClient, notifSvc, redisCache, db, auditSvc, storageSvc, merchantSvc)
 	// Wire pool broadcaster adapter (order -> realtime without cycle)
 	poolAdapter := order.NewPoolBroadcasterAdapter(poolHub, poolBroadcaster)
 	orderSvc.SetPoolBroadcaster(poolAdapter)
@@ -277,15 +282,15 @@ func main() {
 	metricsHandler := realtime.NewMetricsHandler(redisCache, db, poolHub)
 	fiberApp.RegisterRoutes(metricsHandler.RegisterRoutes)
 
-	// Review (Tied to orders)
-	reviewRepo := review.NewRepository(db)
+	// Review (Tied to orders) - reuse early repo
+	reviewRepo := reviewRepoEarly
 	reviewSvc := review.NewService(reviewRepo, orderRepo, db)
 	reviewHandler := review.NewHandler(reviewSvc, db, redisCache)
 	fiberApp.RegisterRoutes(reviewHandler.RegisterRoutes)
 
 	// KYC Domain
 	kycRepo := kyc.NewRepository(db)
-	kycSvc := kyc.NewService(kycRepo, userSvc, storageSvc, fcmClient, notifSvc, auditSvc)
+	kycSvc := kyc.NewServiceWithDB(kycRepo, userSvc, storageSvc, fcmClient, notifSvc, auditSvc, db)
 	if fcmDispatcher != nil {
 		// wire dispatcher into kyc & matching & wallet (SetFCMDispatcher optional via interface)
 		if ks, ok := interface{}(kycSvc).(interface {

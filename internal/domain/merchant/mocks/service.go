@@ -393,6 +393,66 @@ func (mr *MockServiceMockRecorder) GetMerchantByOwnerID(ctx, ownerID any) *gomoc
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetMerchantByOwnerID", reflect.TypeOf((*MockService)(nil).GetMerchantByOwnerID), ctx, ownerID)
 }
 
+// GetToppingGroupByID mocks base method.
+func (m *MockService) GetToppingGroupByID(ctx context.Context, id uuid.UUID) (*merchant.MenuToppingGroup, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetToppingGroupByID", ctx, id)
+	ret0, _ := ret[0].(*merchant.MenuToppingGroup)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetToppingGroupByID indicates an expected call of GetToppingGroupByID.
+func (mr *MockServiceMockRecorder) GetToppingGroupByID(ctx, id any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetToppingGroupByID", reflect.TypeOf((*MockService)(nil).GetToppingGroupByID), ctx, id)
+}
+
+// GetToppingOptionByID mocks base method.
+func (m *MockService) GetToppingOptionByID(ctx context.Context, id uuid.UUID) (*merchant.MenuToppingOption, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetToppingOptionByID", ctx, id)
+	ret0, _ := ret[0].(*merchant.MenuToppingOption)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetToppingOptionByID indicates an expected call of GetToppingOptionByID.
+func (mr *MockServiceMockRecorder) GetToppingOptionByID(ctx, id any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetToppingOptionByID", reflect.TypeOf((*MockService)(nil).GetToppingOptionByID), ctx, id)
+}
+
+// GetVariantGroupByID mocks base method.
+func (m *MockService) GetVariantGroupByID(ctx context.Context, id uuid.UUID) (*merchant.MenuVariantGroup, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetVariantGroupByID", ctx, id)
+	ret0, _ := ret[0].(*merchant.MenuVariantGroup)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetVariantGroupByID indicates an expected call of GetVariantGroupByID.
+func (mr *MockServiceMockRecorder) GetVariantGroupByID(ctx, id any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetVariantGroupByID", reflect.TypeOf((*MockService)(nil).GetVariantGroupByID), ctx, id)
+}
+
+// GetVariantOptionByID mocks base method.
+func (m *MockService) GetVariantOptionByID(ctx context.Context, id uuid.UUID) (*merchant.MenuVariantOption, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetVariantOptionByID", ctx, id)
+	ret0, _ := ret[0].(*merchant.MenuVariantOption)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetVariantOptionByID indicates an expected call of GetVariantOptionByID.
+func (mr *MockServiceMockRecorder) GetVariantOptionByID(ctx, id any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetVariantOptionByID", reflect.TypeOf((*MockService)(nil).GetVariantOptionByID), ctx, id)
+}
+
 // ListAddonMastersByMerchantID mocks base method.
 func (m *MockService) ListAddonMastersByMerchantID(ctx context.Context, merchantID uuid.UUID) ([]merchant.AddonMaster, error) {
 	m.ctrl.T.Helper()

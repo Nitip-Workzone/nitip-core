@@ -15,7 +15,7 @@ export
 .PHONY: help run dev build clean \
         migrate-up migrate-down migrate-status migrate-create migrate-reset migrate-fix \
         lint tidy install-tools swagger \
-        mock-gen test test-auth test-raw test-race test-ci \
+        mock-gen test test-raw test-race test-ci \
         docker-up docker-down docker-logs ngrok push-notification test-fcm
 
 ## help: Show this help
@@ -157,13 +157,15 @@ AWK_TEST_REPORT = awk '\''\
         if (isParent) next; \
         cat="UNCATEGORIZED"; catUpper="UNCATEGORIZED"; \
         n=split(testName, parts, "/"); \
-        for (i=1; i<=n; i++) if (parts[i]=="positive") { cat="positive"; catUpper="POSITIVE"; break } else if (parts[i]=="negative") { cat="negative"; catUpper="NEGATIVE"; break } \
+        for (i=1; i<=n; i++) if (parts[i]=="positive") { cat="positive"; catUpper="POSITIVE"; break } else if (parts[i]=="negative" || parts[i] ~ /^negative/) { cat="negative"; catUpper="NEGATIVE"; break } \
         scen=parts[n]; \
-        if (cat != "UNCATEGORIZED") { scen=""; for (i=1; i<=n; i++) if (parts[i]==cat) { for (j=i+1; j<=n; j++) { if (scen!="") scen=scen "/"; scen=scen parts[j] } break } gsub(/_/, " ", scen) } else { gsub(/_/, " ", scen) } \
-        top=parts[1]; if (top=="TestAuth") top="AUTH"; else if (top=="TestOrder") top="ORDER"; else if (top=="TestWallet") top="WALLET"; \
-        sub2=""; if (n>=2) sub2=parts[2]; \
-        hdr=top " - " sub2; if (cat=="UNCATEGORIZED") hdr=top; \
-        if (hdr != lastHdr && sub2 != "") { if (lastHdr!="") printf "\n"; printf "%s - %s\n", top, sub2; lastHdr=hdr } else if (cat=="UNCATEGORIZED" && top != lastTop) { if (lastHdr!="") printf "\n"; lastTop=top; lastHdr=top } \
+        if (cat != "UNCATEGORIZED") { scen=""; for (i=1; i<=n; i++) if (parts[i]=="positive" || parts[i] ~ /^negative/) { for (j=i+1; j<=n; j++) { if (scen!="") scen=scen "/"; scen=scen parts[j] } break } gsub(/_/, " ", scen) } else { gsub(/_/, " ", scen) } \
+        top=parts[1]; \
+        if (top ~ /^TestAuth/) top="AUTH"; else if (top ~ /^TestProfile/) top="PROFILE"; else if (top=="TestOrder") top="ORDER"; else if (top=="TestWallet") top="WALLET"; else if (top=="TestKYC") top="KYC"; else if (top=="TestMerchantDiscovery") top="MERCHANT DISCOVERY"; \
+        catIdx=0; for (i=2; i<=n; i++) if (parts[i]=="positive" || parts[i] ~ /^negative/) { catIdx=i; break } \
+        op=""; if (catIdx>0) { for (i=2; i<catIdx; i++) { if (op!="") op=op "/"; op=op parts[i] } } else if (n>=2) { op=parts[2]; for (i=3; i<=n; i++) { if (op!="") op=op "/"; op=op parts[i]; break } } \
+        gsub(/_/, " ", op); hdr=top " - " op; if (op=="") hdr=top; \
+        if (hdr != lastHdr && op != "") { if (lastHdr!="") printf "\n"; printf "%s - %s\n", top, op; lastHdr=hdr } else if (op=="" && top != lastTop) { if (lastHdr!="") printf "\n"; lastTop=top; lastHdr=top } \
         if (isFail) printf "  \xE2\x9C\x97  [%s] %s\n", catUpper, scen; else printf "  \xE2\x9C\x93  [%s] %s\n", catUpper, scen; \
         next \
     } \
@@ -173,16 +175,75 @@ AWK_TEST_REPORT = awk '\''\
     { print }'\''
 
 
-.PHONY: mock-gen test test-auth test-raw test-race test-ci
+.PHONY: mock-gen test test-raw test-race test-ci
+
+# ── Test: domain-aware via domain= (no manual registration) ──
+#   make test                         → ./... (full)
+#   make test domain=auth             → auth + user(AUTH) + middleware(Protected Gate)
+#   make test domain=order            → ./internal/domain/order/...
+#   make test domain=wallet           → ./internal/domain/wallet/...
+#   make test domain=auth,order       → gabungan (koma)
+#   make test domain=/domain/auth     → normalisasi: /domain/auth → auth
+# Baru: cukup taruh *_test.go dengan func Test<Domain>*, tanpa edit Makefile.
+DOMAIN_INPUT ?= $(domain)
+AUTH_PKGS    := ./internal/domain/auth/... ./internal/domain/user/... ./internal/middleware/...
+PROFILE_PKGS := ./internal/domain/user/...
+DOMAIN_ARGS  = $(strip $(DOMAIN_INPUT))
+DOMAIN_CSV   = $(subst $(space),$(comma),$(DOMAIN_ARGS))
+comma        := ,
+space        := $(empty) $(empty)
+empty        :=
+# Filter per domain to isolate TestAuth vs TestProfile when user package hosts both
+DOMAIN_TEST_FILTER := $(strip $(if $(filter profile,$(DOMAIN_ARGS)),$(if $(filter auth,$(DOMAIN_ARGS)),-run "^(TestAuth|TestProfile)",-run "^TestProfile"),$(if $(filter auth,$(DOMAIN_ARGS)),-run "^TestAuth",)))
+define resolve_pkgs
+$(strip $(if $(DOMAIN_ARGS),\
+  $(foreach d,$(subst $(comma), ,$(DOMAIN_CSV)),\
+    $(if $(filter auth,$(d)),$(AUTH_PKGS),\
+    $(if $(filter /domain/auth domain/auth,$(d)),$(AUTH_PKGS),\
+    $(if $(filter profile,$(d)),$(PROFILE_PKGS),\
+    $(if $(filter order,$(d)),./internal/domain/order/..., \
+    $(if $(filter wallet,$(d)),./internal/domain/wallet/..., \
+    ./internal/domain/$(strip $(patsubst /domain/%,%,$(patsubst domain/%,%,$(d))))/...)))))),\
+  ./...))
+endef
+
+test-profile:
+	@bash -o pipefail -c 'go test -v -count=1 -run "^TestProfile" ./internal/domain/user/... | $(AWK_TEST_REPORT)'
+
+test-auth:
+	@bash -o pipefail -c 'go test -v -count=1 -run "^TestAuth" ./internal/domain/user/... ./internal/middleware/... | $(AWK_TEST_REPORT)'
 
 mock-gen:
 	go generate ./internal/domain/...
 
+## test: Full regression or filtered by domain= (curated auth, comma-separated)
 test:
-	@bash -o pipefail -c 'go test -v -count=1 ./... | $(AWK_TEST_REPORT)'
+	@bash -o pipefail -c 'go test -v -count=1 $(DOMAIN_TEST_FILTER) $(call resolve_pkgs) | $(AWK_TEST_REPORT)'
 
-test-auth:
-	@bash -o pipefail -c 'go test -v -count=1 ./internal/domain/auth/... ./internal/domain/user/... ./internal/middleware/... | $(AWK_TEST_REPORT)'
+## test-<domain>: Generic — auto (no manual registration)
+##    Example: make test domain=banner  →  ./internal/domain/banner/...
+test-%:
+	@bash -o pipefail -c 'go test -v -count=1 ./internal/domain/$*/... 2>/dev/null | $(AWK_TEST_REPORT); st=$$?; if [ "$$st" -ne 0 ]; then echo "tip: domain '\''$*'\'' belum punya *_test.go atau Test$*"; fi; exit $$st'
+
+test-kyc:
+	@bash -o pipefail -c 'go test -v -count=1 -run "^TestKYC" ./internal/domain/kyc/... 2>&1 | $(AWK_TEST_REPORT); st=$${PIPESTATUS[0]}; if [ $$st -ne 0 ] && ! grep -q "--- FAIL" <<< "$$(go test -v -count=1 -run "^TestKYC" ./internal/domain/kyc/... 2>&1)"; then echo "tip: domain '\''kyc'\'' belum punya *_test.go atau TestKYC"; fi; exit $$st'
+
+test-merchant-discovery:
+	@bash -o pipefail -c 'go test -v -count=1 -run "^TestMerchantDiscovery" ./internal/domain/merchant/... ./internal/domain/order/... 2>&1 | $(AWK_TEST_REPORT); st=$${PIPESTATUS[0]}; exit $$st'
+
+test-payment-qris:
+	@bash -o pipefail -c 'go test -v -count=1 -run "^TestPaymentQRIS" ./internal/domain/order/... 2>&1 | $(AWK_TEST_REPORT); st=$${PIPESTATUS[0]}; exit $$st'
+
+test-order-create:
+	@bash -o pipefail -c 'go test -v -count=1 -run "^TestOrderCreate" ./internal/domain/order/... 2>&1 | $(AWK_TEST_REPORT); st=$${PIPESTATUS[0]}; exit $$st'
+
+.PHONY: test-order-lifecycle test-order-cancel
+
+test-order-lifecycle:
+	@bash -o pipefail -c 'go test -v -count=1 -run "^(TestOrderLifecycle|TestMatching)" ./internal/domain/order/... | $(AWK_TEST_REPORT)'
+
+test-order-cancel:
+	@bash -o pipefail -c 'go test -v -count=1 -run "^TestOrderCancel" ./internal/domain/order/... | $(AWK_TEST_REPORT)'
 
 test-raw:
 	go test -v -count=1 ./...

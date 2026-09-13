@@ -36,6 +36,16 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
+func ensureQRISConfig(t *testing.T) {
+	t.Helper()
+	if config.App == nil || config.App.StaticQrisTemplate == "" {
+		config.App = &config.Config{
+			UsePaymentGateway:  false,
+			StaticQrisTemplate: "00020101021126610014COM.GO-JEK.WWW01189360091439887843340210G9887843340303UMI51440014ID.CO.QRIS.WWW0215ID10265689831950303UMI5204421553033605802ID5925Nihtip, Pengiriman & Anta6007BOLMONG61059576162140703A0111036216304E13B",
+		}
+	}
+}
+
 func init() {
 	config.App = &config.Config{
 		UsePaymentGateway:  false,
@@ -51,7 +61,7 @@ func TestOrder(t *testing.T) {
 				ctrl := gomock.NewController(t)
 				mockRepo := orderMocks.NewMockRepository(ctrl)
 				mockWallet := walletMocks.NewMockService(ctrl)
-				svc := order.NewService(mockRepo, nil, nil, nil, mockWallet, nil, nil, nil, nil, db, nil, nil, nil)
+				svc := order.NewService(mockRepo, nil, nil, nil, mockWallet, nil, nil, nil, nil, nil, db, nil, nil, nil)
 				orderID := uuid.New()
 				requesterID := uuid.New()
 				o := &order.Order{
@@ -78,7 +88,7 @@ func TestOrder(t *testing.T) {
 				ctrl := gomock.NewController(t)
 				mockRepo := orderMocks.NewMockRepository(ctrl)
 				mockWallet := walletMocks.NewMockService(ctrl)
-				svc := order.NewService(mockRepo, nil, nil, nil, mockWallet, nil, nil, nil, nil, db, nil, nil, nil)
+				svc := order.NewService(mockRepo, nil, nil, nil, mockWallet, nil, nil, nil, nil, nil, db, nil, nil, nil)
 				orderID := uuid.New()
 				requesterID := uuid.New()
 				o1 := &order.Order{
@@ -118,7 +128,7 @@ func TestOrder(t *testing.T) {
 				ctrl := gomock.NewController(t)
 				mockRepo := orderMocks.NewMockRepository(ctrl)
 				mockWallet := walletMocks.NewMockService(ctrl)
-				svc := order.NewService(mockRepo, nil, nil, nil, mockWallet, nil, nil, nil, nil, db, nil, nil, nil)
+				svc := order.NewService(mockRepo, nil, nil, nil, mockWallet, nil, nil, nil, nil, nil, db, nil, nil, nil)
 				orderID := uuid.New()
 				requesterID := uuid.New()
 				o := &order.Order{
@@ -132,7 +142,11 @@ func TestOrder(t *testing.T) {
 				}
 				mockRepo.EXPECT().FindByIDForUpdate(gomock.Any(), gomock.Any(), orderID).Return(o, nil).Times(1)
 				mockWallet.EXPECT().RefundEscrow(gomock.Any(), gomock.Any(), requesterID, orderID, 60000.0).Return(nil).Times(1)
-				mockRepo.EXPECT().Update(gomock.Any(), gomock.Any(), o).DoAndReturn(func(ctx context.Context, db bun.IDB, ord *order.Order) error { ord.Status = order.StatusCancelled; ord.PaymentStatus = order.PaymentRefunded; return nil }).Times(1)
+				mockRepo.EXPECT().Update(gomock.Any(), gomock.Any(), o).DoAndReturn(func(ctx context.Context, db bun.IDB, ord *order.Order) error {
+					ord.Status = order.StatusCancelled
+					ord.PaymentStatus = order.PaymentRefunded
+					return nil
+				}).Times(1)
 				mockRepo.EXPECT().FindByIDForUpdate(gomock.Any(), gomock.Any(), orderID).Return(o, nil).Times(1)
 				var wg sync.WaitGroup
 				wg.Add(2)
@@ -164,7 +178,7 @@ func TestOrder(t *testing.T) {
 				ctrl := gomock.NewController(t)
 				mockRepo := orderMocks.NewMockRepository(ctrl)
 				mockWallet := walletMocks.NewMockService(ctrl)
-				svc := order.NewService(mockRepo, nil, nil, nil, mockWallet, nil, nil, nil, nil, db, nil, nil, nil)
+				svc := order.NewService(mockRepo, nil, nil, nil, mockWallet, nil, nil, nil, nil, nil, db, nil, nil, nil)
 				orderID := uuid.New()
 				requesterID := uuid.New()
 				o := &order.Order{
@@ -191,7 +205,7 @@ func TestOrder(t *testing.T) {
 				ctrl := gomock.NewController(t)
 				mockRepo := orderMocks.NewMockRepository(ctrl)
 				mockWallet := walletMocks.NewMockService(ctrl)
-				svc := order.NewService(mockRepo, nil, nil, nil, mockWallet, nil, nil, nil, nil, db, nil, nil, nil)
+				svc := order.NewService(mockRepo, nil, nil, nil, mockWallet, nil, nil, nil, nil, nil, db, nil, nil, nil)
 				orderID := uuid.New()
 				requesterID := uuid.New()
 				o := &order.Order{
@@ -221,7 +235,7 @@ func TestOrder(t *testing.T) {
 				mockWallet := walletMocks.NewMockService(ctrl)
 				mockTrip := tripMocks.NewMockRepository(ctrl)
 				mockNotif := notifMocks.NewMockService(ctrl)
-				svc := order.NewService(mockRepo, nil, mockTrip, nil, mockWallet, nil, nil, mockNotif, nil, db, nil, nil, nil)
+				svc := order.NewService(mockRepo, nil, mockTrip, nil, mockWallet, nil, nil, nil, mockNotif, nil, db, nil, nil, nil)
 				orderID := uuid.New()
 				requesterID := uuid.New()
 				runnerID := uuid.New()
@@ -258,7 +272,7 @@ func TestOrder(t *testing.T) {
 				mockWallet := walletMocks.NewMockService(ctrl)
 				mockTrip := tripMocks.NewMockRepository(ctrl)
 				mockNotif := notifMocks.NewMockService(ctrl)
-				svc := order.NewService(mockRepo, nil, mockTrip, nil, mockWallet, nil, nil, mockNotif, nil, db, nil, nil, nil)
+				svc := order.NewService(mockRepo, nil, mockTrip, nil, mockWallet, nil, nil, nil, mockNotif, nil, db, nil, nil, nil)
 				orderID := uuid.New()
 				requesterID := uuid.New()
 				runnerID := uuid.New()
@@ -293,7 +307,7 @@ func TestOrder(t *testing.T) {
 				mockWallet := walletMocks.NewMockService(ctrl)
 				mockTrip := tripMocks.NewMockRepository(ctrl)
 				mockNotif := notifMocks.NewMockService(ctrl)
-				svc := order.NewService(mockRepo, nil, mockTrip, nil, mockWallet, nil, nil, mockNotif, nil, db, nil, nil, nil)
+				svc := order.NewService(mockRepo, nil, mockTrip, nil, mockWallet, nil, nil, nil, mockNotif, nil, db, nil, nil, nil)
 				orderID := uuid.New()
 				requesterID := uuid.New()
 				runnerID := uuid.New()
@@ -337,7 +351,7 @@ func TestOrder(t *testing.T) {
 				mockWallet := walletMocks.NewMockService(ctrl)
 				mockTrip := tripMocks.NewMockRepository(ctrl)
 				mockNotif := notifMocks.NewMockService(ctrl)
-				svc := order.NewService(mockRepo, nil, mockTrip, nil, mockWallet, nil, nil, mockNotif, nil, db, nil, nil, nil)
+				svc := order.NewService(mockRepo, nil, mockTrip, nil, mockWallet, nil, nil, nil, mockNotif, nil, db, nil, nil, nil)
 				orderID := uuid.New()
 				requesterID := uuid.New()
 				o := &order.Order{
@@ -351,7 +365,11 @@ func TestOrder(t *testing.T) {
 				}
 				mockRepo.EXPECT().FindByIDForUpdate(gomock.Any(), gomock.Any(), orderID).Return(o, nil).Times(1)
 				mockWallet.EXPECT().RefundEscrow(gomock.Any(), gomock.Any(), requesterID, orderID, 60000.0).Return(nil).Times(1)
-				mockRepo.EXPECT().Update(gomock.Any(), gomock.Any(), o).DoAndReturn(func(ctx context.Context, db bun.IDB, ord *order.Order) error { ord.Status = order.StatusCancelled; ord.PaymentStatus = order.PaymentRefunded; return nil }).Times(1)
+				mockRepo.EXPECT().Update(gomock.Any(), gomock.Any(), o).DoAndReturn(func(ctx context.Context, db bun.IDB, ord *order.Order) error {
+					ord.Status = order.StatusCancelled
+					ord.PaymentStatus = order.PaymentRefunded
+					return nil
+				}).Times(1)
 				mockNotif.EXPECT().CreateNotification(gomock.Any(), gomock.Any()).Return(nil).MinTimes(1).MaxTimes(2)
 				mockRepo.EXPECT().FindByIDForUpdate(gomock.Any(), gomock.Any(), orderID).Return(o, nil).Times(1)
 				var wg sync.WaitGroup
@@ -380,7 +398,7 @@ func TestOrder(t *testing.T) {
 				mockWallet := walletMocks.NewMockService(ctrl)
 				mockTrip := tripMocks.NewMockRepository(ctrl)
 				mockNotif := notifMocks.NewMockService(ctrl)
-				svc := order.NewService(mockRepo, nil, mockTrip, nil, mockWallet, nil, nil, mockNotif, nil, db, nil, nil, nil)
+				svc := order.NewService(mockRepo, nil, mockTrip, nil, mockWallet, nil, nil, nil, mockNotif, nil, db, nil, nil, nil)
 				orderID := uuid.New()
 				requesterID := uuid.New()
 				runnerID := uuid.New()
@@ -399,7 +417,11 @@ func TestOrder(t *testing.T) {
 				mockRepo.EXPECT().FindByIDForUpdate(gomock.Any(), gomock.Any(), orderID).Return(o, nil).Times(1)
 				mockWallet.EXPECT().ReleaseEscrowWithRefund(gomock.Any(), gomock.Any(), runnerID, requesterID, orderID, 57000.0, 2000.0, 1000.0).Return(nil).Times(1)
 				mockWallet.EXPECT().ReleaseLiability(gomock.Any(), gomock.Any(), runnerID, orderID, 50000.0).Return(nil).Times(1)
-				mockRepo.EXPECT().Update(gomock.Any(), gomock.Any(), o).DoAndReturn(func(ctx context.Context, db bun.IDB, ord *order.Order) error { ord.Status = order.StatusCompleted; ord.PaymentStatus = order.PaymentReleased; return nil }).Times(1)
+				mockRepo.EXPECT().Update(gomock.Any(), gomock.Any(), o).DoAndReturn(func(ctx context.Context, db bun.IDB, ord *order.Order) error {
+					ord.Status = order.StatusCompleted
+					ord.PaymentStatus = order.PaymentReleased
+					return nil
+				}).Times(1)
 				mockNotif.EXPECT().CreateNotification(gomock.Any(), gomock.Any()).Return(nil).MinTimes(1).MaxTimes(2)
 				mockRepo.EXPECT().FindByIDForUpdate(gomock.Any(), gomock.Any(), orderID).Return(o, nil).Times(1)
 				var wg sync.WaitGroup
@@ -428,7 +450,7 @@ func TestOrder(t *testing.T) {
 				mockWallet := walletMocks.NewMockService(ctrl)
 				mockTrip := tripMocks.NewMockRepository(ctrl)
 				mockNotif := notifMocks.NewMockService(ctrl)
-				svc := order.NewService(mockRepo, nil, mockTrip, nil, mockWallet, nil, nil, mockNotif, nil, db, nil, nil, nil)
+				svc := order.NewService(mockRepo, nil, mockTrip, nil, mockWallet, nil, nil, nil, mockNotif, nil, db, nil, nil, nil)
 				orderID := uuid.New()
 				requesterID := uuid.New()
 				runnerID := uuid.New()
@@ -446,7 +468,11 @@ func TestOrder(t *testing.T) {
 				}
 				mockRepo.EXPECT().FindByIDForUpdate(gomock.Any(), gomock.Any(), orderID).Return(o, nil).Times(1)
 				mockWallet.EXPECT().RefundEscrow(gomock.Any(), gomock.Any(), requesterID, orderID, 60000.0).Return(nil).Times(1)
-				mockRepo.EXPECT().Update(gomock.Any(), gomock.Any(), o).DoAndReturn(func(ctx context.Context, db bun.IDB, ord *order.Order) error { ord.Status = order.StatusCancelled; ord.PaymentStatus = order.PaymentRefunded; return nil }).Times(1)
+				mockRepo.EXPECT().Update(gomock.Any(), gomock.Any(), o).DoAndReturn(func(ctx context.Context, db bun.IDB, ord *order.Order) error {
+					ord.Status = order.StatusCancelled
+					ord.PaymentStatus = order.PaymentRefunded
+					return nil
+				}).Times(1)
 				mockNotif.EXPECT().CreateNotification(gomock.Any(), gomock.Any()).Return(nil).MinTimes(1).MaxTimes(2)
 				mockRepo.EXPECT().FindByIDForUpdate(gomock.Any(), gomock.Any(), orderID).Return(o, nil).Times(1)
 				var wg sync.WaitGroup
@@ -480,7 +506,7 @@ func TestOrder(t *testing.T) {
 				ctrl := gomock.NewController(t)
 				mockRepo := orderMocks.NewMockRepository(ctrl)
 				mockWallet := walletMocks.NewMockService(ctrl)
-				svc := order.NewService(mockRepo, nil, nil, nil, mockWallet, nil, nil, nil, nil, db, nil, nil, nil)
+				svc := order.NewService(mockRepo, nil, nil, nil, mockWallet, nil, nil, nil, nil, nil, db, nil, nil, nil)
 				orderID := uuid.New()
 				requesterID := uuid.New()
 				o := &order.Order{
@@ -502,6 +528,7 @@ func TestOrder(t *testing.T) {
 	t.Run("PaymentCollision", func(t *testing.T) {
 		t.Run("positive", func(t *testing.T) {
 			t.Run("dua order dengan total mirip mendapat total pembayaran berbeda", func(t *testing.T) {
+				ensureQRISConfig(t)
 				mr, err := miniredis.Run()
 				assert.NoError(t, err)
 				defer mr.Close()
@@ -514,30 +541,47 @@ func TestOrder(t *testing.T) {
 				mockUserSvc := userMocks.NewMockService(ctrl)
 				dummyUser := &user.User{Name: "Test User", Email: "test@example.com"}
 				mockUserSvc.EXPECT().GetByID(gomock.Any(), gomock.Any(), gomock.Any()).Return(dummyUser, nil).AnyTimes()
-				svc := order.NewService(mockRepo, mockUserSvc, nil, nil, nil, mockConfig, nil, nil, redisCache, db, nil, nil, nil)
+				mockConfig.EXPECT().GetValue(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(func(ctx context.Context, k, d string) string {
+					if k == "qris_pg_fee" {
+						return "0"
+					}
+					return d
+				}).AnyTimes()
+				svc := order.NewService(mockRepo, mockUserSvc, nil, nil, nil, mockConfig, nil, nil, nil, redisCache, db, nil, nil, nil)
 				orderIDA := uuid.New()
 				requesterIDA := uuid.New()
 				oA := &order.Order{
 					ID: orderIDA, RequesterID: requesterIDA, Status: order.StatusPending,
 					PaymentMethod: "escrow", PaymentSource: "qris", PaymentStatus: order.PaymentUnpaid,
-					TotalPayment: 50000.0, PGFee: 0,
+					TotalPayment: 50000.0, PGFee: 0, QRISData: "", CreatedAt: time.Now(),
 				}
 				orderIDB := uuid.New()
 				requesterIDB := uuid.New()
 				oB := &order.Order{
 					ID: orderIDB, RequesterID: requesterIDB, Status: order.StatusPending,
 					PaymentMethod: "escrow", PaymentSource: "qris", PaymentStatus: order.PaymentUnpaid,
-					TotalPayment: 49997.0, PGFee: 0,
+					TotalPayment: 49997.0, PGFee: 0, QRISData: "", CreatedAt: time.Now(),
 				}
-				mockConfig.EXPECT().GetValue(gomock.Any(), "qris_pg_fee", "0").Return("0").Times(2)
-				mockRepo.EXPECT().FindByID(gomock.Any(), orderIDA).Return(oA, nil).Times(1)
+				// First order refresh
+				mockRepo.EXPECT().FindByID(gomock.Any(), orderIDA).Return(oA, nil).Times(2)
+				mockRepo.EXPECT().FindByIDForUpdate(gomock.Any(), gomock.Any(), orderIDA).DoAndReturn(func(ctx context.Context, db bun.IDB, id uuid.UUID) (*order.Order, error) {
+					return oA, nil
+				}).Times(1)
+				mockSql.ExpectBegin()
 				mockSql.ExpectExec(`UPDATE.*orders`).WillReturnResult(sqlmock.NewResult(1, 1))
-				resA, err := svc.GetByID(context.Background(), orderIDA, requesterIDA, "requester")
+				mockSql.ExpectCommit()
+				resA, err := svc.RefreshQRIS(context.Background(), orderIDA, requesterIDA)
 				assert.NoError(t, err)
 				assert.True(t, resA.UniqueCode > 0)
-				mockRepo.EXPECT().FindByID(gomock.Any(), orderIDB).Return(oB, nil).Times(1)
+				// Second order refresh
+				mockRepo.EXPECT().FindByID(gomock.Any(), orderIDB).Return(oB, nil).Times(2)
+				mockRepo.EXPECT().FindByIDForUpdate(gomock.Any(), gomock.Any(), orderIDB).DoAndReturn(func(ctx context.Context, db bun.IDB, id uuid.UUID) (*order.Order, error) {
+					return oB, nil
+				}).Times(1)
+				mockSql.ExpectBegin()
 				mockSql.ExpectExec(`UPDATE.*orders`).WillReturnResult(sqlmock.NewResult(1, 1))
-				resB, err := svc.GetByID(context.Background(), orderIDB, requesterIDB, "requester")
+				mockSql.ExpectCommit()
+				resB, err := svc.RefreshQRIS(context.Background(), orderIDB, requesterIDB)
 				assert.NoError(t, err)
 				assert.True(t, resB.UniqueCode > 0)
 				assert.NotEqual(t, resA.TotalPayment, resB.TotalPayment)
@@ -547,52 +591,94 @@ func TestOrder(t *testing.T) {
 	t.Run("PaymentReservation", func(t *testing.T) {
 		t.Run("positive", func(t *testing.T) {
 			t.Run("dua reservasi bersamaan tidak menghasilkan total yang sama", func(t *testing.T) {
+				ensureQRISConfig(t)
 				mr, err := miniredis.Run()
 				assert.NoError(t, err)
 				defer mr.Close()
 				rClient := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 				redisCache := cache.NewRedisFromClient(rClient, zap.NewNop())
 				db, mockSql := testutil.NewMockDB(t)
+				mockSql.MatchExpectationsInOrder(false)
 				ctrl := gomock.NewController(t)
 				mockRepo := orderMocks.NewMockRepository(ctrl)
 				mockConfig := configMocks.NewMockService(ctrl)
 				mockUserSvc := userMocks.NewMockService(ctrl)
 				dummyUser := &user.User{Name: "Test User", Email: "test@example.com"}
 				mockUserSvc.EXPECT().GetByID(gomock.Any(), gomock.Any(), gomock.Any()).Return(dummyUser, nil).AnyTimes()
-				svc := order.NewService(mockRepo, mockUserSvc, nil, nil, nil, mockConfig, nil, nil, redisCache, db, nil, nil, nil)
+				mockConfig.EXPECT().GetValue(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(func(ctx context.Context, k, d string) string {
+					if k == "qris_pg_fee" {
+						return "0"
+					}
+					return d
+				}).AnyTimes()
+				svc := order.NewService(mockRepo, mockUserSvc, nil, nil, nil, mockConfig, nil, nil, nil, redisCache, db, nil, nil, nil)
 				orderIDA := uuid.New()
 				requesterIDA := uuid.New()
 				oA := &order.Order{
 					ID: orderIDA, RequesterID: requesterIDA, Status: order.StatusPending,
 					PaymentMethod: "escrow", PaymentSource: "qris", PaymentStatus: order.PaymentUnpaid,
-					TotalPayment: 50000.0, PGFee: 0,
+					TotalPayment: 50000.0, PGFee: 0, QRISData: "", CreatedAt: time.Now(),
 				}
 				orderIDB := uuid.New()
 				requesterIDB := uuid.New()
 				oB := &order.Order{
 					ID: orderIDB, RequesterID: requesterIDB, Status: order.StatusPending,
 					PaymentMethod: "escrow", PaymentSource: "qris", PaymentStatus: order.PaymentUnpaid,
-					TotalPayment: 49997.0, PGFee: 0,
+					TotalPayment: 50000.0, PGFee: 0, QRISData: "", CreatedAt: time.Now(),
 				}
-				mockConfig.EXPECT().GetValue(gomock.Any(), "qris_pg_fee", "0").Return("0").Times(2)
+				// Two different orders concurrent: barrier to start together, unordered sqlmock
+				mockRepo.EXPECT().FindByID(gomock.Any(), gomock.Any()).DoAndReturn(func(ctx context.Context, id uuid.UUID) (*order.Order, error) {
+					if id == orderIDA {
+						return oA, nil
+					}
+					return oB, nil
+				}).AnyTimes()
+				mockRepo.EXPECT().FindByIDForUpdate(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(func(ctx context.Context, db bun.IDB, id uuid.UUID) (*order.Order, error) {
+					if id == orderIDA {
+						return oA, nil
+					}
+					return oB, nil
+				}).AnyTimes()
+				mockSql.ExpectBegin()
+				mockSql.ExpectExec(`UPDATE.*orders`).WillReturnResult(sqlmock.NewResult(1, 1))
+				mockSql.ExpectCommit()
+				mockSql.ExpectBegin()
+				mockSql.ExpectExec(`UPDATE.*orders`).WillReturnResult(sqlmock.NewResult(1, 1))
+				mockSql.ExpectCommit()
+				// Also handle unique conflict retry: if first takes 50001, second tries 50001 then 50002
+				// miniredis SetNX already ensures second skips taken key
+				start := make(chan struct{})
+				var resA, resB *order.Order
+				var errA, errB error
 				var wg sync.WaitGroup
 				wg.Add(2)
-				mockRepo.EXPECT().FindByID(gomock.Any(), orderIDA).Return(oA, nil).Times(1)
-				mockRepo.EXPECT().FindByID(gomock.Any(), orderIDB).Return(oB, nil).Times(1)
-				mockSql.ExpectExec(`UPDATE.*orders`).WillReturnResult(sqlmock.NewResult(1, 1))
-				mockSql.ExpectExec(`UPDATE.*orders`).WillReturnResult(sqlmock.NewResult(1, 1))
 				go func() {
 					defer wg.Done()
-					_, _ = svc.GetByID(context.Background(), orderIDA, requesterIDA, "requester")
+					<-start
+					resA, errA = svc.RefreshQRIS(context.Background(), orderIDA, requesterIDA)
 				}()
 				go func() {
 					defer wg.Done()
-					_, _ = svc.GetByID(context.Background(), orderIDB, requesterIDB, "requester")
+					<-start
+					resB, errB = svc.RefreshQRIS(context.Background(), orderIDB, requesterIDB)
 				}()
+				close(start)
 				wg.Wait()
-				assert.NotEqual(t, oA.TotalPayment, oB.TotalPayment)
+				assert.NoError(t, errA)
+				assert.NoError(t, errB)
+				assert.NotNil(t, resA)
+				assert.NotNil(t, resB)
+				assert.NotEqual(t, resA.TotalPayment, resB.TotalPayment)
+				// Each order has exactly one reservation owned
+				assert.True(t, mr.Exists(fmt.Sprintf("active_total_payment:%.2f", resA.TotalPayment)))
+				assert.True(t, mr.Exists(fmt.Sprintf("active_total_payment:%.2f", resB.TotalPayment)))
+				vA, _ := mr.Get(fmt.Sprintf("active_total_payment:%.2f", resA.TotalPayment))
+				vB, _ := mr.Get(fmt.Sprintf("active_total_payment:%.2f", resB.TotalPayment))
+				assert.Equal(t, orderIDA.String(), vA)
+				assert.Equal(t, orderIDB.String(), vB)
 			})
 			t.Run("reservasi dibersihkan saat order dibatalkan", func(t *testing.T) {
+				ensureQRISConfig(t)
 				mr, err := miniredis.Run()
 				assert.NoError(t, err)
 				defer mr.Close()
@@ -605,23 +691,34 @@ func TestOrder(t *testing.T) {
 				mockUserSvc := userMocks.NewMockService(ctrl)
 				dummyUser := &user.User{Name: "Test User", Email: "test@example.com"}
 				mockUserSvc.EXPECT().GetByID(gomock.Any(), gomock.Any(), gomock.Any()).Return(dummyUser, nil).AnyTimes()
-				svc := order.NewService(mockRepo, mockUserSvc, nil, nil, nil, mockConfig, nil, nil, redisCache, db, nil, nil, nil)
+				mockConfig.EXPECT().GetValue(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(func(ctx context.Context, k, d string) string {
+					if k == "qris_pg_fee" {
+						return "0"
+					}
+					return d
+				}).AnyTimes()
+				svc := order.NewService(mockRepo, mockUserSvc, nil, nil, nil, mockConfig, nil, nil, nil, redisCache, db, nil, nil, nil)
 				orderID := uuid.New()
 				requesterID := uuid.New()
 				o := &order.Order{
 					ID: orderID, RequesterID: requesterID, Status: order.StatusPending,
 					PaymentMethod: "escrow", PaymentSource: "qris", PaymentStatus: order.PaymentUnpaid,
-					TotalPayment: 50000.0, PGFee: 0,
+					TotalPayment: 50000.0, PGFee: 0, QRISData: "", CreatedAt: time.Now(),
 				}
-				mockConfig.EXPECT().GetValue(gomock.Any(), "qris_pg_fee", "0").Return("0").Times(1)
-				mockRepo.EXPECT().FindByID(gomock.Any(), orderID).Return(o, nil).Times(1)
+				mockRepo.EXPECT().FindByID(gomock.Any(), orderID).Return(o, nil).Times(2)
+				mockRepo.EXPECT().FindByIDForUpdate(gomock.Any(), gomock.Any(), orderID).DoAndReturn(func(ctx context.Context, db bun.IDB, id uuid.UUID) (*order.Order, error) {
+					return o, nil
+				}).Times(1)
+				mockSql.ExpectBegin()
 				mockSql.ExpectExec(`UPDATE.*orders`).WillReturnResult(sqlmock.NewResult(1, 1))
-				res, err := svc.GetByID(context.Background(), orderID, requesterID, "requester")
+				mockSql.ExpectCommit()
+				res, err := svc.RefreshQRIS(context.Background(), orderID, requesterID)
 				assert.NoError(t, err)
+				assert.NotNil(t, res)
 				key := fmt.Sprintf("active_total_payment:%.2f", res.TotalPayment)
 				assert.True(t, mr.Exists(key))
 				mockRepo.EXPECT().FindByIDForUpdate(gomock.Any(), gomock.Any(), orderID).Return(res, nil).Times(1)
-				mockRepo.EXPECT().Update(gomock.Any(), gomock.Any(), res).Return(nil).Times(1)
+				mockRepo.EXPECT().Update(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).Times(1)
 				mockSql.ExpectBegin()
 				mockSql.ExpectCommit()
 				err = svc.ForceCancelOrder(context.Background(), orderID)
@@ -629,6 +726,7 @@ func TestOrder(t *testing.T) {
 				assert.False(t, mr.Exists(key))
 			})
 			t.Run("cleanup terlambat tidak menghapus reservasi order baru", func(t *testing.T) {
+				ensureQRISConfig(t)
 				mr, err := miniredis.Run()
 				assert.NoError(t, err)
 				defer mr.Close()
@@ -641,18 +739,28 @@ func TestOrder(t *testing.T) {
 				mockUserSvc := userMocks.NewMockService(ctrl)
 				dummyUser := &user.User{Name: "Test User", Email: "test@example.com"}
 				mockUserSvc.EXPECT().GetByID(gomock.Any(), gomock.Any(), gomock.Any()).Return(dummyUser, nil).AnyTimes()
-				svc := order.NewService(mockRepo, mockUserSvc, nil, nil, nil, mockConfig, nil, nil, redisCache, db, nil, nil, nil)
+				mockConfig.EXPECT().GetValue(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(func(ctx context.Context, k, d string) string {
+					if k == "qris_pg_fee" {
+						return "0"
+					}
+					return d
+				}).AnyTimes()
+				svc := order.NewService(mockRepo, mockUserSvc, nil, nil, nil, mockConfig, nil, nil, nil, redisCache, db, nil, nil, nil)
 				orderIDA := uuid.New()
 				requesterIDA := uuid.New()
 				oA := &order.Order{
 					ID: orderIDA, RequesterID: requesterIDA, Status: order.StatusPending,
 					PaymentMethod: "escrow", PaymentSource: "qris", PaymentStatus: order.PaymentUnpaid,
-					TotalPayment: 50000.0, PGFee: 0,
+					TotalPayment: 50000.0, PGFee: 0, QRISData: "", CreatedAt: time.Now(),
 				}
-				mockConfig.EXPECT().GetValue(gomock.Any(), "qris_pg_fee", "0").Return("0").Times(1)
-				mockRepo.EXPECT().FindByID(gomock.Any(), orderIDA).Return(oA, nil).Times(1)
+				mockRepo.EXPECT().FindByID(gomock.Any(), orderIDA).Return(oA, nil).Times(2)
+				mockRepo.EXPECT().FindByIDForUpdate(gomock.Any(), gomock.Any(), orderIDA).DoAndReturn(func(ctx context.Context, db bun.IDB, id uuid.UUID) (*order.Order, error) {
+					return oA, nil
+				}).Times(1)
+				mockSql.ExpectBegin()
 				mockSql.ExpectExec(`UPDATE.*orders`).WillReturnResult(sqlmock.NewResult(1, 1))
-				resA, err := svc.GetByID(context.Background(), orderIDA, requesterIDA, "requester")
+				mockSql.ExpectCommit()
+				resA, err := svc.RefreshQRIS(context.Background(), orderIDA, requesterIDA)
 				assert.NoError(t, err)
 				key := fmt.Sprintf("active_total_payment:%.2f", resA.TotalPayment)
 				assert.True(t, mr.Exists(key))
@@ -668,7 +776,7 @@ func TestOrder(t *testing.T) {
 				assert.NoError(t, getErr)
 				assert.Equal(t, orderIDB.String(), val)
 				mockRepo.EXPECT().FindByIDForUpdate(gomock.Any(), gomock.Any(), orderIDA).Return(resA, nil).Times(1)
-				mockRepo.EXPECT().Update(gomock.Any(), gomock.Any(), resA).Return(nil).Times(1)
+				mockRepo.EXPECT().Update(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).Times(1)
 				mockSql.ExpectBegin()
 				mockSql.ExpectCommit()
 				err = svc.ForceCancelOrder(context.Background(), orderIDA)
@@ -691,7 +799,7 @@ func TestOrder(t *testing.T) {
 				db, _ := testutil.NewMockDB(t)
 				ctrl := gomock.NewController(t)
 				mockRepo := orderMocks.NewMockRepository(ctrl)
-				svc := order.NewService(mockRepo, nil, nil, nil, nil, nil, nil, nil, redisCache, db, nil, nil, nil)
+				svc := order.NewService(mockRepo, nil, nil, nil, nil, nil, nil, nil, nil, redisCache, db, nil, nil, nil)
 				orderID := uuid.New()
 				requesterID := uuid.New()
 				attackerID := uuid.New()

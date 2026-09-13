@@ -7,9 +7,11 @@ import (
 	"log"
 	"math"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/codecoffy/nitip-core/internal/cache"
+	systemconfig "github.com/codecoffy/nitip-core/internal/domain/config"
 	"github.com/codecoffy/nitip-core/internal/domain/user"
 	"github.com/codecoffy/nitip-core/internal/middleware"
 	"github.com/codecoffy/nitip-core/pkg/fileutil"
@@ -22,13 +24,18 @@ import (
 )
 
 type Handler struct {
-	service Service
-	db      *bun.DB
-	redis   *cache.Redis
+	service   Service
+	db        *bun.DB
+	redis     *cache.Redis
+	configSvc systemconfig.Service
 }
 
 func NewHandler(service Service, db *bun.DB, redis *cache.Redis) *Handler {
 	return &Handler{service: service, db: db, redis: redis}
+}
+
+func NewHandlerWithConfig(service Service, db *bun.DB, redis *cache.Redis, configSvc systemconfig.Service) *Handler {
+	return &Handler{service: service, db: db, redis: redis, configSvc: configSvc}
 }
 
 func (h *Handler) invalidateCache(ctx context.Context) {
@@ -118,33 +125,34 @@ func (h *Handler) RegisterRoutes(router fiber.Router) {
 func (h *Handler) ListNearby(c *fiber.Ctx) error {
 	latStr := c.Query("lat")
 	lngStr := c.Query("lng")
-	radiusStr := c.Query("radius_km", "10.0")
 
 	if latStr == "" || lngStr == "" {
-		return response.BadRequest(c, "koordinat lat dan lng wajib disertakan")
+		return response.BadRequestWithCode(c, "koordinat lat dan lng wajib disertakan", "INVALID_LOCATION")
 	}
 
 	lat, err := strconv.ParseFloat(latStr, 64)
-	if err != nil {
-		return response.BadRequest(c, "lat tidak valid")
+	if err != nil || math.IsNaN(lat) || math.IsInf(lat, 0) {
+		return response.BadRequestWithCode(c, "lat tidak valid", "INVALID_LOCATION")
 	}
-
 	lng, err := strconv.ParseFloat(lngStr, 64)
-	if err != nil {
-		return response.BadRequest(c, "lng tidak valid")
+	if err != nil || math.IsNaN(lng) || math.IsInf(lng, 0) {
+		return response.BadRequestWithCode(c, "lng tidak valid", "INVALID_LOCATION")
+	}
+	if lat < -90 || lat > 90 {
+		return response.BadRequestWithCode(c, "latitude harus antara -90 dan 90", "INVALID_LOCATION")
+	}
+	if lng < -180 || lng > 180 {
+		return response.BadRequestWithCode(c, "longitude harus antara -180 dan 180", "INVALID_LOCATION")
 	}
 
-	radius, err := strconv.ParseFloat(radiusStr, 64)
-	if err != nil {
-		radius = 10.0
-	}
+	// Radius always from server config, ignore client radius_km for decision (compatibility: accept but never influence)
+	radiusKm := h.resolveDiscoveryRadius(c.Context())
 
-	// Round coordinates to 3 decimal places to create a stable key (approx. 110m precision)
-	roundedLat := math.Round(lat*1000) / 1000
-	roundedLng := math.Round(lng*1000) / 1000
-	cacheKey := fmt.Sprintf("merchants:nearby:%.3f:%.3f:%.2f", roundedLat, roundedLng, radius)
+	// Cache key with 5 decimal (~1.1m) + radius config to avoid mixing different locations or stale radius
+	roundedLat := math.Round(lat*100000) / 100000
+	roundedLng := math.Round(lng*100000) / 100000
+	cacheKey := fmt.Sprintf("merchants:nearby:%.5f:%.5f:%.1f", roundedLat, roundedLng, radiusKm)
 
-	// Check Redis cache first
 	var merchants []Merchant
 	if h.redis != nil {
 		cachedData, err := h.redis.Get(c.Context(), cacheKey)
@@ -155,12 +163,12 @@ func (h *Handler) ListNearby(c *fiber.Ctx) error {
 		}
 	}
 
-	merchants, err = h.service.ListNearbyMerchants(c.Context(), lat, lng, radius)
+	merchants, err = h.service.ListNearbyMerchants(c.Context(), lat, lng, radiusKm)
 	if err != nil {
+		// Cache failure should not fail discovery if we have no cache; repository error is server error
 		return response.InternalError(c, err.Error())
 	}
 
-	// Cache the result in Redis for 1 minute
 	if h.redis != nil && len(merchants) > 0 {
 		if cacheBytes, jsonErr := json.Marshal(merchants); jsonErr == nil {
 			_ = h.redis.Set(c.Context(), cacheKey, cacheBytes, 1*time.Minute)
@@ -168,6 +176,26 @@ func (h *Handler) ListNearby(c *fiber.Ctx) error {
 	}
 
 	return response.Success(c, "daftar merchant terdekat berhasil diambil", merchants)
+}
+
+func (h *Handler) resolveDiscoveryRadius(ctx context.Context) float64 {
+	if h.configSvc != nil {
+		val := h.configSvc.GetValue(ctx, "merchant_discovery_radius_km", "10")
+		if v, err := strconv.ParseFloat(strings.TrimSpace(val), 64); err == nil && !math.IsNaN(v) && !math.IsInf(v, 0) && v > 0 && v <= 100 {
+			return v
+		}
+		return 10
+	}
+	if h.db != nil {
+		var cfgVal string
+		err := h.db.NewSelect().Table("configs").Column("value").Where("key = ?", "merchant_discovery_radius_km").Scan(ctx, &cfgVal)
+		if err == nil {
+			if v, perr := strconv.ParseFloat(strings.TrimSpace(cfgVal), 64); perr == nil && !math.IsNaN(v) && !math.IsInf(v, 0) && v > 0 && v <= 100 {
+				return v
+			}
+		}
+	}
+	return 10
 }
 
 func (h *Handler) ListMenuPublic(c *fiber.Ctx) error {

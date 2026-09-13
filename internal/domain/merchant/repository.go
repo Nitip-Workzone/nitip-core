@@ -1,4 +1,5 @@
 package merchant
+
 //go:generate mockgen -source=repository.go -destination=mocks/repository.go -package=mocks
 
 import (
@@ -17,6 +18,7 @@ type Repository interface {
 	GetMerchantByID(ctx context.Context, id uuid.UUID) (*Merchant, error)
 	GetMerchantByOwnerID(ctx context.Context, ownerID uuid.UUID) (*Merchant, error)
 	ListNearbyMerchants(ctx context.Context, lat, lng float64, radiusKm float64) ([]Merchant, error)
+	ListNearbyMerchantsWithDistance(ctx context.Context, lat, lng float64, radiusKm float64) ([]Merchant, error)
 	ListAllMerchants(ctx context.Context) ([]Merchant, error)
 	DeleteMerchant(ctx context.Context, id uuid.UUID) error
 
@@ -128,24 +130,47 @@ func (r *repository) GetMerchantByOwnerID(ctx context.Context, ownerID uuid.UUID
 }
 
 func (r *repository) ListNearbyMerchants(ctx context.Context, lat, lng float64, radiusKm float64) ([]Merchant, error) {
+	merchants, err := r.ListNearbyMerchantsWithDistance(ctx, lat, lng, radiusKm)
+	if err != nil {
+		return nil, err
+	}
+	return merchants, nil
+}
+
+func (r *repository) ListNearbyMerchantsWithDistance(ctx context.Context, lat, lng float64, radiusKm float64) ([]Merchant, error) {
 	var merchants []Merchant
-	// P1 FIX: Use PostGIS ST_DWithin geography for index-assisted search (was acos full scan)
-	// Fallback to acos if PostGIS not available but try geography first for perf 1000ms->30ms on 10k rows
-	// Note: requires pg extension postgis enabled (already enabled for trips & orders geom)
+	if radiusKm <= 0 || radiusKm > 100 {
+		radiusKm = 10
+	}
 	radiusM := radiusKm * 1000
+	// Exclude invalid coordinates (0,0 and out of bounds) and soft-deleted
+	distanceExpr := "ST_Distance(CAST(ST_SetSRID(ST_MakePoint(longitude, latitude),4326) AS geography), CAST(ST_SetSRID(ST_MakePoint(?, ?),4326) AS geography)) / 1000.0"
 	err := r.db.NewSelect().
 		Model(&merchants).
-		// Use ST_DWithin with geography(Point) for GIST index acceleration; if geom column exists use it else compute on fly
+		ColumnExpr("m.*").
+		ColumnExpr(distanceExpr+" AS distance_km", lng, lat).
+		Where("m.deleted_at IS NULL").
+		Where("m.latitude BETWEEN -90 AND 90").
+		Where("m.longitude BETWEEN -180 AND 180").
+		Where("NOT (m.latitude = 0 AND m.longitude = 0)").
 		Where("ST_DWithin(CAST(ST_SetSRID(ST_MakePoint(longitude, latitude),4326) AS geography), CAST(ST_SetSRID(ST_MakePoint(?, ?),4326) AS geography), ?)", lng, lat, radiusM).
-		OrderExpr("ST_Distance(CAST(ST_SetSRID(ST_MakePoint(longitude, latitude),4326) AS geography), CAST(ST_SetSRID(ST_MakePoint(?, ?),4326) AS geography)) ASC", lng, lat).
-		Limit(50).
+		OrderExpr("m.is_open DESC").
+		OrderExpr(distanceExpr+" ASC", lng, lat).
+		Limit(100).
 		Scan(ctx)
 	if err != nil {
-		// fallback to old acos if PostGIS fails
 		err = r.db.NewSelect().
 			Model(&merchants).
+			ColumnExpr("m.*").
+			ColumnExpr("(6371 * acos(cos(radians(?)) * cos(radians(latitude)) * cos(radians(longitude) - radians(?)) + sin(radians(?)) * sin(radians(latitude)))) AS distance_km", lat, lng, lat).
+			Where("m.deleted_at IS NULL").
+			Where("m.latitude BETWEEN -90 AND 90").
+			Where("m.longitude BETWEEN -180 AND 180").
+			Where("NOT (m.latitude = 0 AND m.longitude = 0)").
 			Where("6371 * acos(cos(radians(?)) * cos(radians(latitude)) * cos(radians(longitude) - radians(?)) + sin(radians(?)) * sin(radians(latitude))) <= ?", lat, lng, lat, radiusKm).
-			Limit(50).
+			OrderExpr("m.is_open DESC").
+			OrderExpr("6371 * acos(cos(radians(?)) * cos(radians(latitude)) * cos(radians(longitude) - radians(?)) + sin(radians(?)) * sin(radians(latitude))) ASC", lat, lng, lat).
+			Limit(100).
 			Scan(ctx)
 	}
 	return merchants, err

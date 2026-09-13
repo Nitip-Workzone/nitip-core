@@ -15,7 +15,8 @@ type Repository interface {
 	GetByOrderIDAndReviewerID(ctx context.Context, db bun.IDB, orderID, reviewerID uuid.UUID) (*Review, error)
 	GetAverageRatingByReviewee(ctx context.Context, db bun.IDB, revieweeID uuid.UUID) (float64, error)
 	GetAverageRatingByMerchant(ctx context.Context, db bun.IDB, merchantID uuid.UUID) (float64, error)
-	GetAverageRatingByRequester(ctx context.Context, db bun.IDB, requesterID uuid.UUID) (float64, error)
+	GetRequesterRatingSummary(ctx context.Context, db bun.IDB, requesterID uuid.UUID) (float64, int, error)
+	GetAverageRatingByRequester(ctx context.Context, db bun.IDB, requesterID uuid.UUID) (float64, error) // deprecated: use GetRequesterRatingSummary
 
 	UpdateUserTrustScore(ctx context.Context, db bun.IDB, userID uuid.UUID, newScore float64) error
 	UpdateMerchantRating(ctx context.Context, db bun.IDB, merchantID uuid.UUID, newRating float64) error
@@ -111,13 +112,28 @@ func (r *repository) GetAverageRatingByMerchant(ctx context.Context, db bun.IDB,
 	return avg, err
 }
 
-func (r *repository) GetAverageRatingByRequester(ctx context.Context, db bun.IDB, requesterID uuid.UUID) (float64, error) {
-	var avg float64
+func (r *repository) GetRequesterRatingSummary(ctx context.Context, db bun.IDB, requesterID uuid.UUID) (float64, int, error) {
+	var row struct {
+		Avg   *float64 `bun:"avg"`
+		Count int      `bun:"cnt"`
+	}
 	err := db.NewSelect().Model((*Review)(nil)).
-		ColumnExpr("COALESCE(AVG(requester_rating), 0)").
+		ColumnExpr("AVG(requester_rating) as avg").
+		ColumnExpr("COUNT(*) as cnt").
 		Where("requester_id = ?", requesterID).
 		Where("requester_rating IS NOT NULL").
-		Scan(ctx, &avg)
+		Scan(ctx, &row)
+	if err != nil {
+		return 0, 0, err
+	}
+	if row.Count == 0 || row.Avg == nil {
+		return 0, 0, nil
+	}
+	return *row.Avg, row.Count, nil
+}
+
+func (r *repository) GetAverageRatingByRequester(ctx context.Context, db bun.IDB, requesterID uuid.UUID) (float64, error) {
+	avg, _, err := r.GetRequesterRatingSummary(ctx, db, requesterID)
 	return avg, err
 }
 

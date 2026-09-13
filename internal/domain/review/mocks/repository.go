@@ -117,6 +117,22 @@ func (mr *MockRepositoryMockRecorder) GetByOrderIDAndReviewerID(ctx, db, orderID
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetByOrderIDAndReviewerID", reflect.TypeOf((*MockRepository)(nil).GetByOrderIDAndReviewerID), ctx, db, orderID, reviewerID)
 }
 
+// GetRequesterRatingSummary mocks base method.
+func (m *MockRepository) GetRequesterRatingSummary(ctx context.Context, db bun.IDB, requesterID uuid.UUID) (float64, int, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetRequesterRatingSummary", ctx, db, requesterID)
+	ret0, _ := ret[0].(float64)
+	ret1, _ := ret[1].(int)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
+}
+
+// GetRequesterRatingSummary indicates an expected call of GetRequesterRatingSummary.
+func (mr *MockRepositoryMockRecorder) GetRequesterRatingSummary(ctx, db, requesterID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetRequesterRatingSummary", reflect.TypeOf((*MockRepository)(nil).GetRequesterRatingSummary), ctx, db, requesterID)
+}
+
 // RunInTx mocks base method.
 func (m *MockRepository) RunInTx(ctx context.Context, fn func(context.Context, bun.Tx) error) error {
 	m.ctrl.T.Helper()

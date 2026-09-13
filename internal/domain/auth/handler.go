@@ -5,6 +5,8 @@ import (
 	"log"
 	"time"
 
+	"github.com/codecoffy/nitip-core/internal/cache"
+	"github.com/codecoffy/nitip-core/internal/middleware"
 	"github.com/codecoffy/nitip-core/pkg/response"
 	"github.com/gofiber/fiber/v2"
 	"github.com/uptrace/bun"
@@ -20,8 +22,15 @@ func NewHandler(db *bun.DB) *Handler {
 
 func (h *Handler) RegisterRoutes(router fiber.Router) {
 	auth := router.Group("/auth")
-	// Rate limit grant: keep single-use + timestamp check, add IP rate limit
+	// Grant is rate-limited (IP 20/min) via shared middleware; other auth routes use RequireGrant.
 	auth.Post("/grant", h.Grant)
+}
+
+// RegisterRoutesWithLimit is the production wiring that enforces the grant rate-limit.
+// When redis is nil the middleware falls back to in-memory limiter (dev/test).
+func (h *Handler) RegisterRoutesWithLimit(router fiber.Router, redis *cache.Redis) {
+	auth := router.Group("/auth")
+	auth.Post("/grant", middleware.RateLimit(redis, 20, 1*time.Minute), h.Grant)
 }
 
 // Grant godoc

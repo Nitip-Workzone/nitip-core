@@ -1,4 +1,5 @@
 package order
+
 //go:generate mockgen -source=repository.go -destination=mocks/repository.go -package=mocks
 
 import (
@@ -16,6 +17,7 @@ type Repository interface {
 	ExpireOldOrders(ctx context.Context, cutoff time.Time) (int64, error)
 	FindByID(ctx context.Context, id uuid.UUID) (*Order, error)
 	FindByIDForUpdate(ctx context.Context, db bun.IDB, id uuid.UUID) (*Order, error)
+	FindByIdempotencyKey(ctx context.Context, db bun.IDB, requesterID uuid.UUID, key uuid.UUID) (*Order, error)
 	CancelAtomic(ctx context.Context, db bun.IDB, id uuid.UUID, reason string) (bool, error)
 	CompleteAtomic(ctx context.Context, db bun.IDB, id uuid.UUID, runnerID uuid.UUID, deliveryImg string) (bool, error)
 	FindByRequesterID(ctx context.Context, requesterID uuid.UUID) ([]Order, error)
@@ -27,6 +29,7 @@ type Repository interface {
 	UpdateStatus(ctx context.Context, id uuid.UUID, status string) error
 	Delete(ctx context.Context, id uuid.UUID) error
 	CountTodayOrders(ctx context.Context, userID uuid.UUID) (int, error)
+	CountTodayCODOrders(ctx context.Context, userID uuid.UUID) (int, error)
 	CountTodayAcceptances(ctx context.Context, runnerID uuid.UUID) (int, error)
 }
 
@@ -181,11 +184,19 @@ func (r *repository) FindAvailable(ctx context.Context, params FindAvailablePara
 }
 
 func (r *repository) ExpireOldOrders(ctx context.Context, cutoff time.Time) (int64, error) {
+	// Minimal fix: predicate must exclude any order with remaining hold/capacity.
+	// Existing pending+ payment_status!=escrow still allows pending wallet HoldEscrow (via Create wallet flow) and runner liability.
+	// Proven invariant via code: HoldEscrow only for wallet escrow paid orders (Create), liability only when RunnerID!=nil,
+	// and promotion usage only when PromotionID!=nil. So guard all three OR rely on ExpirePendingOrders transactional path.
+	// To avoid leaking, bulk path now requires runner_id IS NULL AND promotion_id IS NULL AND (escrow check).
 	res, err := r.db.NewUpdate().
 		Model((*Order)(nil)).
 		Set("status = ?", StatusExpired).
 		Set("updated_at = ?", time.Now()).
 		Where("status = ?", StatusPending).
+		Where("payment_status != ?", PaymentEscrow).
+		Where("runner_id IS NULL").
+		Where("promotion_id IS NULL").
 		Where("created_at <= ?", cutoff).
 		Exec(ctx)
 
@@ -212,6 +223,15 @@ func (r *repository) FindByIDForUpdate(ctx context.Context, db bun.IDB, id uuid.
 		return nil, err
 	}
 	return order, nil
+}
+
+func (r *repository) FindByIdempotencyKey(ctx context.Context, db bun.IDB, requesterID uuid.UUID, key uuid.UUID) (*Order, error) {
+	o := new(Order)
+	err := db.NewSelect().Model(o).Where("requester_id = ? AND idempotency_key = ?", requesterID, key).Scan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return o, nil
 }
 
 func (r *repository) CancelAtomic(ctx context.Context, db bun.IDB, id uuid.UUID, reason string) (bool, error) {
@@ -321,6 +341,17 @@ func (r *repository) CountTodayOrders(ctx context.Context, userID uuid.UUID) (in
 	return r.db.NewSelect().
 		Model((*Order)(nil)).
 		Where("requester_id = ?", userID).
+		Where("created_at >= CURRENT_DATE").
+		Where("status NOT IN (?)", bun.In([]string{StatusCancelled, StatusExpired})). //nolint:staticcheck
+		Count(ctx)
+}
+
+func (r *repository) CountTodayCODOrders(ctx context.Context, userID uuid.UUID) (int, error) {
+	return r.db.NewSelect().
+		Model((*Order)(nil)).
+		Where("requester_id = ?", userID).
+		Where("payment_method = ?", MethodCOD).
+		Where("status NOT IN (?)", bun.In([]string{StatusCancelled, StatusExpired})). //nolint:staticcheck
 		Where("created_at >= CURRENT_DATE").
 		Count(ctx)
 }

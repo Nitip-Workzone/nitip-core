@@ -607,6 +607,21 @@ func (mr *MockRepositoryMockRecorder) ListNearbyMerchants(ctx, lat, lng, radiusK
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListNearbyMerchants", reflect.TypeOf((*MockRepository)(nil).ListNearbyMerchants), ctx, lat, lng, radiusKm)
 }
 
+// ListNearbyMerchantsWithDistance mocks base method.
+func (m *MockRepository) ListNearbyMerchantsWithDistance(ctx context.Context, lat, lng, radiusKm float64) ([]merchant.Merchant, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListNearbyMerchantsWithDistance", ctx, lat, lng, radiusKm)
+	ret0, _ := ret[0].([]merchant.Merchant)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListNearbyMerchantsWithDistance indicates an expected call of ListNearbyMerchantsWithDistance.
+func (mr *MockRepositoryMockRecorder) ListNearbyMerchantsWithDistance(ctx, lat, lng, radiusKm any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListNearbyMerchantsWithDistance", reflect.TypeOf((*MockRepository)(nil).ListNearbyMerchantsWithDistance), ctx, lat, lng, radiusKm)
+}
+
 // ListOrderItemsByOrderID mocks base method.
 func (m *MockRepository) ListOrderItemsByOrderID(ctx context.Context, orderID uuid.UUID) ([]merchant.OrderItem, error) {
 	m.ctrl.T.Helper()

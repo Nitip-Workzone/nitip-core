@@ -18,6 +18,7 @@ type KycSubmission struct {
 	FacebookName          string    `bun:"facebook_name" json:"facebook_name,omitempty"`
 	FacebookScreenshotURL string    `bun:"facebook_screenshot_url" json:"facebook_screenshot_url,omitempty"`
 	Status                string    `bun:"status,notnull,default:'pending'" json:"status"`
+	TargetLevel           string    `bun:"target_level,notnull,default:'separuh'" json:"target_level"`
 	AdminNote             string    `bun:"admin_note" json:"admin_note,omitempty"`
 	CreatedAt             time.Time `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"created_at"`
 	UpdatedAt             time.Time `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updated_at"`
@@ -27,4 +28,16 @@ var (
 	StatusPending  = "pending"
 	StatusApproved = "approved"
 	StatusRejected = "rejected"
+
+	LevelBelum   = "belum"
+	LevelSeparuh = "separuh"
+	LevelPenuh   = "penuh"
+
+	MaxRejections = 3
 )
+
+var (
+	ActionKYCReset = "KYC_RESET_RETRY"
+)
+
+const AuditActionKYCReset = "KYC_RESET_RETRY"

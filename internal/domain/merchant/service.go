@@ -1,4 +1,5 @@
 package merchant
+
 //go:generate mockgen -source=service.go -destination=mocks/service.go -package=mocks
 
 import (
@@ -114,6 +115,12 @@ type Service interface {
 
 	// Survey
 	CreateSurvey(ctx context.Context, merchantID uuid.UUID, monthlySalesRange string, averageItemPrice float64) (*MerchantSurvey, error)
+
+	// Lookup helpers for order validation
+	GetVariantOptionByID(ctx context.Context, id uuid.UUID) (*MenuVariantOption, error)
+	GetVariantGroupByID(ctx context.Context, id uuid.UUID) (*MenuVariantGroup, error)
+	GetToppingOptionByID(ctx context.Context, id uuid.UUID) (*MenuToppingOption, error)
+	GetToppingGroupByID(ctx context.Context, id uuid.UUID) (*MenuToppingGroup, error)
 }
 
 type service struct {
@@ -235,7 +242,7 @@ func (s *service) GetMerchantByOwnerID(ctx context.Context, ownerID uuid.UUID) (
 }
 
 func (s *service) ListNearbyMerchants(ctx context.Context, lat, lng float64, radiusKm float64) ([]Merchant, error) {
-	merchants, err := s.repo.ListNearbyMerchants(ctx, lat, lng, radiusKm)
+	merchants, err := s.repo.ListNearbyMerchantsWithDistance(ctx, lat, lng, radiusKm)
 	if err != nil {
 		return nil, err
 	}
@@ -1035,4 +1042,17 @@ func (s *service) signAddonMasterImages(ctx context.Context, m *AddonMaster) {
 			}
 		}
 	}
+}
+
+func (s *service) GetVariantOptionByID(ctx context.Context, id uuid.UUID) (*MenuVariantOption, error) {
+	return s.repo.GetVariantOptionByID(ctx, id)
+}
+func (s *service) GetVariantGroupByID(ctx context.Context, id uuid.UUID) (*MenuVariantGroup, error) {
+	return s.repo.GetVariantGroupByID(ctx, id)
+}
+func (s *service) GetToppingOptionByID(ctx context.Context, id uuid.UUID) (*MenuToppingOption, error) {
+	return s.repo.GetToppingOptionByID(ctx, id)
+}
+func (s *service) GetToppingGroupByID(ctx context.Context, id uuid.UUID) (*MenuToppingGroup, error) {
+	return s.repo.GetToppingGroupByID(ctx, id)
 }

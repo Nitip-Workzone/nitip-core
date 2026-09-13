@@ -89,6 +89,21 @@ func (mr *MockRepositoryMockRecorder) CountTodayAcceptances(ctx, runnerID any) *
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CountTodayAcceptances", reflect.TypeOf((*MockRepository)(nil).CountTodayAcceptances), ctx, runnerID)
 }
 
+// CountTodayCODOrders mocks base method.
+func (m *MockRepository) CountTodayCODOrders(ctx context.Context, userID uuid.UUID) (int, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CountTodayCODOrders", ctx, userID)
+	ret0, _ := ret[0].(int)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CountTodayCODOrders indicates an expected call of CountTodayCODOrders.
+func (mr *MockRepositoryMockRecorder) CountTodayCODOrders(ctx, userID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CountTodayCODOrders", reflect.TypeOf((*MockRepository)(nil).CountTodayCODOrders), ctx, userID)
+}
+
 // CountTodayOrders mocks base method.
 func (m *MockRepository) CountTodayOrders(ctx context.Context, userID uuid.UUID) (int, error) {
 	m.ctrl.T.Helper()
@@ -220,6 +235,21 @@ func (m *MockRepository) FindByIDForUpdate(ctx context.Context, db bun.IDB, id u
 func (mr *MockRepositoryMockRecorder) FindByIDForUpdate(ctx, db, id any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FindByIDForUpdate", reflect.TypeOf((*MockRepository)(nil).FindByIDForUpdate), ctx, db, id)
+}
+
+// FindByIdempotencyKey mocks base method.
+func (m *MockRepository) FindByIdempotencyKey(ctx context.Context, db bun.IDB, requesterID, key uuid.UUID) (*order.Order, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "FindByIdempotencyKey", ctx, db, requesterID, key)
+	ret0, _ := ret[0].(*order.Order)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// FindByIdempotencyKey indicates an expected call of FindByIdempotencyKey.
+func (mr *MockRepositoryMockRecorder) FindByIdempotencyKey(ctx, db, requesterID, key any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FindByIdempotencyKey", reflect.TypeOf((*MockRepository)(nil).FindByIdempotencyKey), ctx, db, requesterID, key)
 }
 
 // FindByRequesterID mocks base method.

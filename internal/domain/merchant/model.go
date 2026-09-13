@@ -45,6 +45,7 @@ type Merchant struct {
 	CreatedAt       time.Time    `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"created_at"`
 	UpdatedAt       time.Time    `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updated_at"`
 	DeletedAt       *time.Time   `bun:"deleted_at,soft_delete,nullzero" json:"deleted_at,omitempty"`
+	DistanceKm      float64      `bun:"distance_km,scanonly" json:"distance_km,omitempty"`
 }
 
 type MenuCategory struct {
