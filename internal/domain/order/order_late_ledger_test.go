@@ -11,8 +11,8 @@ import (
 	"github.com/codecoffy/nitip-core/internal/cache"
 	"github.com/codecoffy/nitip-core/internal/domain/order"
 	orderMocks "github.com/codecoffy/nitip-core/internal/domain/order/mocks"
-	walletMocks "github.com/codecoffy/nitip-core/internal/domain/wallet/mocks"
 	"github.com/codecoffy/nitip-core/internal/domain/wallet"
+	walletMocks "github.com/codecoffy/nitip-core/internal/domain/wallet/mocks"
 	"github.com/codecoffy/nitip-core/internal/testutil"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
@@ -40,7 +40,7 @@ func TestLateQRIS_RealLedger(t *testing.T) {
 		walletID := uuid.New()
 		total := 15000.0
 		now := time.Now()
-			mockSql.ExpectQuery("SELECT.*wallets.*").WillReturnRows(sqlmock.NewRows([]string{"id", "user_id", "balance", "created_at", "updated_at"}))
+		mockSql.ExpectQuery("SELECT.*wallets.*").WillReturnRows(sqlmock.NewRows([]string{"id", "user_id", "balance", "created_at", "updated_at"}))
 		mockSql.ExpectQuery("INSERT.*wallets.*").WillReturnRows(sqlmock.NewRows([]string{"id", "user_id", "balance", "created_at", "updated_at"}).AddRow(walletID, reqID, 0.0, now, now))
 		mockSql.ExpectExec("UPDATE.*wallets.*").WillReturnResult(sqlmock.NewResult(1, 1))
 		mockSql.ExpectQuery("INSERT.*wallet_transactions.*").WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(uuid.New().String()))
@@ -136,7 +136,9 @@ func TestLateQRIS_RealLedger(t *testing.T) {
 		mockRepo.EXPECT().FindByIDForUpdate(gomock.Any(), gomock.Any(), orderID).Return(unpaid, nil).Times(1)
 		mockSql.ExpectBegin()
 		mockSql.ExpectQuery("SELECT").WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
-		mockWallet.EXPECT().RefundEscrow(gomock.Any(), gomock.Any(), reqID, orderID, total).DoAndReturn(func(ctx context.Context, db interface{}, uid, oid uuid.UUID, amt float64) error { return assert.AnError }).Times(1)
+		mockWallet.EXPECT().RefundEscrow(gomock.Any(), gomock.Any(), reqID, orderID, total).DoAndReturn(func(ctx context.Context, db interface{}, uid, oid uuid.UUID, amt float64) error {
+			return assert.AnError
+		}).Times(1)
 		mockSql.ExpectRollback()
 		err = svc.ProcessPaymentForTest(context.Background(), orderID, order.PaymentEscrow)
 		assert.Error(t, err)
@@ -144,7 +146,10 @@ func TestLateQRIS_RealLedger(t *testing.T) {
 		mockRepo.EXPECT().FindByIDForUpdate(gomock.Any(), gomock.Any(), orderID).Return(unpaid, nil).Times(1)
 		mockSql.ExpectBegin()
 		mockSql.ExpectQuery("SELECT").WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
-		mockWallet.EXPECT().RefundEscrow(gomock.Any(), gomock.Any(), reqID, orderID, total).DoAndReturn(func(ctx context.Context, db interface{}, uid, oid uuid.UUID, amt float64) error { balance += amt; return nil }).Times(1)
+		mockWallet.EXPECT().RefundEscrow(gomock.Any(), gomock.Any(), reqID, orderID, total).DoAndReturn(func(ctx context.Context, db interface{}, uid, oid uuid.UUID, amt float64) error {
+			balance += amt
+			return nil
+		}).Times(1)
 		mockSql.ExpectExec("UPDATE.*orders.*").WillReturnResult(sqlmock.NewResult(1, 1))
 		mockSql.ExpectCommit()
 		err = svc.ProcessPaymentForTest(context.Background(), orderID, order.PaymentEscrow)

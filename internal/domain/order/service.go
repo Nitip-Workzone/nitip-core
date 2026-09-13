@@ -2768,7 +2768,9 @@ func (s *service) processPayment(ctx context.Context, orderID uuid.UUID, payment
 	return s.repo.Update(ctx, s.db, order)
 }
 
-func (s *service) ProcessPaymentForTest(ctx context.Context, orderID uuid.UUID, status string) error { return s.processPayment(ctx, orderID, status) }
+func (s *service) ProcessPaymentForTest(ctx context.Context, orderID uuid.UUID, status string) error {
+	return s.processPayment(ctx, orderID, status)
+}
 
 func (s *service) GetAllWithFilters(ctx context.Context, status string, offset, limit int) ([]Order, error) {
 	orders, err := s.repo.FindAllWithFilters(ctx, status, offset, limit)
